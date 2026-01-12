@@ -1,0 +1,8 @@
+
+{
+  "name": "Apex Sovereign Novel Forge",
+  "description": "A high-performance AI novel writing environment specialized in Xianxia, Reincarnation, and System-based web novels, featuring persistent world-building, character tracking, and recursive context management.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
