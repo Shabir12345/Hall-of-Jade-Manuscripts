@@ -29,22 +29,28 @@ export async function buildChapterBatchAnalysisPrompt(
     ? `Chapters ${startChapter} to ${endChapter} (${chapters.length} chapters)`
     : `${chapters.length} chapters`;
 
-  const taskDescription = `You are a professional novel editor with decades of experience analyzing ${chapterRange} of "${novelState.title}".
+  const taskDescription = `[EDITORIAL ANALYSIS TASK]
 
-YOUR ROLE:
-As a professional editor, analyze these chapters with the depth and insight of an experienced editorial professional. Your analysis should cover:
-- Story flow and narrative continuity
-- Grammar, punctuation, and formatting
-- Style consistency and voice preservation
-- Pacing, rhythm, and sentence structure
-- Dialogue quality and naturalness
-- Character consistency and development
-- Plot logic and coherence
-- Paragraph and sentence structure
-- Show vs. tell balance
-- Word choice and precision
-- Eliminating redundancy and wordiness
+You are a professional novel editor with decades of experience analyzing ${chapterRange} of "${novelState.title}".
 
+[YOUR ROLE]
+
+As a professional editor, analyze these chapters with the depth and insight of an experienced editorial professional. Your analysis should comprehensively cover:
+
+Editorial Analysis Areas:
+• Story flow and narrative continuity
+• Grammar, punctuation, and formatting
+• Style consistency and voice preservation
+• Pacing, rhythm, and sentence structure
+• Dialogue quality and naturalness
+• Character consistency and development
+• Plot logic and coherence
+• Paragraph and sentence structure
+• Show vs. tell balance
+• Word choice and precision
+• Eliminating redundancy and wordiness
+
+Analysis Standards:
 Provide detailed, actionable feedback as a professional editor would give to an author, identifying both strengths and areas for improvement.
 
 CHAPTERS TO ANALYZE (${chapters.length} chapters - Chapters ${startChapter} through ${endChapter}):
@@ -61,73 +67,118 @@ ${index < chaptersContent.length - 1 ? `--- END OF CHAPTER ${ch.number} ---` : '
 ${index < chaptersContent.length - 1 ? `--- BEGINNING OF CHAPTER ${chaptersContent[index + 1].number} ---` : ''}
 `).join('\n\n')}
 
-CRITICAL: Pay special attention to transitions between chapters. Analyze how Chapter N ends and how Chapter N+1 begins. Look for:
-- Location jumps (chapter ends in one place, next starts elsewhere)
-- Time jumps (chapter ends at one time, next starts at different time)
-- Missing transitions that would confuse readers
-- Abrupt shifts in POV, scene, or tone
+[CHAPTER TRANSITION ANALYSIS - CRITICAL FOCUS]
 
-ANALYSIS REQUIREMENTS:
+Pay special attention to transitions between chapters. Analyze how Chapter N ends and how Chapter N+1 begins. Look for:
 
-1. STORY FLOW ANALYSIS:
-   - Check for gaps between chapters (missing transitions, unexplained jumps)
-   - Verify continuity between chapter endings and beginnings
-   - Identify abrupt scene changes or location shifts
-   - Check for consistent time progression
-   - Look for logical sequence of events
+Transition Issues to Identify:
+• Location jumps (chapter ends in one place, next starts elsewhere)
+• Time jumps (chapter ends at one time, next starts at different time)
+• Missing transitions that would confuse readers
+• Abrupt shifts in POV, scene, or tone
 
-2. CONTINUITY CHECK:
-   - Verify character locations match between chapters
-   - Check that character states (emotional, physical) are consistent
-   - Ensure character knowledge is consistent (characters know what they should know)
-   - Verify world state consistency
-   - Check for plot holes or inconsistencies
+[CHAPTER TRANSITION COMPARISON RULES - CRITICAL]
 
-3. TRANSITION ANALYSIS:
-   - Identify weak transitions between chapters
-   - Flag abrupt time skips that need explanation
-   - Check scene-to-scene transitions within chapters
-   - Verify logical flow from one chapter to the next
+When analyzing transitions between chapters, you MUST compare chapters in sequential order:
 
-4. GRAMMAR AND STYLE:
-   - Check for grammar errors
-   - Identify spelling mistakes
-   - Flag punctuation issues
-   - Check for formatting inconsistencies
-   - Verify paragraph structure (proper breaks, varied lengths)
-   - Check dialogue formatting
+Correct Comparisons (ALWAYS DO THIS):
+✓ Chapter 1 END → Chapter 2 START
+✓ Chapter 2 END → Chapter 3 START
+✓ Chapter 3 END → Chapter 4 START
+✓ Chapter 4 END → Chapter 5 START
+✓ In general: Chapter N END → Chapter (N+1) START
 
-5. CHARACTER CONSISTENCY:
-   - Verify characters act according to their established personalities
-   - Check for voice consistency in dialogue
-   - Flag any character inconsistencies
+Wrong Comparisons (NEVER DO THIS):
+✗ Chapter 3 END → Chapter 2 START (this is backwards - WRONG!)
+✗ Chapter N END → Chapter (N-1) START (backwards - WRONG!)
+✗ Chapter N END → Chapter (N+2) START (skipping chapters - WRONG!)
 
-6. NARRATIVE QUALITY:
-   - Assess overall flow and pacing (sentence length variety, paragraph rhythm)
-   - Check for repetitive language or phrases (identify patterns)
-   - Evaluate show vs. tell balance (prefer concrete details over abstractions)
-   - Identify areas that need expansion or clarification
-   - Flag sections that need tightening or cutting (redundancy, wordiness)
-   - Assess word choice precision (strong verbs, specific nouns, avoid clichés)
-   - Evaluate sentence variety and structure (avoid repetitive patterns)
-   - Check for micro-tension in scenes (want, resistance, consequence)
+VERIFICATION CHECKLIST - Before reporting any transition issue:
+1. Identify which chapter END you're analyzing (let's call it Chapter N)
+2. Identify which chapter START you're comparing it to (it MUST be Chapter N+1)
+3. Verify the chapter numbers: If analyzing Chapter 3, you compare to Chapter 4, NOT Chapter 2
+4. Example: If you see "Chapter 3 ends like this... Chapter 2 starts like this..." - STOP! This is wrong. You should compare Chapter 3 END to Chapter 4 START.
 
-7. PARAGRAPH STRUCTURE ANALYSIS (CRITICAL):
-   - Check if chapters are one big paragraph (no paragraph breaks)
-   - Identify paragraphs with more than 10 sentences (too long)
-   - Check for chapters with too few paragraphs (e.g., 1-2 paragraphs for 1500+ words)
-   - Verify paragraph length variety (mix of short, medium, long paragraphs)
-   - Identify wall-of-text issues (no paragraph breaks, hard to read)
-   - Flag paragraphs that need splitting for better readability
+CONCRETE EXAMPLES:
+- If chapters being analyzed are 1, 2, 3, 4, 5:
+  * Compare: Chapter 1 END → Chapter 2 START ✓
+  * Compare: Chapter 2 END → Chapter 3 START ✓
+  * Compare: Chapter 3 END → Chapter 4 START ✓
+  * Compare: Chapter 4 END → Chapter 5 START ✓
+  * NEVER compare: Chapter 3 END → Chapter 2 START ✗
 
-8. SENTENCE STRUCTURE ANALYSIS (CRITICAL):
-   - Detect excessive short, choppy sentences (e.g., many sentences under 8-10 words)
-   - Identify repetitive sentence structures (all simple sentences, no variety)
-   - Check for poor sentence flow (abrupt transitions between sentences)
-   - Flag weak sentence beginnings (too many sentences starting the same way)
-   - Detect lack of sentence variety (all same length, same structure)
-   - Identify run-on sentences or overly complex sentences
-   - Check for patterns like: "Sentence. Sentence. Sentence." (too choppy)
+- If chapters being analyzed are 2, 3, 4:
+  * Compare: Chapter 2 END → Chapter 3 START ✓
+  * Compare: Chapter 3 END → Chapter 4 START ✓
+  * NEVER compare: Chapter 4 END → Chapter 3 START ✗ (this would be backwards)
+
+The chapters in your analysis are: ${chaptersContent.map(ch => ch.number).join(', ')}. When analyzing transitions:
+- For Chapter ${chaptersContent[0]?.number || 'N'}, compare its END to Chapter ${chaptersContent.length > 1 ? chaptersContent[1].number : 'N+1'} START
+${chaptersContent.length > 2 ? chaptersContent.slice(1, -1).map((ch, idx) => `- For Chapter ${ch.number}, compare its END to Chapter ${chaptersContent[idx + 2].number} START`).join('\n') : ''}
+
+CRITICAL: Double-check your transition issue descriptions. If you mention "Chapter X ends... Chapter Y starts..." where Y is less than X+1, you have made an error. Fix it before responding.
+
+[ANALYSIS REQUIREMENTS]
+
+1. Story Flow Analysis:
+   • Check for gaps between chapters (missing transitions, unexplained jumps)
+   • Verify continuity between chapter endings and beginnings
+   • Identify abrupt scene changes or location shifts
+   • Check for consistent time progression
+   • Look for logical sequence of events
+
+2. Continuity Check:
+   • Verify character locations match between chapters
+   • Check that character states (emotional, physical) are consistent
+   • Ensure character knowledge is consistent (characters know what they should know)
+   • Verify world state consistency
+   • Check for plot holes or inconsistencies
+
+3. Transition Analysis:
+   • Identify weak transitions between chapters
+   • Flag abrupt time skips that need explanation
+   • Check scene-to-scene transitions within chapters
+   • Verify logical flow from one chapter to the next
+
+4. Grammar and Style:
+   • Check for grammar errors
+   • Identify spelling mistakes
+   • Flag punctuation issues
+   • Check for formatting inconsistencies
+   • Verify paragraph structure (proper breaks, varied lengths)
+   • Check dialogue formatting
+
+5. Character Consistency:
+   • Verify characters act according to their established personalities
+   • Check for voice consistency in dialogue
+   • Flag any character inconsistencies
+
+6. Narrative Quality:
+   • Assess overall flow and pacing (sentence length variety, paragraph rhythm)
+   • Check for repetitive language or phrases (identify patterns)
+   • Evaluate show vs. tell balance (prefer concrete details over abstractions)
+   • Identify areas that need expansion or clarification
+   • Flag sections that need tightening or cutting (redundancy, wordiness)
+   • Assess word choice precision (strong verbs, specific nouns, avoid clichés)
+   • Evaluate sentence variety and structure (avoid repetitive patterns)
+   • Check for micro-tension in scenes (want, resistance, consequence)
+
+7. Paragraph Structure Analysis (CRITICAL):
+   • Check if chapters are one big paragraph (no paragraph breaks)
+   • Identify paragraphs with more than 10 sentences (too long)
+   • Check for chapters with too few paragraphs (e.g., 1-2 paragraphs for 1500+ words)
+   • Verify paragraph length variety (mix of short, medium, long paragraphs)
+   • Identify wall-of-text issues (no paragraph breaks, hard to read)
+   • Flag paragraphs that need splitting for better readability
+
+8. Sentence Structure Analysis (CRITICAL):
+   • Detect excessive short, choppy sentences (e.g., many sentences under 8-10 words)
+   • Identify repetitive sentence structures (all simple sentences, no variety)
+   • Check for poor sentence flow (abrupt transitions between sentences)
+   • Flag weak sentence beginnings (too many sentences starting the same way)
+   • Detect lack of sentence variety (all same length, same structure)
+   • Identify run-on sentences or overly complex sentences
+   • Check for patterns like: "Sentence. Sentence. Sentence." (too choppy)
 
 STRUCTURE FIX REQUIREMENTS:
 - For single-paragraph chapters: Split into multiple paragraphs at logical points (dialogue, scene changes, topic shifts, time shifts, location changes)
@@ -201,15 +252,28 @@ FOR GAP/TRANSITION FIXES (insertions):
 - Set isInsertion: true for pure insertions
 
 FOR PARAGRAPH STRUCTURE FIXES:
-- originalText: The entire problematic paragraph (or entire chapter if it's one paragraph) - copy EXACTLY as it appears
+- CRITICAL: originalText MUST be copied EXACTLY as it appears in the chapter, including:
+  * Exact spacing (single spaces, double spaces, tabs)
+  * Exact line breaks and paragraph breaks (\n\n)
+  * Exact punctuation and capitalization
+  * No modifications, no paraphrasing, no corrections
+- If the problematic text spans multiple paragraphs, include ALL paragraphs with their exact formatting
+- If the entire chapter is one paragraph, include the ENTIRE chapter content
 - fixedText: The restructured text with proper paragraph breaks inserted at logical points
 - Break paragraphs at: dialogue exchanges (new paragraph per speaker), scene changes, time shifts, location changes, topic shifts, emotional beats
 - Maintain story flow - don't break mid-thought, mid-action, or mid-dialogue
 - Vary paragraph lengths (mix of short 1-3 sentence paragraphs for impact, medium 4-6 sentence paragraphs for standard flow, longer 7-9 sentence paragraphs for complex scenes)
 - For single-paragraph chapters: Intelligently split into 5-10+ paragraphs based on content length
+- IMPORTANT: When copying originalText, select the text from the chapter content EXACTLY - use copy-paste if possible, or ensure every character matches
 
 FOR SENTENCE STRUCTURE FIXES:
-- originalText: The problematic sentences (can be multiple consecutive sentences) - copy EXACTLY as they appear
+- CRITICAL: originalText MUST be copied EXACTLY as it appears in the chapter, including:
+  * Exact spacing between sentences
+  * Exact punctuation (periods, commas, semicolons, etc.)
+  * Exact capitalization
+  * No modifications, no paraphrasing, no corrections
+- Include ALL sentences that need to be improved together (don't split them)
+- If sentences span paragraph boundaries, include the paragraph breaks exactly as they appear
 - fixedText: Improved sentences with better structure, flow, and variety
 - Combine related short choppy sentences where appropriate (e.g., "He ran. He was fast." → "He ran, and he was fast." or "Running came naturally to him; he was fast.")
 - Vary sentence length and structure (mix simple, compound, complex sentences)
@@ -217,6 +281,16 @@ FOR SENTENCE STRUCTURE FIXES:
 - Add transitional words/phrases where needed for better flow
 - Fix choppy patterns (e.g., "He walked. He stopped. He looked." → "He walked, then stopped to look around.")
 - Maintain clarity and meaning while improving readability
+- IMPORTANT: When copying originalText, select the text from the chapter content EXACTLY - use copy-paste if possible, or ensure every character matches
+
+ACCESSIBILITY FOR AGES 10-40 (CRITICAL):
+When generating fixedText, use clear, accessible language that readers aged 10-40 can understand:
+- Prefer common words over rare or complex ones
+- If you must use a complex word, provide context that makes its meaning clear
+- Keep sentences clear and direct
+- Use everyday language when possible
+- Make the fixed text understandable to readers of all ages within this range
+- Maintain professional quality while prioritizing clarity
 
 AI DETECTION EVASION FOR FIXES (CRITICAL):
 When generating fixedText, ensure it reads as authentically human-written by applying these principles:
@@ -281,6 +355,19 @@ DECIDING WHERE TO ADD TRANSITIONS:
 - Choose location that flows most naturally with the story structure
 }
 
+CRITICAL REQUIREMENTS FOR ORIGINALTEXT EXTRACTION:
+- ALWAYS copy originalText EXACTLY as it appears in the chapter content
+- Use the EXACT text from the chapter - do NOT paraphrase, summarize, or modify
+- Preserve ALL whitespace: spaces, tabs, line breaks, paragraph breaks
+- Preserve ALL punctuation exactly as written
+- Preserve ALL capitalization exactly as written
+- If you're unsure about exact text, include MORE context rather than less
+- For paragraph_structure fixes: Include the ENTIRE problematic paragraph(s) with exact formatting
+- For sentence_structure fixes: Include ALL sentences that need improvement together
+- For continuity fixes: Include the EXACT text that needs to be changed
+- Double-check: Does your originalText appear EXACTLY as written in the chapter content?
+- If the text doesn't match exactly, the fix will FAIL to apply - be precise!
+
 CRITICAL REQUIREMENTS:
 - Be thorough but fair - identify real issues, not nitpicking
 - For minor issues (grammar, formatting), provide fixes immediately with exact originalText and fixedText
@@ -293,7 +380,8 @@ CRITICAL REQUIREMENTS:
 - For chapter transition issues, provide transition text that bridges the gap
 - For location/time jumps, provide explanatory text to smooth the transition
 - Focus on professional editing concerns: story flow, continuity, character development, foreshadowing, transitions
-- CRITICAL: All fixedText must read as authentically human-written - apply AI detection evasion principles (vary sentence length, vocabulary unpredictability, natural writing patterns) to ensure fixes don't introduce AI-like patterns`;
+- CRITICAL: All fixedText must read as authentically human-written - apply AI detection evasion principles (vary sentence length, vocabulary unpredictability, natural writing patterns) to ensure fixes don't introduce AI-like patterns
+- CRITICAL: originalText accuracy is ESSENTIAL - if originalText doesn't match exactly, the fix will fail to apply`;
 
   const outputFormat = `Return ONLY valid JSON matching the structure above. Do not include any text outside the JSON. Ensure all strings are properly escaped for JSON.`;
 
@@ -342,9 +430,12 @@ export async function buildArcAnalysisPrompt(
     return ch.number >= arc.startedAtChapter && ch.number <= arc.endedAtChapter;
   }).sort((a, b) => a.number - b.number);
 
-  const taskDescription = `You are a professional novel editor analyzing the complete arc "${arc.title}" of "${novelState.title}".
+  const taskDescription = `[ARC EDITORIAL ANALYSIS TASK]
 
-YOUR ROLE:
+You are a professional novel editor analyzing the complete arc "${arc.title}" of "${novelState.title}".
+
+[YOUR ROLE]
+
 Perform a comprehensive edit review of this entire arc. Assess what was done well, what's missing, and what issues need to be fixed. Act as a senior editor reviewing a manuscript before publication.
 
 ARC DETAILS:

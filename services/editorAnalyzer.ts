@@ -1,16 +1,15 @@
 import { NovelState, Chapter, Arc } from '../types';
 import { EditorAnalysis, EditorIssue, EditorFix, ChapterBatchEditorInput, ArcEditorInput, EditorServiceOptions, OverallFlowRating, FixStatus } from '../types/editor';
 import { buildChapterBatchAnalysisPrompt, buildArcAnalysisPrompt } from './promptEngine/writers/editorPromptWriter';
-import { getActiveLlm } from './aiService';
-import { deepseekJson } from './deepseekService';
+import { grokJson } from './grokService';
 import { SYSTEM_INSTRUCTION } from '../constants';
 import { rateLimiter } from './rateLimiter';
 import { generateUUID } from '../utils/uuid';
 import { validateStructure } from '../utils/chapterFormatter';
 
-function deepseekModelFromLlm(llm: string): 'deepseek-chat' | 'deepseek-reasoner' {
-  return llm === 'deepseek-reasoner' ? 'deepseek-reasoner' : 'deepseek-chat';
-}
+// Cache for editor warnings to prevent spam
+const editorWarningCache = new Map<string, number>();
+const WARNING_CACHE_TTL = 30000; // 30 seconds
 
 /**
  * Editor Analyzer
@@ -72,9 +71,7 @@ export async function analyzeChapterBatch(
     }
   }
 
-  const llm = getActiveLlm();
-
-  // Build JSON schema description for DeepSeek
+  // Build JSON schema description for Grok
   const jsonSchema = `{
     "analysis": {
       "overallFlow": "excellent" | "good" | "adequate" | "needs_work",
@@ -112,9 +109,9 @@ export async function analyzeChapterBatch(
     ]
   }`;
 
-  // Call DeepSeek API
+  // Call Grok API
   const parsed = await rateLimiter.queueRequest('analyze', async () => {
-    return await deepseekJson<{
+    return await grokJson<{
       analysis: {
         overallFlow: string;
         continuityScore: number;
@@ -146,7 +143,6 @@ export async function analyzeChapterBatch(
         isInsertion?: boolean;
       }>;
     }>({
-      model: deepseekModelFromLlm(llm),
       system: builtPrompt.systemInstruction || SYSTEM_INSTRUCTION,
       user: builtPrompt.userPrompt + '\n\nReturn ONLY a valid JSON object matching this structure:\n' + jsonSchema + `\n\nCRITICAL JSON FORMATTING REQUIREMENTS:
 1. ALL strings MUST be properly escaped (use \\n for newlines, \\" for quotes, \\\\ for backslashes)
@@ -160,7 +156,7 @@ export async function analyzeChapterBatch(
 9. chapterNumber in fixes MUST be one of: ${chapters.map(ch => ch.number).join(', ')}. Triple-check every chapterNumber!
 10. If you see chapter 16 in the novel, DO NOT use it - only use ${chapters.map(ch => ch.number).join(', ')}.`,
       temperature: 0.7,
-      maxTokens: 8192, // DeepSeek API limit is 8192
+        maxTokens: 8192,
     });
   }, `analyze-${novelState.id}-${startChapter}-${endChapter}`);
 
@@ -169,6 +165,31 @@ export async function analyzeChapterBatch(
   // Process issues and assign IDs
   const processedIssues: EditorIssue[] = (parsed.issues || []).map((issue: any, index: number) => {
     const chapter = chapters.find(ch => ch.number === issue.chapterNumber);
+    
+    // Validate transition issues are comparing sequential chapters
+    if (issue.type === 'gap' || issue.type === 'transition' || issue.location === 'transition') {
+      const description = issue.description || '';
+      // Check if description mentions comparing chapters (e.g., "Chapter 3 ends... Chapter 2 starts")
+      const chapterMatches = description.match(/Chapter\s+(\d+)/gi);
+      if (chapterMatches && chapterMatches.length >= 2) {
+        const chapterNumbers = chapterMatches.map(m => parseInt(m.match(/\d+/)![0]));
+        // Check if chapters are being compared backwards (N → N-1 instead of N → N+1)
+        if (chapterNumbers.length >= 2) {
+          const firstChapter = chapterNumbers[0];
+          const secondChapter = chapterNumbers[1];
+          // If first chapter > second chapter, it's likely a backwards comparison
+          if (firstChapter > secondChapter && Math.abs(firstChapter - secondChapter) === 1) {
+            console.warn(`[Editor Validation] Potential backwards chapter comparison detected in issue: "${description.substring(0, 100)}"`);
+            console.warn(`[Editor Validation] Comparing Chapter ${firstChapter} to Chapter ${secondChapter} - should compare Chapter ${firstChapter} to Chapter ${firstChapter + 1}`);
+          }
+          // Check if comparison is not sequential (e.g., Chapter 3 → Chapter 5)
+          if (firstChapter < secondChapter && secondChapter !== firstChapter + 1) {
+            console.warn(`[Editor Validation] Non-sequential chapter comparison detected: Chapter ${firstChapter} → Chapter ${secondChapter} (expected Chapter ${firstChapter} → Chapter ${firstChapter + 1})`);
+          }
+        }
+      }
+    }
+    
     return {
       id: generateUUID(),
       type: issue.type || 'style',
@@ -185,8 +206,40 @@ export async function analyzeChapterBatch(
   });
 
   // Get the chapter numbers that are being analyzed (for validation)
+  // IMPORTANT: This must be declared before any code that uses it
   const analyzedChapterNumbers = new Set(chapters.map(ch => ch.number));
   const analyzedChapterIds = new Set(chapters.map(ch => ch.id));
+
+  // Validate all transition issues compare sequential chapters
+  const transitionIssues = processedIssues.filter(issue => 
+    issue.type === 'gap' || issue.type === 'transition' || issue.location === 'transition'
+  );
+  
+  if (transitionIssues.length > 0) {
+    // Verify chapters are in order
+    const sortedChapterNumbers = [...analyzedChapterNumbers].sort((a, b) => a - b);
+    console.log(`[Editor Validation] Analyzing ${chapters.length} chapters: ${sortedChapterNumbers.join(', ')}`);
+    console.log(`[Editor Validation] Found ${transitionIssues.length} transition issues - validating sequential comparisons`);
+    
+    transitionIssues.forEach(issue => {
+      const issueChapter = issue.chapterNumber;
+      // Check if there's a next chapter in the analyzed set
+      const nextChapterIndex = sortedChapterNumbers.indexOf(issueChapter);
+      if (nextChapterIndex >= 0 && nextChapterIndex < sortedChapterNumbers.length - 1) {
+        const expectedNextChapter = sortedChapterNumbers[nextChapterIndex + 1];
+        // Check if description mentions comparing to wrong chapter
+        const description = issue.description || '';
+        const nextChapterMatches = description.match(/Chapter\s+(\d+)/gi);
+        if (nextChapterMatches && nextChapterMatches.length >= 2) {
+          const mentionedChapters = nextChapterMatches.map(m => parseInt(m.match(/\d+/)![0]));
+          const lastMentioned = mentionedChapters[mentionedChapters.length - 1];
+          if (lastMentioned !== expectedNextChapter && mentionedChapters.includes(expectedNextChapter) === false) {
+            console.warn(`[Editor Validation] Transition issue for Chapter ${issueChapter} may be comparing to wrong chapter. Expected Chapter ${expectedNextChapter}, but description mentions Chapter ${lastMentioned}`);
+          }
+        }
+      }
+    });
+  }
 
   // Process fixes and link to issues - improved matching logic with validation
   // First, filter out fixes with unreasonably long strings (likely contain entire chapters)
@@ -293,7 +346,15 @@ export async function analyzeChapterBatch(
       const hasText = chapter.content.includes(fix.originalText) || 
                       chapter.content.toLowerCase().includes(fix.originalText.toLowerCase());
       if (!hasText) {
-        console.warn(`Fix originalText not found in chapter ${chapter.number}. Fix may not apply correctly. Text: "${fix.originalText.substring(0, 100)}..."`);
+        // Cache warnings to prevent spam - only log once per fix/chapter combination
+        const warningKey = `${chapter.id}-${fix.originalText.substring(0, 50)}`;
+        const lastWarning = editorWarningCache.get(warningKey);
+        const now = Date.now();
+        
+        if (!lastWarning || (now - lastWarning) > WARNING_CACHE_TTL) {
+          console.warn(`Fix originalText not found in chapter ${chapter.number}. Fix may not apply correctly. Text: "${fix.originalText.substring(0, 100)}..."`);
+          editorWarningCache.set(warningKey, now);
+        }
         // Still create the fix, but it may fail to apply later
       }
     }
@@ -398,21 +459,76 @@ export async function analyzeArc(
       );
     }
   });
+
+  // Run quality checks for arc chapters
+  options?.onProgress?.('Running quality checks...', 15);
+  const qualityAnalysis: string[] = [];
+  try {
+    const { reviewArc } = await import('./editorialReviewService');
+    const arcReview = await reviewArc(arc, chapters, novelState, {
+      onProgress: (phase, progress) => {
+        options?.onProgress?.(phase, progress ? 15 + (progress * 0.3) : undefined);
+      },
+    });
+
+    // Extract quality issues from review
+    const issueSignals = arcReview.signals.filter(s => s.severity === 'issue' || s.severity === 'concern');
+    if (issueSignals.length > 0) {
+      qualityAnalysis.push(`QUALITY ISSUES DETECTED (${issueSignals.length} total):`);
+      issueSignals.slice(0, 10).forEach(signal => {
+        const chapterRef = signal.chapterNumber ? `Chapter ${signal.chapterNumber}: ` : '';
+        qualityAnalysis.push(`${chapterRef}${signal.title} - ${signal.description}`);
+        if (signal.suggestion) {
+          qualityAnalysis.push(`  Suggestion: ${signal.suggestion}`);
+        }
+      });
+    }
+
+    // Add cross-chapter issues
+    if (arcReview.crossChapterIssues.length > 0) {
+      qualityAnalysis.push('\nCROSS-CHAPTER ISSUES:');
+      arcReview.crossChapterIssues.forEach(issue => {
+        qualityAnalysis.push(`${issue.title} - ${issue.description}`);
+        if (issue.suggestion) {
+          qualityAnalysis.push(`  Suggestion: ${issue.suggestion}`);
+        }
+      });
+    }
+
+    // Add arc-level metrics summary
+    qualityAnalysis.push(`\nARC-LEVEL METRICS:`);
+    qualityAnalysis.push(`Voice Consistency: ${arcReview.arcLevelMetrics.voiceConsistency}/100`);
+    qualityAnalysis.push(`Emotional Variation: ${arcReview.arcLevelMetrics.emotionalVariation}/100`);
+    qualityAnalysis.push(`Scene Variety: ${arcReview.arcLevelMetrics.sceneVariety}/100`);
+    qualityAnalysis.push(`Character Development Consistency: ${arcReview.arcLevelMetrics.characterDevelopmentConsistency}/100`);
+    qualityAnalysis.push(`Pacing Balance: ${arcReview.arcLevelMetrics.pacingBalance}/100`);
+  } catch (error) {
+    console.warn('Error running quality checks for arc analysis:', error);
+    // Continue with analysis even if quality checks fail
+  }
   
   // Build the prompt
   const builtPrompt = await buildArcAnalysisPrompt(input);
   
-  // Enhance prompt with pre-detected structure issues if found
+  // Enhance prompt with pre-detected structure issues and quality checks if found
+  const preAnalysisContext: string[] = [];
   if (arcStructureAnalysis.length > 0) {
-    const structureContext = `\n\nPRE-DETECTED STRUCTURE ISSUES IN ARC:\n${arcStructureAnalysis.join('\n')}\n\nPlease pay special attention to these structure issues and provide fixes for them.`;
-    builtPrompt.userPrompt = builtPrompt.userPrompt + structureContext;
+    preAnalysisContext.push('PRE-DETECTED STRUCTURE ISSUES IN ARC:');
+    preAnalysisContext.push(...arcStructureAnalysis);
+  }
+  if (qualityAnalysis.length > 0) {
+    preAnalysisContext.push('\nQUALITY & ORIGINALITY ANALYSIS:');
+    preAnalysisContext.push(...qualityAnalysis);
+  }
+  
+  if (preAnalysisContext.length > 0) {
+    const context = `\n\n${preAnalysisContext.join('\n')}\n\nPlease pay special attention to these issues and provide fixes for them.`;
+    builtPrompt.userPrompt = builtPrompt.userPrompt + context;
   }
   
   options?.onProgress?.('Calling AI for arc analysis...', 30);
 
-  const llm = getActiveLlm();
-
-  // Build JSON schema description for DeepSeek (arc-specific)
+  // Build JSON schema description for Grok (arc-specific)
   const jsonSchema = `{
     "analysis": {
       "overallFlow": "excellent" | "good" | "adequate" | "needs_work",
@@ -454,7 +570,7 @@ export async function analyzeArc(
     }
   }`;
 
-  // Call DeepSeek API with error handling for partial responses
+  // Call Grok API with error handling for partial responses
   let parsed: {
     analysis?: {
       overallFlow?: string;
@@ -496,7 +612,7 @@ export async function analyzeArc(
 
   try {
     parsed = await rateLimiter.queueRequest('analyze-arc', async () => {
-      return await deepseekJson<{
+      return await grokJson<{
         analysis: {
           overallFlow: string;
           continuityScore: number;
@@ -534,7 +650,6 @@ export async function analyzeArc(
           suggestedImprovements: string[];
         };
       }>({
-        model: deepseekModelFromLlm(llm),
         system: builtPrompt.systemInstruction || SYSTEM_INSTRUCTION,
         user: builtPrompt.userPrompt + '\n\nReturn ONLY a valid JSON object matching this structure:\n' + jsonSchema + `\n\nCRITICAL JSON FORMATTING REQUIREMENTS (MUST FOLLOW TO AVOID TRUNCATION):
 1. ALL strings MUST be properly escaped (use \\n for newlines, \\" for quotes, \\\\ for backslashes)

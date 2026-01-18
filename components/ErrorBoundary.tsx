@@ -43,7 +43,15 @@ class ErrorBoundary extends Component<Props, State> {
     }).catch(() => {
       // Fallback to console if logger import fails
       if (import.meta.env.DEV) {
-        console.error('ErrorBoundary caught an error:', error, errorInfo);
+        try {
+          // Safely convert error and errorInfo to strings
+          const errorStr = error instanceof Error ? error.message : String(error);
+          const errorInfoStr = errorInfo?.componentStack || String(errorInfo);
+          console.error('ErrorBoundary caught an error:', errorStr, errorInfoStr);
+        } catch (e) {
+          // If even string conversion fails, use minimal logging
+          console.error('ErrorBoundary caught an error (details unavailable)');
+        }
       }
     });
 
@@ -104,13 +112,13 @@ class ErrorBoundary extends Component<Props, State> {
             <div className="flex items-center space-x-4 pt-4 border-t border-zinc-700">
               <button
                 onClick={this.handleReset}
-                className="px-6 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105"
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105"
               >
                 Try Again
               </button>
               <button
                 onClick={() => window.location.reload()}
-                className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-semibold transition-all duration-200"
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-semibold transition-all duration-200"
               >
                 Reload Page
               </button>

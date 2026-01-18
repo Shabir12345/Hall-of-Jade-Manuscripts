@@ -123,12 +123,17 @@ const ReferenceAutocomplete: React.FC<ReferenceAutocompleteProps> = ({
       onKeyDown={handleKeyDown}
       tabIndex={-1}
       ref={listRef}
+      role="listbox"
+      aria-label="Reference suggestions"
     >
       <div className="p-2 space-y-1">
         {suggestions.map((suggestion, index) => (
           <div
             key={`${suggestion.type}-${suggestion.id}`}
             onClick={() => onSelect(suggestion)}
+            role="option"
+            aria-selected={index === selectedIndex}
+            aria-label={`${suggestion.displayName}, ${suggestion.type}`}
             className={`
               flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all
               ${index === selectedIndex 

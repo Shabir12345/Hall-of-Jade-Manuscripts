@@ -25,6 +25,10 @@ import type {
   SymbolicElement,
   EmotionalPayoffMoment,
   SubtextElement,
+  CharacterSystem,
+  SystemFeature,
+  SystemProgression,
+  SystemChapterAppearance,
 } from '../types';
 
 // Base database row type (includes timestamps and user_id)
@@ -74,6 +78,10 @@ export interface CharacterRow extends BaseDatabaseRow {
   age: string | null;
   personality: string | null;
   current_cultivation: string | null;
+  appearance: string | null;
+  background: string | null;
+  goals: string | null;
+  flaws: string | null;
   notes: string | null;
   portrait_url: string | null;
   status: 'Alive' | 'Deceased' | 'Unknown';
@@ -258,6 +266,54 @@ export interface SubtextElementRow extends BaseDatabaseRow {
   significance: string | null;
   related_to: string | null;
   notes: string;
+}
+
+// Character system rows
+export interface CharacterSystemRow extends BaseDatabaseRow {
+  novel_id: string;
+  character_id: string;
+  name: string;
+  type: 'cultivation' | 'game' | 'cheat' | 'ability' | 'interface' | 'evolution' | 'other';
+  category: 'core' | 'support' | 'evolution' | 'utility' | 'combat' | 'passive';
+  description: string | null;
+  current_level: string | null;
+  current_version: string | null;
+  status: 'active' | 'dormant' | 'upgraded' | 'merged' | 'deactivated';
+  first_appeared_chapter: number | null;
+  last_updated_chapter: number | null;
+  history: string | null;
+  notes: string | null;
+}
+
+export interface SystemFeatureRow extends BaseDatabaseRow {
+  system_id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  unlocked_chapter: number | null;
+  is_active: boolean;
+  level: string | null;
+  strength: number | null;
+  notes: string | null;
+}
+
+export interface SystemProgressionRow extends BaseDatabaseRow {
+  system_id: string;
+  chapter_number: number;
+  features_added: string[]; // TEXT[]
+  features_upgraded: string[]; // TEXT[]
+  level_changes: string | null;
+  key_events: string[]; // TEXT[]
+  notes: string | null;
+}
+
+export interface SystemChapterAppearanceRow extends BaseDatabaseRow {
+  system_id: string;
+  chapter_id: string;
+  presence_type: 'direct' | 'mentioned' | 'hinted' | 'used';
+  significance: 'major' | 'minor' | 'foreshadowing';
+  features_used: string[]; // TEXT[]
+  notes: string | null;
 }
 
 // Helper type for Supabase query results

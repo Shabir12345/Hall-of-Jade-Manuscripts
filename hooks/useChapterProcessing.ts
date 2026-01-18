@@ -14,10 +14,23 @@ import type {
   Scene,
   Arc,
   Realm,
+  Relationship,
+  CharacterSystem,
 } from '../types';
 import { extractPostChapterUpdates } from '../services/aiService';
 import { findOrCreateItem, findOrCreateTechnique } from '../services/itemTechniqueService';
 import { generateUUID } from '../utils/uuid';
+import { 
+  coerceItemCategory, 
+  coerceTechniqueCategory, 
+  coerceTechniqueType 
+} from '../utils/typeCoercion';
+import { processAntagonistUpdates } from '../services/antagonistProcessingService';
+import { addOrUpdateRelationship } from '../services/relationshipService';
+import { addAntagonistToChapter } from '../services/antagonistService';
+import { processSystemUpdates } from '../services/systemProcessingService';
+import { analyzeAndTrackProgression as analyzeAndTrackSystemProgression } from '../services/systemProgressionTracker';
+import { trackSystemAppearance } from '../services/systemService';
 
 /**
  * Custom hook for processing chapter updates (character, world, items, techniques)
@@ -78,6 +91,14 @@ export function useChapterProcessing() {
   }, []);
 
   /**
+   * Find character by name (case-insensitive)
+   */
+  const findCharacterByName = useCallback((characters: Character[], name: string): Character | undefined => {
+    const normalizedName = normalize(name);
+    return characters.find(c => normalize(c.name) === normalizedName);
+  }, [normalize]);
+
+  /**
    * Process post-chapter extraction updates
    */
   const processPostChapterUpdates = useCallback(async (
@@ -90,6 +111,28 @@ export function useChapterProcessing() {
 
     // Extract updates from chapter
     const extraction = await extractPostChapterUpdates(novel, newChapter, activeArc);
+    
+    // Enhanced: Process consistency system updates
+    try {
+      const { processPostGenerationConsistency } = await import('../services/consistencyIntegrationService');
+      const consistencyResult = await processPostGenerationConsistency(novel, newChapter, extraction);
+      
+      if (!consistencyResult.postValidation.passed) {
+        const criticalIssues = consistencyResult.postValidation.report.issues.filter(
+          (i: any) => i.severity === 'critical'
+        );
+        if (criticalIssues.length > 0) {
+          addLog(`⚠️ ${criticalIssues.length} critical consistency issue(s) detected`, 'update');
+        }
+      }
+      
+      if (consistencyResult.postValidation.corrections.length > 0) {
+        addLog(`💡 ${consistencyResult.postValidation.corrections.length} auto-correction(s) suggested`, 'update');
+      }
+    } catch (error) {
+      console.error('Consistency system processing failed:', error);
+      // Don't fail the whole process if consistency check fails
+    }
 
     // Process character upserts
     const mergedCharacters = [...novel.characterCodex];
@@ -107,6 +150,18 @@ export function useChapterProcessing() {
         if (typeof set.currentCultivation === 'string' && set.currentCultivation.trim()) {
           char.currentCultivation = set.currentCultivation;
         }
+        if (typeof set.appearance === 'string' && set.appearance.trim()) {
+          char.appearance = set.appearance;
+        }
+        if (typeof set.background === 'string' && set.background.trim()) {
+          char.background = mergeAppend(char.background || '', set.background, newChapter.number);
+        }
+        if (typeof set.goals === 'string' && set.goals.trim()) {
+          char.goals = set.goals;
+        }
+        if (typeof set.flaws === 'string' && set.flaws.trim()) {
+          char.flaws = set.flaws;
+        }
         if (typeof set.notes === 'string' && set.notes.trim()) {
           char.notes = mergeAppend(char.notes || '', set.notes, newChapter.number);
         }
@@ -123,6 +178,38 @@ export function useChapterProcessing() {
           char.items = [...new Set([...(char.items || []), ...addItems.filter((s: any) => String(s).trim())])];
         }
 
+        // Process relationships (karma links) using relationship service for bidirectional creation
+        const rels: any[] = Array.isArray(u?.relationships) ? u.relationships : [];
+        if (rels.length) {
+          for (const rel of rels) {
+            const targetName = String(rel?.targetName || '').trim();
+            const type = String(rel?.type || '').trim();
+            if (!targetName || !type) continue;
+            const target = findCharacterByName(mergedCharacters, targetName);
+            if (!target) continue;
+            
+            // Use relationship service to create bidirectional relationship
+            const result = addOrUpdateRelationship(
+              mergedCharacters,
+              char.id,
+              target.id,
+              type,
+              String(rel?.history || 'Karma link recorded in chronicle.'),
+              String(rel?.impact || 'Fate has shifted.'),
+              true // bidirectional
+            );
+            
+            if (result.success) {
+              mergedCharacters = result.updatedCharacters;
+              // Update char reference to the updated character
+              const updatedCharIndex = mergedCharacters.findIndex(c => c.id === char.id);
+              if (updatedCharIndex >= 0) {
+                char = mergedCharacters[updatedCharIndex];
+              }
+            }
+          }
+        }
+
         mergedCharacters[idx] = char;
       } else if (u?.name) {
         // New character
@@ -137,9 +224,50 @@ export function useChapterProcessing() {
           notes: String(u?.set?.notes || ''),
           status: coerceCharStatus(u?.set?.status) || 'Alive',
           relationships: [],
+          itemPossessions: [],
+          techniqueMasteries: [],
         };
+        
+        // Process relationships for new character using relationship service
+        // First add the character to the array so relationships can be created
         mergedCharacters.push(newChar);
-        addLog(`New character discovered: ${newChar.name}`, 'discovery');
+        
+        const rels: any[] = Array.isArray(u?.relationships) ? u.relationships : [];
+        if (rels.length) {
+          for (const rel of rels) {
+            const targetName = String(rel?.targetName || '').trim();
+            const type = String(rel?.type || '').trim();
+            if (!targetName || !type) continue;
+            const target = findCharacterByName(mergedCharacters, targetName);
+            if (!target) continue;
+            
+            // Use relationship service to create bidirectional relationship
+            const result = addOrUpdateRelationship(
+              mergedCharacters,
+              newChar.id,
+              target.id,
+              type,
+              String(rel?.history || 'Karma link recorded in chronicle.'),
+              String(rel?.impact || 'Fate has shifted.'),
+              true // bidirectional
+            );
+            
+            if (result.success) {
+              mergedCharacters = result.updatedCharacters;
+            }
+          }
+        }
+        
+        // Get final character state after relationship updates
+        const finalCharIndex = mergedCharacters.findIndex(c => c.id === newChar.id);
+        const finalChar = finalCharIndex >= 0 ? mergedCharacters[finalCharIndex] : newChar;
+        
+        addLog(
+          rels.length > 0 
+            ? `New character discovered: ${finalChar.name} with ${rels.length} relationship(s)` 
+            : `New character discovered: ${finalChar.name}`,
+          'discovery'
+        );
       }
     });
 
@@ -311,14 +439,17 @@ export function useChapterProcessing() {
             
             // Link item to character if characterName is provided
             if (itemUpdate.characterName) {
-              const character = findCharacterByName(mergedCharacters, itemUpdate.characterName);
-              if (character) {
-                // Check if relationship already exists
-                const existingPossession = allCharacterItemPossessions.find(
-                  p => p.characterId === character.id && p.itemId === result.item.id
+              const characterIndex = mergedCharacters.findIndex(c => 
+                normalize(c.name) === normalize(itemUpdate.characterName)
+              );
+              if (characterIndex >= 0) {
+                const character = mergedCharacters[characterIndex];
+                const existingPossessions = character.itemPossessions || [];
+                const existingPossessionIndex = existingPossessions.findIndex(
+                  p => p.itemId === result.item.id
                 );
                 
-                if (!existingPossession) {
+                if (existingPossessionIndex === -1) {
                   const possession: CharacterItemPossession = {
                     id: generateUUID(),
                     characterId: character.id,
@@ -331,16 +462,39 @@ export function useChapterProcessing() {
                   };
                   allCharacterItemPossessions.push(possession);
                   
-                  // Also update character's itemPossessions array
-                  if (!character.itemPossessions) {
-                    character.itemPossessions = [];
-                  }
-                  character.itemPossessions.push(possession);
+                  // Create new character object with updated possessions (immutable update)
+                  mergedCharacters[characterIndex] = {
+                    ...character,
+                    itemPossessions: [...existingPossessions, possession]
+                  };
                 } else {
                   // Update existing possession
-                  existingPossession.status = 'active';
-                  existingPossession.acquiredChapter = newChapter.number;
-                  existingPossession.updatedAt = Date.now();
+                  const existingPossession = existingPossessions[existingPossessionIndex];
+                  const updatedPossession = {
+                    ...existingPossession,
+                    status: 'active' as const,
+                    acquiredChapter: newChapter.number,
+                    updatedAt: Date.now()
+                  };
+                  
+                  // Update in tracking array
+                  const trackingIndex = allCharacterItemPossessions.findIndex(
+                    p => p.characterId === character.id && p.itemId === result.item.id
+                  );
+                  if (trackingIndex >= 0) {
+                    allCharacterItemPossessions[trackingIndex] = updatedPossession;
+                  } else {
+                    allCharacterItemPossessions.push(updatedPossession);
+                  }
+                  
+                  // Create new character object with updated possession (immutable update)
+                  const updatedPossessions = existingPossessions.map((p, idx) => 
+                    idx === existingPossessionIndex ? updatedPossession : p
+                  );
+                  mergedCharacters[characterIndex] = {
+                    ...character,
+                    itemPossessions: updatedPossessions
+                  };
                 }
               }
             }
@@ -394,14 +548,17 @@ export function useChapterProcessing() {
             
             // Link technique to character if characterName is provided
             if (techniqueUpdate.characterName) {
-              const character = findCharacterByName(mergedCharacters, techniqueUpdate.characterName);
-              if (character) {
-                // Check if relationship already exists
-                const existingMastery = allCharacterTechniqueMasteries.find(
-                  m => m.characterId === character.id && m.techniqueId === result.technique.id
+              const characterIndex = mergedCharacters.findIndex(c => 
+                normalize(c.name) === normalize(techniqueUpdate.characterName)
+              );
+              if (characterIndex >= 0) {
+                const character = mergedCharacters[characterIndex];
+                const existingMasteries = character.techniqueMasteries || [];
+                const existingMasteryIndex = existingMasteries.findIndex(
+                  m => m.techniqueId === result.technique.id
                 );
                 
-                if (!existingMastery) {
+                if (existingMasteryIndex === -1) {
                   const mastery: CharacterTechniqueMastery = {
                     id: generateUUID(),
                     characterId: character.id,
@@ -415,17 +572,40 @@ export function useChapterProcessing() {
                   };
                   allCharacterTechniqueMasteries.push(mastery);
                   
-                  // Also update character's techniqueMasteries array
-                  if (!character.techniqueMasteries) {
-                    character.techniqueMasteries = [];
-                  }
-                  character.techniqueMasteries.push(mastery);
+                  // Create new character object with updated masteries (immutable update)
+                  mergedCharacters[characterIndex] = {
+                    ...character,
+                    techniqueMasteries: [...existingMasteries, mastery]
+                  };
                 } else {
                   // Update existing mastery
-                  existingMastery.status = 'active';
-                  existingMastery.masteryLevel = techniqueUpdate.masteryLevel || existingMastery.masteryLevel;
-                  existingMastery.learnedChapter = newChapter.number;
-                  existingMastery.updatedAt = Date.now();
+                  const existingMastery = existingMasteries[existingMasteryIndex];
+                  const updatedMastery = {
+                    ...existingMastery,
+                    status: 'active' as const,
+                    masteryLevel: techniqueUpdate.masteryLevel || existingMastery.masteryLevel,
+                    learnedChapter: newChapter.number,
+                    updatedAt: Date.now()
+                  };
+                  
+                  // Update in tracking array
+                  const trackingIndex = allCharacterTechniqueMasteries.findIndex(
+                    m => m.characterId === character.id && m.techniqueId === result.technique.id
+                  );
+                  if (trackingIndex >= 0) {
+                    allCharacterTechniqueMasteries[trackingIndex] = updatedMastery;
+                  } else {
+                    allCharacterTechniqueMasteries.push(updatedMastery);
+                  }
+                  
+                  // Create new character object with updated mastery (immutable update)
+                  const updatedMasteries = existingMasteries.map((m, idx) => 
+                    idx === existingMasteryIndex ? updatedMastery : m
+                  );
+                  mergedCharacters[characterIndex] = {
+                    ...character,
+                    techniqueMasteries: updatedMasteries
+                  };
                 }
               }
             }
@@ -517,20 +697,176 @@ export function useChapterProcessing() {
           activeArc?.id
         );
         
-        antagonistResults.forEach(result => {
+        // Track chapter appearances to create after antagonist is saved
+        const chapterAppearancesToCreate: Array<{
+          antagonistId: string;
+          presenceType: 'direct' | 'mentioned' | 'hinted' | 'influence';
+          significance: 'major' | 'minor' | 'foreshadowing';
+          notes?: string;
+        }> = [];
+
+        for (const result of antagonistResults) {
           const existingIndex = updatedAntagonists.findIndex(a => a.id === result.antagonist.id);
-          if (existingIndex >= 0) {
-            updatedAntagonists[existingIndex] = result.antagonist;
-            addLog(`Antagonist updated: ${result.antagonist.name}`, 'update');
-          } else {
-            updatedAntagonists.push(result.antagonist);
-            addLog(`Antagonist discovered: ${result.antagonist.name}`, 'discovery');
+          const oldAntagonist = existingIndex >= 0 ? updatedAntagonists[existingIndex] : null;
+          
+          // Auto-manage status based on story context
+          let finalAntagonist = result.antagonist;
+          try {
+            finalAntagonist = await autoManageStatus(
+              result.antagonist,
+              newChapter.number,
+              result.chapterAppearance?.presenceType,
+              true // hasRecentAppearance
+            );
+          } catch (error) {
+            console.debug('Failed to auto-manage antagonist status:', error);
           }
-        });
+          
+          if (existingIndex >= 0) {
+            updatedAntagonists[existingIndex] = finalAntagonist;
+            addLog(`Antagonist updated: ${finalAntagonist.name}`, 'update');
+          } else {
+            updatedAntagonists.push(finalAntagonist);
+            addLog(`Antagonist discovered: ${finalAntagonist.name}`, 'discovery');
+          }
+
+          // Track chapter appearance if provided
+          if (result.chapterAppearance && newChapter.id) {
+            chapterAppearancesToCreate.push({
+              antagonistId: finalAntagonist.id,
+              presenceType: result.chapterAppearance.presenceType,
+              significance: result.chapterAppearance.significance,
+              notes: result.chapterAppearance.notes
+            });
+          }
+
+          // Track progression automatically
+          try {
+            await analyzeAndTrackProgression(
+              oldAntagonist,
+              finalAntagonist,
+              newChapter.number,
+              result.chapterAppearance?.presenceType,
+              result.chapterAppearance?.significance
+            );
+          } catch (error) {
+            // Log but don't fail - progression tracking is non-critical
+            console.debug('Failed to track antagonist progression:', error);
+          }
+        }
+
+        // Automatically create chapter appearances (fire and forget - will be saved when novel is saved)
+        if (chapterAppearancesToCreate.length > 0 && newChapter.id) {
+          // Create appearances asynchronously - they'll be saved when the novel is saved
+          // Using skipValidation=true since antagonist may not be in DB yet
+          chapterAppearancesToCreate.forEach(async (appearance) => {
+            try {
+              await addAntagonistToChapter(
+                appearance.antagonistId,
+                newChapter.id,
+                appearance.presenceType,
+                appearance.significance,
+                appearance.notes || '',
+                true // skipValidation - will be saved via saveNovel
+              );
+            } catch (error) {
+              // Log but don't fail - appearance will be created when novel is saved
+              console.debug('Could not create chapter appearance immediately (will be saved with novel):', error);
+            }
+          });
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('Error processing antagonist updates:', errorMessage);
         addLog(`Failed to process antagonist updates: ${errorMessage}`, 'update');
+      }
+    }
+
+    // Process system updates
+    let updatedSystems = [...(novel.characterSystems || [])];
+    const protagonist = mergedCharacters.find(c => c.isProtagonist);
+    
+    if (extraction.systemUpdates && Array.isArray(extraction.systemUpdates) && extraction.systemUpdates.length > 0 && protagonist) {
+      try {
+        // Find protagonist character by name from system update
+        const systemResults = processSystemUpdates(
+          extraction.systemUpdates,
+          updatedSystems,
+          novel.id,
+          protagonist.id,
+          newChapter.number
+        );
+        
+        // Track chapter appearances to create after system is saved
+        const chapterAppearancesToCreate: Array<{
+          systemId: string;
+          presenceType: 'direct' | 'mentioned' | 'hinted' | 'used';
+          significance: 'major' | 'minor' | 'foreshadowing';
+          featuresUsed?: string[];
+          notes?: string;
+        }> = [];
+
+        for (const result of systemResults) {
+          const existingIndex = updatedSystems.findIndex(s => s.id === result.system.id);
+          const oldSystem = existingIndex >= 0 ? updatedSystems[existingIndex] : null;
+          
+          if (existingIndex >= 0) {
+            updatedSystems[existingIndex] = result.system;
+            addLog(`System updated: ${result.system.name}`, 'update');
+          } else {
+            updatedSystems.push(result.system);
+            addLog(`System discovered: ${result.system.name}`, 'discovery');
+          }
+
+          // Track chapter appearance if provided
+          if (result.chapterAppearance && newChapter.id) {
+            chapterAppearancesToCreate.push({
+              systemId: result.system.id,
+              presenceType: result.chapterAppearance.presenceType,
+              significance: result.chapterAppearance.significance,
+              featuresUsed: result.chapterAppearance.featuresUsed,
+              notes: result.chapterAppearance.notes
+            });
+          }
+
+          // Track progression automatically
+          try {
+            await analyzeAndTrackSystemProgression(
+              oldSystem,
+              result.system,
+              newChapter.number,
+              result.chapterAppearance?.presenceType,
+              result.chapterAppearance?.significance
+            );
+          } catch (error) {
+            // Log but don't fail - progression tracking is non-critical
+            console.debug('Failed to track system progression:', error);
+          }
+        }
+
+        // Automatically create chapter appearances (fire and forget - will be saved when novel is saved)
+        if (chapterAppearancesToCreate.length > 0 && newChapter.id) {
+          // Create appearances asynchronously
+          chapterAppearancesToCreate.forEach(async (appearance) => {
+            try {
+              await trackSystemAppearance({
+                systemId: appearance.systemId,
+                chapterId: newChapter.id!,
+                presenceType: appearance.presenceType,
+                significance: appearance.significance,
+                featuresUsed: appearance.featuresUsed || [],
+                notes: appearance.notes || '',
+              });
+            } catch (error) {
+              // Log but don't fail - appearance will be created when novel is saved
+              console.debug('Could not create chapter appearance immediately (will be saved with novel):', error);
+            }
+          });
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Error processing system updates:', errorMessage);
+        addLog(`Failed to process system updates: ${errorMessage}`, 'update');
       }
     }
 
@@ -539,6 +875,69 @@ export function useChapterProcessing() {
       ...newChapter,
       scenes: scenes.length > 0 ? scenes : newChapter.scenes,
     };
+
+    // 6) Story Threads
+    let updatedThreads = [...(novel.storyThreads || [])];
+    if (extraction.threadUpdates && Array.isArray(extraction.threadUpdates) && extraction.threadUpdates.length > 0) {
+      try {
+        const { processThreadUpdates } = await import('../services/storyThreadService');
+        const threadResults = processThreadUpdates(
+          extraction.threadUpdates,
+          updatedThreads,
+          novel.id,
+          newChapter.number,
+          newChapter.id,
+          {
+            characterCodex: mergedCharacters,
+            novelItems: items,
+            novelTechniques: techniques,
+            territories,
+            antagonists: updatedAntagonists,
+            plotLedger: updatedArcs,
+            worldBible: novel.worldBible,
+            realms: novel.realms,
+          }
+        );
+
+        for (const result of threadResults) {
+          const existingIndex = updatedThreads.findIndex(t => t.id === result.thread.id);
+          if (existingIndex >= 0) {
+            updatedThreads[existingIndex] = result.thread;
+            if (result.wasUpdated) {
+              addLog(`Thread updated: ${result.thread.title}`, 'update');
+            }
+          } else {
+            updatedThreads.push(result.thread);
+            addLog(`Thread discovered: ${result.thread.title}`, 'discovery');
+          }
+
+          // Save progression event if available
+          if (result.progressionEvent) {
+            try {
+              const { saveThreadProgressionEvent } = await import('../services/threadService');
+              await saveThreadProgressionEvent(result.progressionEvent);
+            } catch (error) {
+              console.warn('Failed to save thread progression event:', error);
+            }
+          }
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Error processing thread updates:', errorMessage);
+        addLog(`Failed to process thread updates: ${errorMessage}`, 'update');
+      }
+    }
+
+    // Update comprehensive context tracking after chapter generation
+    try {
+      const { updateContextAfterChapter } = await import('../services/chapterContextUpdater');
+      await updateContextAfterChapter(novel, newChapter, extraction);
+      addLog('Context tracking updated', 'update');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Error updating context after chapter:', errorMessage);
+      // Don't fail if context update fails - non-critical
+    }
 
     // Return updated novel state
     return {
@@ -552,6 +951,8 @@ export function useChapterProcessing() {
       novelTechniques: techniques,
       plotLedger: updatedArcs,
       antagonists: updatedAntagonists.length > 0 ? updatedAntagonists : novel.antagonists,
+      characterSystems: updatedSystems.length > 0 ? updatedSystems : novel.characterSystems,
+      storyThreads: updatedThreads.length > 0 ? updatedThreads : novel.storyThreads,
       chapters: novel.chapters.map(c => c.id === newChapter.id ? updatedChapter : c),
       updatedAt: Date.now(),
     };

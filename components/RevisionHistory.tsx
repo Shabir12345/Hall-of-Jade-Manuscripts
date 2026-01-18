@@ -72,7 +72,7 @@ const RevisionHistory: React.FC<RevisionHistoryProps> = ({ entityType, entityId,
             </div>
           ) : revisions.length === 0 ? (
             <div className="py-16 text-center">
-              <div className="text-6xl mb-4">📜</div>
+              <div className="text-4xl mb-3">📜</div>
               <h3 className="text-xl font-fantasy font-bold text-zinc-300 mb-2">No Revisions</h3>
               <p className="text-sm text-zinc-500">No revision history available for this {entityType}.</p>
             </div>

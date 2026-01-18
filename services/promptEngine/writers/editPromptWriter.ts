@@ -78,88 +78,124 @@ ${chapter.content.substring(0, 500)}...`;
     ? `\n\nRECURRING ISSUE PREVENTION (Address these issues in your edit):\n${patternConstraints.map(c => `  - ${c}`).join('\n')}`
     : '';
 
-  const taskDescription = `Edit and refine Chapter ${chapter.number}: "${chapter.title}"
+  const taskDescription = `[EDITING TASK]
 
-PROFESSIONAL EDITOR PERSPECTIVE:
+Edit and refine Chapter ${chapter.number}: "${chapter.title}"
+
+[PROFESSIONAL EDITOR PERSPECTIVE]
+
 As a professional editor, your goal is to enhance the prose while preserving the author's unique voice. Focus on:
-- Clarity and readability
-- Sentence structure and flow
-- Pacing and rhythm
-- Dialogue quality and naturalness
-- Narrative consistency
-- Show, don't tell (use concrete details instead of abstractions)
-- Eliminating redundancy and wordiness
-- Strengthening weak passages
+• Clarity and readability
+• Sentence structure and flow
+• Pacing and rhythm
+• Dialogue quality and naturalness
+• Narrative consistency
+• Show, don't tell (use concrete details instead of abstractions)
+• Eliminating redundancy and wordiness
+• Strengthening weak passages
 
-CRITICAL REQUIREMENTS:
-- Preserve the original narrative voice and writing style
-- Maintain consistency with the chapter's established tone (${chapterStyle.tone})
-- Keep the core plot and character actions intact
-- Apply the editing instruction while maintaining style consistency
-- Ensure all changes align with the story's established world rules and character personalities
-- Preserve the chapter's logic audit structure if applicable
-${styleNotes.length > 0 ? `- Style preservation: ${styleNotes.join(', ')}` : ''}${patternConstraintsSection}
+[CRITICAL REQUIREMENTS]
 
-EDITING GUIDELINES:
-- Pacing: Maintain appropriate pacing. Vary sentence length for rhythm. Short sentences for action/tension, longer sentences for reflection/description.
-- Dialogue: Ensure natural speech patterns. Vary dialogue tags appropriately. Show character voice through word choice and syntax.
-- Sentence Variety: Avoid repetitive sentence structures. Mix simple, compound, and complex sentences. Vary sentence beginnings.
-- Paragraph Structure: Ensure proper paragraph breaks. Use varied paragraph lengths (2-8 sentences typically). Break at logical points (dialogue, scene shifts, time changes, topic changes).
-- Show Don't Tell: Replace abstractions with concrete details. Instead of "He was angry," show "His fists clenched, jaw tight, eyes narrowed."
-- Word Choice: Use precise, evocative language. Avoid clichés and vague abstractions. Prefer specific nouns and strong verbs.
-- Eliminate Redundancy: Remove repetitive words, phrases, or ideas. Trust the reader to understand without repetition.
+Preservation Standards:
+• Preserve the original narrative voice and writing style
+• Maintain consistency with the chapter's established tone (${chapterStyle.tone})
+• Keep the core plot and character actions intact
+• Apply the editing instruction while maintaining style consistency
+• Ensure all changes align with the story's established world rules and character personalities
+• Preserve the chapter's logic audit structure if applicable
+${styleNotes.length > 0 ? `• Style preservation: ${styleNotes.join(', ')}` : ''}${patternConstraintsSection}
 
-AI DETECTION EVASION PROTOCOL (CRITICAL):
+[EDITING GUIDELINES]
+
+Prose Enhancement Techniques:
+• Pacing: Maintain appropriate pacing. Vary sentence length for rhythm. Short sentences for action/tension, longer sentences for reflection/description
+• Dialogue: Ensure natural speech patterns. Vary dialogue tags appropriately. Show character voice through word choice and syntax
+• Sentence Variety: Avoid repetitive sentence structures. Mix simple, compound, and complex sentences. Vary sentence beginnings
+• Paragraph Structure: Ensure proper paragraph breaks. Use varied paragraph lengths (2-8 sentences typically). Break at logical points (dialogue, scene shifts, time changes, topic changes)
+• Show Don't Tell: Replace abstractions with concrete details. Instead of "He was angry," show "His fists clenched, jaw tight, eyes narrowed."
+• Word Choice: Use precise, evocative language. Avoid clichés and vague abstractions. Prefer specific nouns and strong verbs
+• Eliminate Redundancy: Remove repetitive words, phrases, or ideas. Trust the reader to understand without repetition
+
+[ACCESSIBILITY CONSIDERATIONS - For Ages 10-40]
+
+When editing, improve clarity and accessibility while maintaining the author's voice:
+
+Language and Clarity Enhancement:
+• Simplify complex language: If the text uses unnecessarily complex words, replace them with clearer alternatives that maintain the meaning. Prefer common words over rare ones when both work equally well
+• Clarify sentences: If sentences are too long or complex, break them into shorter, clearer sentences that are easier to follow. Ensure the meaning stays clear
+• Explain specialized terms: If specialized terms or world-specific concepts appear without explanation, add brief, natural explanations that don't slow down the story
+• Check age-appropriate vocabulary: Ensure the vocabulary is appropriate for readers aged 10-40. Replace overly academic or unnecessarily formal language with clearer alternatives when possible
+• Maintain meaning: When simplifying, ensure you don't lose the original meaning or emotional impact. Clarity should enhance understanding, not reduce depth
+• Natural flow: Simplifications should feel natural and not draw attention to themselves. The text should still read smoothly and engagingly
+
+Note: The goal is to make the text more accessible while preserving quality and the author's unique voice. Simple, clear writing can still be powerful and engaging.
+
+[AI DETECTION EVASION PROTOCOL - CRITICAL]
+
 As a professional editor, you must actively identify and fix AI-like patterns in the text to ensure it reads as authentically human-written:
 
-IDENTIFY AND FIX AI-LIKE PATTERNS:
-- **Uniform sentence length**: If you notice sequences of similar-length sentences, break them up by dramatically varying sentence length (mix 3-5 word sentences with 25-30+ word sentences).
-- **Predictable word choices**: Replace overly common or repetitive word choices with synonyms or slightly less predictable alternatives that fit naturally.
-- **Repetitive structures**: Vary sentence beginnings and structures. Avoid patterns like "He did X. He did Y. He did Z." or similar repetitive constructions.
-- **Overly polished prose**: Add subtle imperfections that feel human - strategic sentence fragments for emphasis, varied pacing that creates natural rhythm, occasional unconventional structures when they serve the narrative.
-- **Perfect grammar everywhere**: While maintaining clarity, occasionally use intentional fragments or slightly unconventional structures for emphasis. Not every sentence needs to be perfectly structured.
+Identify and Fix AI-Like Patterns:
+• Uniform sentence length: If you notice sequences of similar-length sentences, break them up by dramatically varying sentence length (mix 3-5 word sentences with 25-30+ word sentences)
+• Predictable word choices: Replace overly common or repetitive word choices with synonyms or slightly less predictable alternatives that fit naturally
+• Repetitive structures: Vary sentence beginnings and structures. Avoid patterns like "He did X. He did Y. He did Z." or similar repetitive constructions
+• Overly polished prose: Add subtle imperfections that feel human - strategic sentence fragments for emphasis, varied pacing that creates natural rhythm, occasional unconventional structures when they serve the narrative
+• Perfect grammar everywhere: While maintaining clarity, occasionally use intentional fragments or slightly unconventional structures for emphasis. Not every sentence needs to be perfectly structured
 
-INCREASE BURSTINESS (Sentence Variation):
-- Dramatically vary sentence length throughout. Mix very short sentences (3-5 words) for impact with longer sentences (25-30+ words) for complex thoughts.
-- Use sentence fragments strategically for emphasis or rhythm.
-- Alternate between simple, compound, and complex sentences.
-- Break conventional patterns occasionally - start sentences unconventionally when it serves the narrative.
-- Avoid sequences of similar-length sentences that create uniform, AI-like patterns.
+Sentence Variation Requirements:
+• Dramatically vary sentence length throughout. Mix very short sentences (3-5 words) for impact with longer sentences (25-30+ words) for complex thoughts
+• Use sentence fragments strategically for emphasis or rhythm
+• Alternate between simple, compound, and complex sentences
+• Break conventional patterns occasionally - start sentences unconventionally when it serves the narrative
+• Avoid sequences of similar-length sentences that create uniform, AI-like patterns
 
-INCREASE PERPLEXITY (Vocabulary Unpredictability):
-- Replace repeated words with synonyms where appropriate.
-- Choose slightly less common words where they fit naturally (but maintain clarity).
-- Vary formality levels within scenes - not everything needs perfect formal grammar.
-- Include occasional genre-specific colloquialisms or authentic phrases.
-- Avoid overly polished, predictable word choices that make text feel machine-generated.
+Vocabulary Variety Requirements:
+• Replace repeated words with synonyms where appropriate
+• Choose slightly less common words where they fit naturally (but prioritize clarity and accessibility for readers aged 10-40)
+• Vary formality levels within scenes - not everything needs perfect formal grammar
+• Include occasional genre-specific colloquialisms or authentic phrases
+• Avoid overly polished, predictable word choices that make text feel machine-generated
 
-NATURAL WRITING PATTERNS:
-- Add subtle imperfections: intentional sentence fragments, strategic comma usage that feels natural, varied pacing.
-- Create natural rhythm through varied pacing - alternate between fast (shorter sentences/paragraphs) and slow (longer sentences/paragraphs).
-- Vary paragraph lengths dramatically - some very short (1-2 sentences), others medium (4-6), occasionally longer (7-8).
-- Ensure each character has a unique voice with distinct rhythm and vocabulary patterns.
+Natural Writing Patterns:
+• Add subtle imperfections: intentional sentence fragments, strategic comma usage that feels natural, varied pacing
+• Create natural rhythm through varied pacing - alternate between fast (shorter sentences/paragraphs) and slow (longer sentences/paragraphs)
+• Vary paragraph lengths dramatically - some very short (1-2 sentences), others medium (4-6), occasionally longer (7-8)
+• Ensure each character has a unique voice with distinct rhythm and vocabulary patterns
 
 When editing, actively scan for these patterns and fix them to create prose that reads as authentically human-written.
 
-ADVANCED AI EVASION TECHNIQUES FOR EDITING:
-- Strategic repetition: Occasionally repeat a word or phrase for emphasis (creates natural variation, not excessive)
-- Irregular punctuation: Use dashes, ellipses, and other punctuation creatively for natural pauses and emphasis
-- Thought interruptions: Show characters' thoughts being interrupted mid-sentence for natural breaks
-- Sensory details: Include specific, unexpected sensory details (smells, textures, tastes) that add authenticity
-- Time markers variation: Use varied time markers ("moments later", "after what felt like hours", "before he could react")
-- Action/description interweaving: Alternate between action and description at irregular intervals
-- Emotional beats variation: Vary how emotions are expressed - sometimes direct, sometimes shown, sometimes implied
-- Unpredictable transitions: Use varied transition words, occasionally starting sentences with conjunctions
-- Natural dialogue tags: Vary dialogue tags naturally - mix action beats and varied tags, not always "he said"
-- Organic flow: Allow sentences to flow naturally rather than forcing perfect structure
+[ADVANCED AI EVASION TECHNIQUES FOR EDITING]
+
+Human-Like Writing Enhancements:
+• Strategic repetition: Occasionally repeat a word or phrase for emphasis (creates natural variation, not excessive)
+• Irregular punctuation: Use dashes, ellipses, and other punctuation creatively for natural pauses and emphasis
+• Thought interruptions: Show characters' thoughts being interrupted mid-sentence for natural breaks
+• Sensory details: Include specific, unexpected sensory details (smells, textures, tastes) that add authenticity
+• Time markers variation: Use varied time markers ("moments later", "after what felt like hours", "before he could react")
+• Action/description interweaving: Alternate between action and description at irregular intervals
+• Emotional beats variation: Vary how emotions are expressed - sometimes direct, sometimes shown, sometimes implied
+• Unpredictable transitions: Use varied transition words, occasionally starting sentences with conjunctions
+• Natural dialogue tags: Vary dialogue tags naturally - mix action beats and varied tags, not always "he said"
+• Organic flow: Allow sentences to flow naturally rather than forcing perfect structure
+
+[EDITED CHAPTER QUALITY STANDARDS]
 
 The edited chapter should:
-- Feel like a natural refinement, not a rewrite
-- Maintain the same pacing and structure (unless the instruction specifically asks to change pacing)
-- Keep all important plot points and character development
-- Improve clarity, flow, or impact based on the instruction
-- Demonstrate professional editorial polish while preserving the author's voice
-${patternConstraints.length > 0 ? '- Address any recurring issues that may be present in the current chapter' : ''}`;
+• Feel like a natural refinement, not a rewrite
+• Maintain the same pacing and structure (unless the instruction specifically asks to change pacing)
+• Keep all important plot points and character development
+• Improve clarity, flow, or impact based on the instruction
+• Demonstrate professional editorial polish while preserving the author's voice
+${patternConstraints.length > 0 ? '• Address any recurring issues that may be present in the current chapter' : ''}
+
+[OUTPUT FORMAT REQUIREMENTS - CRITICAL]
+
+Return format specifications:
+• Return ONLY the edited chapter content as plain text prose
+• Do NOT return JSON, markdown code blocks, or any structured format
+• Do NOT wrap the content in quotes, brackets, or any delimiters
+• Return the chapter content exactly as it should appear in the novel - as regular narrative text
+• The response should be the chapter content itself, ready to be saved directly
+• If you need to indicate changes, do so through the prose itself, not through formatting or structure`;
 
   // For editing, we only need style context, not full story context
   const styleGuidelines = state.chapters.length >= 3 
@@ -173,7 +209,7 @@ ${patternConstraints.length > 0 ? '- Address any recurring issues that may be pr
   }
 
   const builtPrompt = await buildSimplifiedPrompt(state, {
-    role: 'You are a professional editor with expertise in novel editing, specializing in Xianxia, Xuanhuan, and System novels. You bring decades of editorial experience to refine prose while meticulously preserving the author\'s unique voice and style. Your edits enhance clarity, flow, and impact without altering the essential character of the work.',
+    role: 'You are a professional editor with expertise in novel editing, specializing in Xianxia, Xuanhuan, and System novels. You bring decades of editorial experience to refine prose while meticulously preserving the author\'s unique voice and style. Your edits enhance clarity, flow, and impact without altering the essential character of the work. You excel at identifying and fixing AI-like patterns while maintaining authentic human-like prose.',
     taskDescription,
     userInstruction: enhancedUserInstruction,
     contextSnippet: `${contextSnippet}\n\n[STYLE GUIDELINES]\n${styleGuidelines}`,

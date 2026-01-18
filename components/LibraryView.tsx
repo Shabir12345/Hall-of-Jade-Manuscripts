@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, memo } from 'react';
 import { NovelState } from '../types';
+import { NOVEL_TEMPLATES, type NovelTemplate, applyNovelTemplate } from '../utils/templates';
 
 interface LibraryViewProps {
   novels: NovelState[];
@@ -13,6 +14,10 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
   const [showModal, setShowModal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newGenre, setNewGenre] = useState('Xianxia');
+  const [selectedNovels, setSelectedNovels] = useState<Set<string>>(new Set());
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<NovelTemplate | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const totalWords = useMemo(
     () => novels.reduce((acc, n) => acc + n.chapters.reduce((cAcc, c) => cAcc + c.content.split(/\s+/).length, 0), 0),
@@ -24,23 +29,131 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
     [novels]
   );
 
+  const availableTemplates = useMemo(
+    () => NOVEL_TEMPLATES.filter(t => t.genre === newGenre),
+    [newGenre]
+  );
+
+  const handleTemplateSelect = (template: NovelTemplate) => {
+    setSelectedTemplate(template);
+    setNewTitle(template.name);
+    setShowTemplates(false);
+  };
+
+  const handleCreateWithTemplate = () => {
+    if (!newTitle.trim()) return;
+    
+    if (selectedTemplate) {
+      const templateData = applyNovelTemplate(selectedTemplate, newTitle.trim());
+      // Note: onCreate only accepts title and genre, so we'll need to extend it
+      // For now, just use the template's genre
+      onCreate(newTitle.trim(), selectedTemplate.genre);
+    } else {
+      onCreate(newTitle.trim(), newGenre);
+    }
+    
+    setShowModal(false);
+    setNewTitle('');
+    setSelectedTemplate(null);
+    setShowTemplates(false);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedNovels.size === novels.length) {
+      setSelectedNovels(new Set());
+    } else {
+      setSelectedNovels(new Set(novels.map(n => n.id)));
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedNovels.size === 0) return;
+    const count = selectedNovels.size;
+    if (window.confirm(`Delete ${count} novel${count !== 1 ? 's' : ''}? This action cannot be undone.`)) {
+      selectedNovels.forEach(novelId => {
+        onDelete(novelId);
+      });
+      setSelectedNovels(new Set());
+      setIsBulkMode(false);
+    }
+  };
+
+  const handleNovelClick = (novelId: string) => {
+    if (isBulkMode) {
+      setSelectedNovels(prev => {
+        const next = new Set(prev);
+        if (next.has(novelId)) {
+          next.delete(novelId);
+        } else {
+          next.add(novelId);
+        }
+        return next;
+      });
+    } else {
+      onSelect(novelId);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-zinc-950 p-6 md:p-8 lg:p-12 animate-in fade-in duration-300 overflow-y-auto">
-      <div className="max-w-6xl mx-auto space-y-8 md:space-y-12">
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+    <div className="min-h-screen bg-zinc-950 p-4 md:p-5 lg:p-6 animate-in fade-in duration-300 overflow-y-auto">
+      <div className="max-w-5xl mx-auto space-y-6 md:space-y-8">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div className="space-y-2">
-            <h1 className="text-3xl md:text-4xl font-fantasy font-bold text-amber-500 tracking-wider">HALL OF JADE MANUSCRIPTS</h1>
+            <h1 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider">HALL OF JADE MANUSCRIPTS</h1>
             <p className="text-zinc-400 font-medium tracking-tight uppercase text-sm">The Apex Sovereign's Personal Collection</p>
           </div>
-          <div className="flex items-center space-x-6 md:space-x-8 text-right">
-            <div>
-              <p className="text-2xl md:text-3xl font-fantasy font-bold text-zinc-100">{novels.length}</p>
-              <p className="text-xs text-zinc-500 font-semibold uppercase mt-1">Active Epics</p>
-            </div>
-            <div>
-              <p className="text-2xl md:text-3xl font-fantasy font-bold text-zinc-100">{totalWords.toLocaleString()}</p>
-              <p className="text-xs text-zinc-500 font-semibold uppercase mt-1">Total Words Formed</p>
-            </div>
+          <div className="flex items-center gap-4 flex-wrap">
+            {isBulkMode ? (
+              <>
+                <button
+                  onClick={handleSelectAll}
+                  className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg font-semibold text-sm transition-all duration-200"
+                  aria-label={selectedNovels.size === novels.length ? 'Deselect all' : 'Select all'}
+                >
+                  {selectedNovels.size === novels.length ? 'Deselect All' : 'Select All'}
+                </button>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={selectedNovels.size === 0}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed text-white rounded-lg font-semibold text-sm transition-all duration-200 flex items-center gap-2"
+                  aria-label={`Delete ${selectedNovels.size} selected novels`}
+                >
+                  <span>🗑️</span>
+                  <span>Delete ({selectedNovels.size})</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setIsBulkMode(false);
+                    setSelectedNovels(new Set());
+                  }}
+                  className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg font-semibold text-sm transition-all duration-200"
+                  aria-label="Cancel bulk mode"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setIsBulkMode(true)}
+                  className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg font-semibold text-sm transition-all duration-200 flex items-center gap-2"
+                  aria-label="Enable bulk selection mode"
+                >
+                  <span>☑️</span>
+                  <span>Bulk Select</span>
+                </button>
+                <div className="flex items-center space-x-6 md:space-x-8 text-right">
+                  <div>
+                    <p className="text-2xl md:text-3xl font-fantasy font-bold text-zinc-100">{novels.length}</p>
+                    <p className="text-xs text-zinc-500 font-semibold uppercase mt-1">Active Epics</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl md:text-3xl font-fantasy font-bold text-zinc-100">{totalWords.toLocaleString()}</p>
+                    <p className="text-xs text-zinc-500 font-semibold uppercase mt-1">Total Words Formed</p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </header>
 
@@ -63,25 +176,44 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
               <p className="text-sm text-zinc-500 mb-6">Begin your epic journey by creating your first novel.</p>
               <button
                 onClick={() => setShowModal(true)}
-                className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-200 shadow-lg shadow-amber-900/20 hover:scale-105"
+                className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-xl font-semibold transition-all duration-200 shadow-lg shadow-amber-900/20 hover:scale-105"
               >
                 Create Your First Novel
               </button>
             </div>
           )}
 
-          {sortedNovels.map((novel) => (
-            <div
-              key={novel.id}
-              className="group relative h-64 min-h-[256px] bg-zinc-900/60 border border-zinc-700 rounded-2xl hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300"
-            >
-              {/* Open button (covers the card) */}
-              <button
-                type="button"
-                onClick={() => onSelect(novel.id)}
-                className="w-full h-full p-6 flex flex-col justify-between text-left cursor-pointer rounded-2xl focus-visible:outline-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2"
-                aria-label={`Open ${novel.title}`}
+          {sortedNovels.map((novel) => {
+            const isSelected = selectedNovels.has(novel.id);
+            return (
+              <div
+                key={novel.id}
+                className={`group relative h-64 min-h-[256px] bg-zinc-900/60 border rounded-2xl hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 ${
+                  isBulkMode
+                    ? isSelected
+                      ? 'border-amber-500 bg-amber-950/20'
+                      : 'border-zinc-700 hover:border-zinc-600'
+                    : 'border-zinc-700 hover:border-amber-600/50'
+                }`}
               >
+                {isBulkMode && (
+                  <div className="absolute top-5 left-5 z-10">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => handleNovelClick(novel.id)}
+                      className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-amber-600 focus:ring-amber-500 focus:ring-2 cursor-pointer"
+                      aria-label={`Select ${novel.title}`}
+                    />
+                  </div>
+                )}
+                {/* Open button (covers the card) */}
+                <button
+                  type="button"
+                  onClick={() => handleNovelClick(novel.id)}
+                  className="w-full h-full p-6 flex flex-col justify-between text-left cursor-pointer rounded-2xl focus-visible:outline-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2"
+                  aria-label={isBulkMode ? `Select ${novel.title}` : `Open ${novel.title}`}
+                >
                 <div className="space-y-3">
                   <div className="flex justify-between items-start">
                     <span className="text-xs font-bold text-amber-600 uppercase tracking-wider px-2 py-1 bg-amber-600/10 rounded-md">
@@ -125,7 +257,8 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
                 <span className="text-4xl grayscale brightness-50">📜</span>
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       </div>
 
@@ -136,7 +269,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
         >
           <div className="bg-zinc-900 border border-zinc-700 p-8 md:p-10 rounded-2xl w-full max-w-lg shadow-2xl space-y-6 animate-in scale-in">
             <div className="flex justify-between items-center">
-              <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider">REFINING A NEW STORY SEED</h2>
+              <h2 className="text-xl md:text-2xl font-fantasy font-bold text-amber-500 tracking-wider">REFINING A NEW STORY SEED</h2>
               <button
                 onClick={() => setShowModal(false)}
                 className="text-zinc-500 hover:text-zinc-300 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors duration-200"
@@ -163,6 +296,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="novel-genre">Genre Essence</label>
+                <span id="genre-help" className="sr-only">Select the genre for your novel</span>
                 <select 
                   id="novel-genre"
                   value={newGenre}
@@ -172,7 +306,6 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
                   aria-required="true"
                   aria-describedby="genre-help"
                 >
-                  <span id="genre-help" className="sr-only">Select the genre for your novel</span>
                   <option>Xianxia</option>
                   <option>Xuanhuan</option>
                   <option>LitRPG / System</option>
@@ -189,13 +322,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
                 Cancel
               </button>
               <button 
-                onClick={() => { 
-                  if (newTitle.trim()) {
-                    onCreate(newTitle.trim(), newGenre); 
-                    setShowModal(false); 
-                    setNewTitle(''); 
-                  }
-                }}
+                onClick={handleCreateWithTemplate}
                 disabled={!newTitle.trim()}
                 className="bg-amber-600 hover:bg-amber-500 text-white px-8 py-2.5 rounded-xl font-semibold transition-all duration-200 shadow-lg shadow-amber-900/40 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
               >

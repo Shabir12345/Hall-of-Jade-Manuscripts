@@ -36,7 +36,13 @@ const EditorReportsView: React.FC<EditorReportsViewProps> = ({ novelState }) => 
       const fetchedReports = await fetchEditorReports(novelState.id);
       setReports(fetchedReports);
     } catch (error) {
-      console.error('Error loading editor reports:', error);
+      // Safely log error to prevent "Cannot convert object to primitive value" errors
+      try {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('Error loading editor reports:', errorMessage);
+      } catch (e) {
+        console.error('Error loading editor reports (details unavailable)');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -296,7 +302,7 @@ const EditorReportsView: React.FC<EditorReportsViewProps> = ({ novelState }) => 
       {/* Reports List */}
       {filteredAndSortedReports.length === 0 ? (
         <div className="text-center py-12 border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
-          <div className="text-6xl mb-4">📝</div>
+          <div className="text-4xl mb-3">📝</div>
           <h3 className="text-xl font-fantasy font-bold text-zinc-300 mb-2">
             {reports.length === 0 ? 'No Editor Reports Yet' : 'No Reports Match Filters'}
           </h3>

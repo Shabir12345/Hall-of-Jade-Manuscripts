@@ -12,9 +12,6 @@ export interface SettingsPanelProps {
   onPitchChange: (pitch: number) => void;
   volume: number;
   onVolumeChange: (volume: number) => void;
-  useGemini: boolean;
-  onToggleGemini: () => void;
-  availableProviders: ('browser' | 'gemini')[];
   keyboardShortcuts?: boolean;
   onKeyboardShortcutsChange?: (enabled: boolean) => void;
   autoPlay?: boolean;
@@ -28,9 +25,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onPitchChange,
   volume,
   onVolumeChange,
-  useGemini,
-  onToggleGemini,
-  availableProviders,
   keyboardShortcuts = true,
   onKeyboardShortcutsChange,
   autoPlay = false,
@@ -107,33 +101,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           aria-label="Volume"
         />
       </div>
-
-      {/* TTS Engine Toggle */}
-      {availableProviders.includes('gemini') && (
-        <div className="flex items-center justify-between pt-2 border-t border-zinc-700">
-          <div>
-            <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wide block">
-              Use Gemini TTS
-            </label>
-            <p className="text-xs text-zinc-500 mt-1">
-              Higher quality narration (requires GEMINI_API_KEY)
-            </p>
-          </div>
-          <button
-            onClick={onToggleGemini}
-            className={`relative w-12 h-6 rounded-full transition-colors ${
-              useGemini ? 'bg-amber-600' : 'bg-zinc-700'
-            }`}
-            aria-label="Toggle Gemini TTS"
-          >
-            <span
-              className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
-                useGemini ? 'translate-x-6' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
-      )}
 
       {/* Additional Options */}
       <div className="space-y-2 pt-2 border-t border-zinc-700">

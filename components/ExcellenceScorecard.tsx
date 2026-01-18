@@ -1,7 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { NovelState } from '../types';
-import { ImprovementRequest, ImprovementExecutionResult } from '../types/improvement';
+import { ImprovementRequest, ImprovementExecutionResult, ImprovementHistory } from '../types/improvement';
 import NovelImprovementDialog from './NovelImprovementDialog';
+import { EmptyState } from './EmptyState';
+import { useNovel } from '../contexts/NovelContext';
+import { useToast } from '../contexts/ToastContext';
+import { getImprovementHistory, rollbackImprovement } from '../services/novelImprovementService';
+import { formatRelativeTime } from '../utils/timeUtils';
 import { analyzeStoryStructure } from '../services/storyStructureAnalyzer';
 import { analyzeHeroJourney } from '../services/heroJourneyTracker';
 import { analyzeSaveTheCat } from '../services/beatSheetAnalyzer';
@@ -13,6 +18,7 @@ import { analyzeOriginality } from '../services/originalityDetector';
 import { analyzeMarketReadiness } from '../services/marketReadinessService';
 import { analyzeTension } from '../services/tensionAnalyzer';
 import { analyzeLiteraryDevices } from '../services/literaryDeviceAnalyzer';
+import { RelatedViews, RELATED_VIEWS_MAP } from './RelatedViews';
 import { analyzeVoiceUniqueness } from '../services/voiceAnalysisService';
 
 interface ExcellenceScorecardProps {
@@ -20,6 +26,172 @@ interface ExcellenceScorecardProps {
 }
 
 const ExcellenceScorecard: React.FC<ExcellenceScorecardProps> = ({ novelState }) => {
+  const [improvementDialogOpen, setImprovementDialogOpen] = useState(false);
+  const [improvementRequest, setImprovementRequest] = useState<ImprovementRequest | null>(null);
+  const [improvementHistory, setImprovementHistory] = useState<ImprovementHistory[]>([]);
+  const [lastImprovementId, setLastImprovementId] = useState<string | null>(null);
+  const { updateActiveNovel, activeNovel } = useNovel();
+  const { showSuccess, showError, showWarning } = useToast();
+
+  // Load improvement history for this category
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!novelState.id) return;
+      try {
+        const history = await getImprovementHistory(novelState.id);
+        const categoryHistory = history.filter(h => h.category === 'excellence');
+        setImprovementHistory(categoryHistory);
+      } catch (error) {
+        console.error('Failed to load improvement history', error);
+      }
+    };
+    loadHistory();
+  }, [novelState.id]);
+
+  const handleImproveNovel = () => {
+    // Calculate target score: 90 or current + 30, whichever is lower
+    const currentScore = overallScore;
+    const targetScore = Math.min(90, Math.max(currentScore + 30, currentScore + 10));
+    
+    setImprovementRequest({
+      category: 'excellence',
+      scope: 'comprehensive',
+      targetScore,
+    });
+    setImprovementDialogOpen(true);
+  };
+
+  const handleImprovementComplete = useCallback((
+    result: ImprovementExecutionResult,
+    improvedState: NovelState
+  ) => {
+    try {
+      // Validation: Ensure we have an active novel
+      if (!activeNovel) {
+        showError('No active novel selected. Cannot apply improvements.');
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Validation: Ensure improved state matches active novel ID
+      if (improvedState.id !== activeNovel.id) {
+        showError('Improved state does not match active novel. Cannot apply improvements.');
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Validation: Check if improvements were successful
+      if (!result.success) {
+        const errorMessage = result.failures.length > 0
+          ? `Improvements failed: ${result.failures[0].error}`
+          : 'Improvements did not complete successfully';
+        showError(errorMessage);
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Validation: Check if improved state is valid
+      if (!improvedState || !improvedState.chapters || improvedState.chapters.length === 0) {
+        showError('Improved state is invalid. Cannot apply improvements.');
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Apply the improved state
+      updateActiveNovel(() => improvedState);
+
+      // Generate user feedback message based on results
+      const changes = [];
+      if (result.chaptersEdited > 0) {
+        changes.push(`${result.chaptersEdited} chapter${result.chaptersEdited !== 1 ? 's' : ''} edited`);
+      }
+      if (result.chaptersInserted > 0) {
+        changes.push(`${result.chaptersInserted} chapter${result.chaptersInserted !== 1 ? 's' : ''} inserted`);
+      }
+      if (result.chaptersRegenerated > 0) {
+        changes.push(`${result.chaptersRegenerated} chapter${result.chaptersRegenerated !== 1 ? 's' : ''} regenerated`);
+      }
+
+      const changeSummary = changes.length > 0
+        ? changes.join(', ')
+        : 'No changes made';
+
+      // Show success message with details
+      const scoreChange = result.scoreImprovement;
+      const scoreMessage = scoreChange > 0
+        ? `Score improved by ${scoreChange.toFixed(1)} points (${result.scoreBefore.toFixed(1)} → ${result.scoreAfter.toFixed(1)})`
+        : scoreChange < 0
+        ? `Score changed by ${scoreChange.toFixed(1)} points (${result.scoreBefore.toFixed(1)} → ${result.scoreAfter.toFixed(1)})`
+        : `Score remained at ${result.scoreBefore.toFixed(1)}`;
+
+      // Store the last improvement ID for undo
+      // We need to get it from the history after it's saved
+      getImprovementHistory(novelState.id).then(history => {
+        const categoryHistory = history.filter(h => h.category === 'excellence');
+        setImprovementHistory(categoryHistory);
+        if (categoryHistory.length > 0 && categoryHistory[0].id) {
+          setLastImprovementId(categoryHistory[0].id);
+        }
+      }).catch(error => {
+        console.error('Failed to reload improvement history', error);
+      });
+
+      showSuccess(
+        `Improvements applied successfully! ${changeSummary}. ${scoreMessage}. You can undo this improvement if needed.`,
+        8000
+      );
+
+      // Show warnings if any
+      if (result.validationResults.warnings.length > 0) {
+        result.validationResults.warnings.slice(0, 3).forEach(warning => {
+          showWarning(warning, 5000);
+        });
+      }
+
+      // Close dialog
+      setImprovementDialogOpen(false);
+    } catch (error) {
+      // Handle unexpected errors
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'An unexpected error occurred while applying improvements';
+      showError(`Failed to apply improvements: ${errorMessage}`);
+      setImprovementDialogOpen(false);
+    }
+  }, [activeNovel, updateActiveNovel, showSuccess, showError, showWarning, novelState.id]);
+
+  // Handle undo improvement
+  const handleUndoImprovement = useCallback(async () => {
+    if (!lastImprovementId || !activeNovel) return;
+    
+    try {
+      const originalState = await rollbackImprovement(lastImprovementId);
+      if (!originalState) {
+        showError('Failed to rollback improvement: Original state not found');
+        return;
+      }
+
+      // Apply the original state
+      updateActiveNovel(() => originalState);
+
+      showSuccess('Improvement rolled back successfully. The novel has been restored to its previous state.', 6000);
+
+      // Clear last improvement ID and reload history
+      setLastImprovementId(null);
+      getImprovementHistory(novelState.id).then(history => {
+        const categoryHistory = history.filter(h => h.category === 'excellence');
+        setImprovementHistory(categoryHistory);
+      }).catch(error => {
+        console.error('Failed to reload improvement history', error);
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'Failed to rollback improvement';
+      showError(errorMessage);
+    }
+  }, [lastImprovementId, activeNovel, updateActiveNovel, showSuccess, showError, novelState.id]);
+
   // Perform all analyses
   const structureAnalysis = useMemo(() => analyzeStoryStructure(novelState), [novelState]);
   const heroJourney = useMemo(() => analyzeHeroJourney(novelState), [novelState]);
@@ -79,8 +251,62 @@ const ExcellenceScorecard: React.FC<ExcellenceScorecardProps> = ({ novelState })
     return 'bg-red-600/20';
   };
 
+  const totalChapters = novelState.chapters.length || 0;
+
+  // Empty state - need at least 2 chapters for excellence analysis
+  if (totalChapters < 2) {
+    return (
+      <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto pt-16 md:pt-20">
+        <div className="mb-8 border-b border-zinc-700 pb-6">
+          <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">
+            Excellence Scorecard
+          </h2>
+          <p className="text-sm text-zinc-400 mt-2">Comprehensive quality metrics across all analysis dimensions</p>
+        </div>
+        <EmptyState
+          icon="⭐"
+          title="Not Enough Chapters Yet"
+          description="Generate at least 2 chapters to enable excellence analysis. The excellence scorecard provides a comprehensive view of your novel's quality across structure, engagement, themes, characters, and more."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto pt-16 md:pt-20">
+      {/* Improvement Button */}
+      <div className="mb-4 flex justify-end items-center gap-3">
+        <div className="flex items-center gap-2">
+          {lastImprovementId && (
+            <button
+              onClick={handleUndoImprovement}
+              className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-lg font-semibold transition-all duration-200 flex items-center gap-2 border border-zinc-600"
+              title="Undo last improvement"
+            >
+              <span>↶</span>
+              <span>Undo</span>
+            </button>
+          )}
+          <button
+            onClick={handleImproveNovel}
+            className="relative px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-lg font-semibold transition-all duration-200 flex items-center gap-2 shadow-lg shadow-amber-900/20 hover:shadow-xl hover:shadow-amber-900/30"
+          >
+            <span>⭐</span>
+            <span>Improve Novel</span>
+            {improvementHistory.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-amber-500 text-zinc-900 text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                {improvementHistory.length}
+              </span>
+            )}
+          </button>
+        </div>
+        {improvementHistory.length > 0 && improvementHistory[0] && (
+          <div className="flex items-center text-xs text-zinc-400">
+            Last: {formatRelativeTime(improvementHistory[0].timestamp)}
+          </div>
+        )}
+      </div>
+
       <div className="mb-8 border-b border-zinc-700 pb-6">
         <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">
           Excellence Scorecard
@@ -409,6 +635,17 @@ const ExcellenceScorecard: React.FC<ExcellenceScorecardProps> = ({ novelState })
           </div>
         </div>
       </div>
+
+      {/* Improvement Dialog */}
+      {improvementRequest && (
+        <NovelImprovementDialog
+          isOpen={improvementDialogOpen}
+          novelState={novelState}
+          request={improvementRequest}
+          onClose={() => setImprovementDialogOpen(false)}
+          onComplete={handleImprovementComplete}
+        />
+      )}
     </div>
   );
 };

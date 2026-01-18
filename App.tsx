@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense, useMemo } from 'react';
 import type { NovelState, Chapter, WorldEntry, Character, Arc, Realm, Territory, Relationship, SystemLog, Scene, NovelItem, NovelTechnique, CharacterItemPossession, CharacterTechniqueMastery, ItemCategory, TechniqueCategory, TechniqueType, Antagonist, AntagonistRole, SymbolicElement } from './types';
 import { getAntagonistsForArc, addAntagonistToChapter } from './services/antagonistService';
 import { findMatchingAntagonist, mergeAntagonistInfo } from './utils/antagonistMatching';
@@ -10,7 +10,12 @@ import CreativeSpark from './components/CreativeSpark';
 import ConfirmDialog from './components/ConfirmDialog';
 import GenerationProgressBar from './components/GenerationProgressBar';
 import LoadingIndicator from './components/LoadingIndicator';
+import { LoadingSpinnerCentered } from './components/LoadingSpinner';
 import NotificationPanel from './components/NotificationPanel';
+import { Modal } from './components/Modal';
+import { WorldEntryForm } from './components/forms/WorldEntryForm';
+import { CharacterForm } from './components/forms/CharacterForm';
+import { ArcForm } from './components/forms/ArcForm';
 import { useToast } from './contexts/ToastContext';
 import { useLoading } from './contexts/LoadingContext';
 import { logger } from './services/loggingService';
@@ -19,17 +24,29 @@ import { useAuth } from './contexts/AuthContext';
 import { LoginForm } from './components/LoginForm';
 import { validateWorldEntryInput } from './utils/validation';
 import { novelChangeTracker } from './utils/novelTracking';
-import { extractPostChapterUpdates, generateNextChapter, generatePortrait, planArc, processLoreDictation } from './services/aiService';
+import { extractPostChapterUpdates, generateNextChapter, planArc, processLoreDictation } from './services/aiService';
 import { saveRevision } from './services/revisionService';
 import { useNovel } from './contexts/NovelContext';
 import { findOrCreateItem, findOrCreateTechnique } from './services/itemTechniqueService';
+import { addOrUpdateRelationship } from './services/relationshipService';
+import { logSupabaseVerification } from './utils/verifySupabaseDeletion';
 import { detectArchiveCandidates, archivePossession, restorePossession, archiveMastery, restoreMastery } from './services/archiveService';
+import { createNewCharacter } from './utils/entityFactories';
 import * as arcAnalyzer from './services/promptEngine/arcContextAnalyzer';
 import { generateUUID } from './utils/uuid';
+import { coerceTechniqueCategory, coerceTechniqueType } from './utils/typeCoercion';
 import { RelatedEntities } from './components/RelatedEntities';
 import { analyzeAutoConnections } from './services/autoConnectionService';
+import { captureChapterSnapshot } from './services/chapterStateSnapshotService';
+import { markEntitiesWithChapter, trackArcChecklistCompletions, trackRealmChanges } from './utils/entityChapterTracker';
 import { generateExtractionPreview, calculateTrustScore } from './services/trustService';
-import { generatePreGenerationSuggestions } from './services/gapDetectionService';
+import { generatePreGenerationSuggestions, analyzeGaps } from './services/gapDetectionService';
+import { TrustScoreWidget } from './components/TrustScoreWidget';
+import { GapAnalysisPanel } from './components/widgets/GapAnalysisPanel';
+import { PreGenerationAnalysis } from './components/PreGenerationAnalysis';
+import { analyzeStoryStructure } from './services/storyStructureAnalyzer';
+import { analyzeEngagement } from './services/engagementAnalyzer';
+import { analyzeTension } from './services/tensionAnalyzer';
 import { checkConsistency, checkChapterConsistency } from './services/consistencyChecker';
 import { triggerEditorReview, shouldTriggerEditorReview, applyApprovedFixes } from './services/editorService';
 import { useEditorFixApplication } from './hooks/useEditorFixApplication';
@@ -37,37 +54,109 @@ import { saveEditorReport } from './services/supabaseService';
 import ManualEditorDialog from './components/ManualEditorDialog';
 import FixApprovalDialog from './components/FixApprovalDialog';
 import type { EditorFixProposal, EditorFix, EditorReportWithInternal } from './types/editor';
+import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
+import { useOnboarding } from './hooks/useOnboarding';
+import { OnboardingTour } from './components/OnboardingTour';
+import { getTourById, MAIN_ONBOARDING_TOUR } from './utils/onboardingTours';
+import { AUTHENTICATION_ENABLED } from './config/supabase';
 
-// Lazy load heavy components for code splitting
-const ChapterEditor = lazy(() => import('./components/ChapterEditor'));
-const WorldMapView = lazy(() => import('./components/WorldMapView'));
-const AntagonistTracker = lazy(() => import('./components/AntagonistTracker'));
-const StoryboardView = lazy(() => import('./components/StoryboardView'));
-const TimelineView = lazy(() => import('./components/TimelineView'));
-const BeatSheetView = lazy(() => import('./components/BeatSheetView'));
-const MatrixView = lazy(() => import('./components/MatrixView'));
-const ProgressDashboard = lazy(() => import('./components/ProgressDashboard'));
-const GlobalSearch = lazy(() => import('./components/GlobalSearch'));
-const WritingGoals = lazy(() => import('./components/WritingGoals'));
-const ExportDialog = lazy(() => import('./components/ExportDialog'));
-const AntagonistManager = lazy(() => import('./components/AntagonistManager'));
+// Helper to safely convert any value to a string
+function safeToString(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  
+  if (value instanceof Error) {
+    return value.message || 'Error (no message)';
+  }
+  
+  // For objects, try JSON.stringify with circular reference handling
+  try {
+    const seen = new WeakSet();
+    return JSON.stringify(value, (key, val) => {
+      if (typeof val === 'object' && val !== null) {
+        if (seen.has(val)) return '[Circular]';
+        seen.add(val);
+      }
+      return val;
+    });
+  } catch {
+    // If JSON.stringify fails, try basic toString
+    try {
+      return String(value);
+    } catch {
+      return '[Unable to convert to string]';
+    }
+  }
+}
+
+// Helper to safely wrap lazy imports with error handling
+function safeLazyImport<T extends React.ComponentType<any>>(
+  importFn: () => Promise<{ default: T }>
+) {
+  return lazy(() => {
+    return importFn().catch((error) => {
+      // Log the error message safely to help with debugging
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[safeLazyImport] Component failed to load:', errorMessage);
+      
+      // Return a fallback component that shows the error message
+      const FallbackComponent: React.FC = () => (
+        <div className="p-6 bg-red-950/40 border border-red-900/60 rounded-xl">
+          <h2 className="text-xl font-bold text-red-400 mb-2">Component Failed to Load</h2>
+          <p className="text-red-300">Please refresh the page to try again.</p>
+          {import.meta.env.DEV && (
+            <pre className="mt-4 text-xs text-red-400 bg-zinc-950 p-2 rounded overflow-auto max-h-32">
+              {errorMessage}
+            </pre>
+          )}
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded"
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+
+      return {
+        default: FallbackComponent as T
+      };
+    });
+  });
+}
+
+// Lazy load heavy components for code splitting with safe error handling
+const ChapterEditor = safeLazyImport(() => import('./components/ChapterEditor'));
+const WorldMapView = safeLazyImport(() => import('./components/WorldMapView'));
+const AntagonistTracker = safeLazyImport(() => import('./components/AntagonistTracker'));
+const StoryboardView = safeLazyImport(() => import('./components/StoryboardView'));
+const TimelineView = safeLazyImport(() => import('./components/TimelineView'));
+const BeatSheetView = safeLazyImport(() => import('./components/BeatSheetView'));
+const MatrixView = safeLazyImport(() => import('./components/MatrixView'));
+const ProgressDashboard = safeLazyImport(() => import('./components/ProgressDashboard'));
+const GlobalSearch = safeLazyImport(() => import('./components/GlobalSearch'));
+const WritingGoals = safeLazyImport(() => import('./components/WritingGoals'));
+const ExportDialog = safeLazyImport(() => import('./components/ExportDialog'));
+const AntagonistManager = safeLazyImport(() => import('./components/AntagonistManager'));
+const SystemManager = safeLazyImport(() => import('./components/SystemManager'));
+const StoryThreadsView = safeLazyImport(() => import('./components/StoryThreadsView'));
 // World-Class Enhancements Components
-const StructureVisualizer = lazy(() => import('./components/StructureVisualizer'));
-const EngagementDashboard = lazy(() => import('./components/EngagementDashboard'));
-const TensionCurveView = lazy(() => import('./components/TensionCurveView'));
-const ThemeEvolutionView = lazy(() => import('./components/ThemeEvolutionView'));
-const CharacterPsychologyView = lazy(() => import('./components/CharacterPsychologyView'));
-const DeviceDashboard = lazy(() => import('./components/DeviceDashboard'));
-const DraftComparisonView = lazy(() => import('./components/DraftComparisonView'));
-const ExcellenceScorecard = lazy(() => import('./components/ExcellenceScorecard'));
-
-// ============================================================================
-// AUTHENTICATION CONTROL
-// ============================================================================
-// Set to false to disable authentication during development
-// Set to true when ready to launch with authentication enabled
-const AUTHENTICATION_ENABLED = false;
-// ============================================================================
+const StructureVisualizer = safeLazyImport(() => import('./components/StructureVisualizer'));
+const EngagementDashboard = safeLazyImport(() => import('./components/EngagementDashboard'));
+const TensionCurveView = safeLazyImport(() => import('./components/TensionCurveView'));
+const ThemeEvolutionView = safeLazyImport(() => import('./components/ThemeEvolutionView'));
+const CharacterPsychologyView = safeLazyImport(() => import('./components/CharacterPsychologyView'));
+const DeviceDashboard = safeLazyImport(() => import('./components/DeviceDashboard'));
+const DraftComparisonView = safeLazyImport(() => import('./components/DraftComparisonView'));
+const ExcellenceScorecard = safeLazyImport(() => import('./components/ExcellenceScorecard'));
+const ImprovementHistoryPage = safeLazyImport(() => import('./components/ImprovementHistoryPage'));
+const DashboardView = safeLazyImport(() => import('./components/views/DashboardView'));
+const CharactersView = lazy(() => import('./components/views/CharactersView'));
+const ChaptersView = safeLazyImport(() => import('./components/views/ChaptersView'));
+const PlanningView = safeLazyImport(() => import('./components/views/PlanningView'));
+const KeyboardShortcutsHelp = safeLazyImport(() => import('./components/KeyboardShortcutsHelp'));
 
 const App: React.FC = () => {
   const { user, loading: authLoading } = useAuth();
@@ -91,12 +180,75 @@ const App: React.FC = () => {
   } = useNovel();
   const { applyFixes: applyEditorFixes, isApplying: isApplyingFixes } = useEditorFixApplication();
 
+  // Onboarding
+  const {
+    isOnboardingComplete,
+    activeTour,
+    currentStep,
+    markOnboardingComplete,
+    startTour,
+    nextStep,
+    previousStep,
+    endTour,
+  } = useOnboarding();
+
+  const [showOnboardingMenu, setShowOnboardingMenu] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // Show onboarding tour for first-time users
+  useEffect(() => {
+    if (!isOnboardingComplete && library.length === 0 && !activeNovel) {
+      // Small delay to ensure DOM is ready
+      const timer = setTimeout(() => {
+        startTour(MAIN_ONBOARDING_TOUR.id);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isOnboardingComplete, library.length, activeNovel, startTour]);
+
+  // Global keyboard shortcuts
+  useGlobalShortcuts({
+    enabled: !!activeNovel,
+    handlers: {
+      onSearch: () => setView('search'),
+      onNewChapter: () => {
+        if (activeNovel && !isGenerating) {
+          handleGenerateNext();
+        }
+      },
+      onSave: async () => {
+        if (activeChapter) {
+          try {
+            await handleSaveChapter(activeChapter);
+            showSuccess('Chapter saved');
+          } catch (error) {
+            showError('Failed to save chapter');
+          }
+        }
+      },
+      onExport: () => setShowExportDialog(true),
+      onDashboard: () => setView('dashboard'),
+      onChapters: () => setView('chapters'),
+      onCharacters: () => setView('characters'),
+      onWorldBible: () => setView('world-bible'),
+      onPlanning: () => setView('planning'),
+      onHelp: () => setShowOnboardingMenu(true),
+      onClose: () => {
+        setShowOnboardingMenu(false);
+        setShowExportDialog(false);
+        setShowManualEditor(false);
+        setMobileSidebarOpen(false);
+        setMobileNotificationPanelOpen(false);
+      },
+    },
+  });
+
   // Show login form if authentication is enabled and user is not authenticated
   if (AUTHENTICATION_ENABLED) {
     if (authLoading) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900">
-          <LoadingIndicator />
+          <LoadingSpinnerCentered />
         </div>
       );
     }
@@ -128,6 +280,10 @@ const App: React.FC = () => {
   const [isPlanning, setIsPlanning] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [activeLogs, setActiveLogs] = useState<SystemLog[]>([]);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileNotificationPanelOpen, setMobileNotificationPanelOpen] = useState(false);
+  const [desktopNotificationPanelOpen, setDesktopNotificationPanelOpen] = useState(true);
+  const [desktopNotificationPanelMinimized, setDesktopNotificationPanelMinimized] = useState(false);
   
   const [editingWorld, setEditingWorld] = useState<WorldEntry | null>(null);
   const [editingChar, setEditingChar] = useState<Character | null>(null);
@@ -152,6 +308,10 @@ const App: React.FC = () => {
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    // Make verification function available in browser console
+    (window as any).verifySupabase = logSupabaseVerification;
+    
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
@@ -461,12 +621,12 @@ const App: React.FC = () => {
               addEphemeralLog(`Queued for ${(queueWaitMs / 1000).toFixed(1)}s before starting.`, 'discovery');
             }
           }
-          if (phase === 'gemini_request_start') {
+          if (phase === 'llm_request_start') {
             setGenerationProgress(40);
             setGenerationStatus('Consulting the Muse...');
             addEphemeralLog('Calling the selected LLM to write the chapter...', 'discovery');
           }
-          if (phase === 'gemini_request_end') {
+          if (phase === 'llm_request_end') {
             setGenerationProgress(80);
             setGenerationStatus('Content received. Processing...');
             const len = data?.responseTextLength;
@@ -640,18 +800,54 @@ const App: React.FC = () => {
               return;
             }
             
-            // Validate updateType if provided
-            const validUpdateTypes = ['new', 'cultivation', 'skill', 'item', 'status', 'notes', 'relationship'];
-            if (update.updateType && !validUpdateTypes.includes(update.updateType)) {
-              updateErrors.push(`Update ${index + 1}: Invalid updateType "${update.updateType}"`);
-              // Continue processing with a default type
-              update.updateType = 'notes';
+            // Normalize updateType variants to canonical values
+            const updateTypeMap: Record<string, string> = {
+              'cultivationstate': 'cultivation',
+              'cultivation_state': 'cultivation',
+              'cultivation': 'cultivation',
+              'power': 'cultivation', // Map 'power' to 'cultivation' for power level changes
+              'powerlevel': 'cultivation',
+              'power_level': 'cultivation',
+              'inventory': 'item',
+              'items': 'item',
+              'item': 'item',
+              'relation': 'relationship',
+              'relations': 'relationship',
+              'relationships': 'relationship',
+              'relationship': 'relationship',
+              'skill': 'skill',
+              'skills': 'skill',
+              'status': 'status',
+              'notes': 'notes',
+              'note': 'notes',
+              'profile': 'notes',
+              'emotional': 'notes', // Map 'emotional' to 'notes' for emotional state changes
+              'emotion': 'notes',
+              'emotional_state': 'notes',
+              'emotionalstate': 'notes',
+              'mood': 'notes',
+              'mental': 'notes',
+              'mentalstate': 'notes',
+              'mental_state': 'notes',
+              'new': 'new',
+            };
+            
+            // Normalize updateType (case-insensitive)
+            if (update.updateType) {
+              const normalizedType = updateTypeMap[update.updateType.toLowerCase()];
+              if (normalizedType) {
+                update.updateType = normalizedType;
+              } else {
+                // Unknown type - log warning but continue with 'notes' as default
+                updateErrors.push(`Update ${index + 1}: Unknown updateType "${update.updateType}", defaulting to "notes"`);
+                update.updateType = 'notes';
+              }
             }
           
           const charIndex = existingCharacters.findIndex(c => c.name.toLowerCase() === update.name.toLowerCase());
           
           if (charIndex > -1) {
-            const char = { ...existingCharacters[charIndex] };
+            let char = { ...existingCharacters[charIndex] };
             if (update.updateType === 'cultivation') {
               const cultivationValue = String(update.newValue || '').trim();
               if (cultivationValue && cultivationValue.length > 0) {
@@ -689,22 +885,34 @@ const App: React.FC = () => {
             if (update.updateType === 'relationship' && update.targetName) {
               const targetChar = existingCharacters.find(c => c.name.toLowerCase() === update.targetName.toLowerCase());
               if (targetChar) {
-                if (!char.relationships) {
-                  char.relationships = [];
+                // Use relationship service for bidirectional relationship creation
+                const relationshipType = update.newValue || 'Unknown';
+                const result = addOrUpdateRelationship(
+                  existingCharacters,
+                  char.id,
+                  targetChar.id,
+                  relationshipType,
+                  'Karma link discovered in chronicle.',
+                  'Fate has intertwined their paths.',
+                  true // bidirectional
+                );
+                
+                if (result.success) {
+                  // Update existingCharacters array with bidirectional relationships
+                  const sourceIndex = existingCharacters.findIndex(c => c.id === char.id);
+                  const targetIndex = existingCharacters.findIndex(c => c.id === targetChar.id);
+                  if (sourceIndex >= 0) {
+                    existingCharacters[sourceIndex] = result.updatedCharacters[sourceIndex];
+                  }
+                  if (targetIndex >= 0) {
+                    existingCharacters[targetIndex] = result.updatedCharacters[targetIndex];
+                  }
+                  // Update char reference for subsequent updates
+                  if (sourceIndex >= 0) {
+                    char = existingCharacters[sourceIndex];
+                  }
+                  localAddLog(`Karma Link: ${char.name} <-> ${targetChar.name} (${relationshipType})`, 'fate');
                 }
-                const relIndex = char.relationships.findIndex((r: Relationship) => r.characterId === targetChar.id);
-                const newRel: Relationship = { 
-                  characterId: targetChar.id, 
-                  type: update.newValue || 'Unknown', 
-                  history: 'Karma link discovered in chronicle.',
-                  impact: 'Fate has intertwined their paths.' 
-                };
-                if (relIndex > -1) {
-                  char.relationships[relIndex] = newRel;
-                } else {
-                  char.relationships.push(newRel);
-                }
-                localAddLog(`Karma Link: ${char.name} <-> ${targetChar.name} (${update.newValue || 'Unknown'})`, 'fate');
               }
             }
             existingCharacters[charIndex] = char;
@@ -957,6 +1165,29 @@ const App: React.FC = () => {
           }
         }
 
+        // Capture snapshot BEFORE processing post-chapter updates (for rollback)
+        const oldRealmId = workingNovelState.currentRealmId;
+        let snapshotCaptured = false;
+        try {
+          await captureChapterSnapshot(
+            activeNovel.id,
+            newChapter.id,
+            newChapter.number,
+            workingNovelState
+          );
+          snapshotCaptured = true;
+          logger.info('Chapter snapshot captured', 'chapterGeneration', {
+            chapterId: newChapter.id,
+            chapterNumber: newChapter.number,
+          });
+        } catch (snapshotError) {
+          logger.error('Failed to capture chapter snapshot', 'chapterGeneration', {
+            chapterId: newChapter.id,
+            error: snapshotError instanceof Error ? snapshotError : new Error(String(snapshotError)),
+          });
+          // Don't fail generation if snapshot fails - non-critical
+        }
+
         const extraction = await extractPostChapterUpdates(workingNovelState, newChapter, activeArc);
 
         // If user cancelled while waiting, ignore the result.
@@ -964,11 +1195,98 @@ const App: React.FC = () => {
           return;
         }
 
-        // Debug logging for extraction results
-        if (!extraction || !extraction.worldEntryUpserts) {
-          localAddLog(`Warning: Extraction returned no worldEntryUpserts (extraction: ${extraction ? 'exists' : 'null'})`, 'update');
+        // Comprehensive validation and logging for extraction results
+        if (!extraction) {
+          localAddLog(`⚠️ Warning: Extraction returned null - no data extracted`, 'update');
+          logger.warn('Extraction returned null', 'chapterGeneration', {
+            chapterId: newChapter.id,
+            chapterNumber: newChapter.number,
+          });
         } else {
-          localAddLog(`Extraction found ${extraction.worldEntryUpserts.length} world entry update(s)`, 'discovery');
+          // Log extraction summary
+          const scenesCount = extraction.scenes?.length || 0;
+          const worldBibleCount = extraction.worldEntryUpserts?.length || 0;
+          const territoriesCount = extraction.territoryUpserts?.length || 0;
+          const antagonistsCount = extraction.antagonistUpdates?.length || 0;
+          const arcProgressItems = extraction.arcChecklistProgress?.completedItemIds?.length || 0;
+          const characterUpsertsCount = extraction.characterUpserts?.length || 0;
+          const itemUpdatesCount = extraction.itemUpdates?.length || 0;
+          const techniqueUpdatesCount = extraction.techniqueUpdates?.length || 0;
+          const relationshipCount = extraction.characterUpserts?.reduce((sum, u) => sum + (u.relationships?.length || 0), 0) || 0;
+          
+          // #region agent log
+          const itemUpdatesWithCharacterName = extraction.itemUpdates?.filter(i => i.characterName) || [];
+          const techniqueUpdatesWithCharacterName = extraction.techniqueUpdates?.filter(t => t.characterName) || [];
+          console.log('[DEBUG] Extraction summary:', {
+            itemUpdatesCount,
+            itemUpdatesWithCharacterName: itemUpdatesWithCharacterName.length,
+            techniqueUpdatesCount,
+            techniqueUpdatesWithCharacterName: techniqueUpdatesWithCharacterName.length,
+            itemUpdates: extraction.itemUpdates,
+            techniqueUpdates: extraction.techniqueUpdates
+          });
+          // #endregion
+          
+          localAddLog(`📊 Extraction summary: ${scenesCount} scene(s), ${worldBibleCount} world entry(ies), ${territoriesCount} territory(ies), ${antagonistsCount} antagonist(s), ${arcProgressItems} arc element(s)`, 'discovery');
+          logger.info('Extraction details', 'chapterGeneration', {
+            chapterId: newChapter.id,
+            chapterNumber: newChapter.number,
+            characterUpserts: characterUpsertsCount,
+            itemUpdates: itemUpdatesCount,
+            techniqueUpdates: techniqueUpdatesCount,
+            relationships: relationshipCount,
+          });
+          
+          // Validate each extraction type
+          if (scenesCount === 0) {
+            localAddLog(`⚠️ No scenes extracted from chapter ${newChapter.number}`, 'update');
+          }
+          if (worldBibleCount === 0) {
+            localAddLog(`⚠️ No world bible entries extracted from chapter ${newChapter.number}`, 'update');
+          }
+          if (territoriesCount === 0) {
+            localAddLog(`⚠️ No territories extracted from chapter ${newChapter.number}`, 'update');
+          }
+          if (antagonistsCount === 0) {
+            localAddLog(`⚠️ No antagonists extracted from chapter ${newChapter.number}`, 'update');
+          }
+          
+          // Validate scene structure
+          if (extraction.scenes && extraction.scenes.length > 0) {
+            extraction.scenes.forEach((scene, idx) => {
+              if (!scene.number || !scene.title || !scene.contentExcerpt) {
+                localAddLog(`⚠️ Scene ${idx + 1} missing required fields (number, title, or contentExcerpt)`, 'update');
+              }
+            });
+          }
+          
+          // Validate world bible entries
+          if (extraction.worldEntryUpserts && extraction.worldEntryUpserts.length > 0) {
+            extraction.worldEntryUpserts.forEach((entry, idx) => {
+              if (!entry.title || !entry.content || !entry.category) {
+                localAddLog(`⚠️ World entry ${idx + 1} missing required fields (title, content, or category)`, 'update');
+              }
+            });
+          }
+          
+          // Validate territories
+          if (extraction.territoryUpserts && extraction.territoryUpserts.length > 0) {
+            extraction.territoryUpserts.forEach((territory, idx) => {
+              if (!territory.name || !territory.description || !territory.type) {
+                localAddLog(`⚠️ Territory ${idx + 1} missing required fields (name, description, or type)`, 'update');
+              }
+            });
+          }
+          
+          logger.info('Extraction completed', 'chapterGeneration', {
+            chapterId: newChapter.id,
+            chapterNumber: newChapter.number,
+            scenesCount: scenesCount,
+            worldBibleCount: worldBibleCount,
+            territoriesCount: territoriesCount,
+            antagonistsCount: antagonistsCount,
+            arcProgressItems: arcProgressItems,
+          });
         }
 
         const now = Date.now();
@@ -1002,7 +1320,17 @@ const App: React.FC = () => {
         };
 
         // 1) Character upserts
-        const mergedCharacters = [...workingNovelState.characterCodex];
+        let mergedCharacters = [...workingNovelState.characterCodex];
+        
+        // Debug: Log initial state
+        logger.debug('Character upserts - initial state', 'chapterGeneration', {
+          chapterId: newChapter.id,
+          chapterNumber: newChapter.number,
+          initialCharacterCount: mergedCharacters.length,
+          characterUpsertsCount: extraction.characterUpserts?.length || 0,
+          initialCharacters: mergedCharacters.slice(0, 3).map(c => ({ name: c.name, cultivation: c.currentCultivation }))
+        });
+        
         extraction.characterUpserts?.forEach((u) => {
           const name = String(u?.name || '').trim();
           if (!name) return;
@@ -1014,6 +1342,10 @@ const App: React.FC = () => {
             if (typeof set.age === 'string' && set.age.trim()) next.age = set.age;
             if (typeof set.personality === 'string' && set.personality.trim()) next.personality = set.personality;
             if (typeof set.currentCultivation === 'string' && set.currentCultivation.trim()) next.currentCultivation = set.currentCultivation;
+            if (typeof set.appearance === 'string' && set.appearance.trim()) next.appearance = set.appearance;
+            if (typeof set.background === 'string' && set.background.trim()) next.background = mergeAppend(next.background || '', set.background, newChapter.number);
+            if (typeof set.goals === 'string' && set.goals.trim()) next.goals = set.goals;
+            if (typeof set.flaws === 'string' && set.flaws.trim()) next.flaws = set.flaws;
             if (typeof set.notes === 'string' && set.notes.trim()) next.notes = mergeAppend(next.notes || '', set.notes, newChapter.number);
             const status = coerceCharStatus(set.status);
             if (status) next.status = status;
@@ -1023,26 +1355,8 @@ const App: React.FC = () => {
             if (addSkills.length) next.skills = [...new Set([...(next.skills || []), ...addSkills.filter((s) => String(s).trim())])];
             if (addItems.length) next.items = [...new Set([...(next.items || []), ...addItems.filter((s) => String(s).trim())])];
 
-            // Relationship updates (resolve by targetName)
-            const rels: any[] = Array.isArray(u?.relationships) ? u.relationships : [];
-            if (rels.length) {
-              for (const rel of rels) {
-                const targetName = String(rel?.targetName || '').trim();
-                const type = String(rel?.type || '').trim();
-                if (!targetName || !type) continue;
-                const target = mergedCharacters.find(c => normalize(c.name) === normalize(targetName));
-                if (!target) continue;
-                const relIndex = next.relationships.findIndex(r => r.characterId === target.id);
-                const newRel: Relationship = {
-                  characterId: target.id,
-                  type,
-                  history: String(rel?.history || 'Karma link recorded in chronicle.'),
-                  impact: String(rel?.impact || 'Fate has shifted.'),
-                };
-                if (relIndex > -1) next.relationships[relIndex] = newRel;
-                else next.relationships.push(newRel);
-              }
-            }
+            // Relationships will be processed separately after character updates
+            // to ensure bidirectional creation via relationship service
 
             return next;
           };
@@ -1059,6 +1373,10 @@ const App: React.FC = () => {
               age: typeof set.age === 'string' && set.age.trim() ? set.age : 'Unknown',
               personality: typeof set.personality === 'string' && set.personality.trim() ? set.personality : 'Unknown',
               currentCultivation: typeof set.currentCultivation === 'string' && set.currentCultivation.trim() ? set.currentCultivation : 'Unknown',
+              appearance: typeof set.appearance === 'string' && set.appearance.trim() ? set.appearance : undefined,
+              background: typeof set.background === 'string' && set.background.trim() ? set.background : undefined,
+              goals: typeof set.goals === 'string' && set.goals.trim() ? set.goals : undefined,
+              flaws: typeof set.flaws === 'string' && set.flaws.trim() ? set.flaws : undefined,
               skills: [],
               items: [],
               notes: typeof set.notes === 'string' && set.notes.trim() ? set.notes : 'Newly introduced character.',
@@ -1068,6 +1386,80 @@ const App: React.FC = () => {
             mergedCharacters.push(newChar);
             localAddLog(`Being Discovered (extracted): ${name}`, 'discovery');
           }
+        });
+
+        // Log character updates summary
+        const charactersUpdated = mergedCharacters.length - workingNovelState.characterCodex.length;
+        const charactersModified = extraction.characterUpserts?.filter(u => {
+          const existing = workingNovelState.characterCodex.find(c => normalize(c.name) === normalize(u.name || ''));
+          return existing !== undefined;
+        }).length || 0;
+        logger.info('Character updates processed', 'chapterGeneration', {
+          chapterId: newChapter.id,
+          chapterNumber: newChapter.number,
+          newCharacters: charactersUpdated,
+          modifiedCharacters: charactersModified,
+          totalCharacters: mergedCharacters.length,
+          initialCount: workingNovelState.characterCodex.length,
+          finalCount: mergedCharacters.length
+        });
+
+        // 1.5) Process relationships using relationship service for bidirectional creation
+        extraction.characterUpserts?.forEach((u) => {
+          const name = String(u?.name || '').trim();
+          if (!name) return;
+          
+          const sourceChar = mergedCharacters.find(c => normalize(c.name) === normalize(name));
+          if (!sourceChar) return;
+          
+          const rels: any[] = Array.isArray(u?.relationships) ? u.relationships : [];
+          if (rels.length) {
+            for (const rel of rels) {
+              const targetName = String(rel?.targetName || '').trim();
+              const type = String(rel?.type || '').trim();
+              if (!targetName || !type) continue;
+              
+              const targetChar = mergedCharacters.find(c => normalize(c.name) === normalize(targetName));
+              if (!targetChar) {
+                localAddLog(`Skipped relationship: Target character "${targetName}" not found for "${name}"`, 'update');
+                continue;
+              }
+              
+              // Use relationship service to create bidirectional relationship
+              const result = addOrUpdateRelationship(
+                mergedCharacters,
+                sourceChar.id,
+                targetChar.id,
+                type,
+                String(rel?.history || 'Karma link recorded in chronicle.'),
+                String(rel?.impact || 'Fate has shifted.'),
+                true // bidirectional
+              );
+              
+              if (result.success) {
+                mergedCharacters = result.updatedCharacters;
+                localAddLog(`Karma Link: ${sourceChar.name} <-> ${targetChar.name} (${type})`, 'fate');
+              } else {
+                logger.warn('Failed to create relationship', 'chapterGeneration', {
+                  source: sourceChar.name,
+                  target: targetChar.name,
+                  errors: result.errors
+                });
+                localAddLog(`Failed to create relationship: ${result.errors.join(', ')}`, 'update');
+              }
+            }
+          }
+        });
+
+        // Log relationship processing summary
+        const relationshipsCreated = extraction.characterUpserts?.reduce((sum, u) => {
+          const char = mergedCharacters.find(c => normalize(c.name) === normalize(u.name || ''));
+          return sum + (char?.relationships?.length || 0);
+        }, 0) || 0;
+        logger.info('Relationships processed', 'chapterGeneration', {
+          chapterId: newChapter.id,
+          chapterNumber: newChapter.number,
+          relationshipsCreated: relationshipsCreated,
         });
 
         // 2) World entry upserts (by realmId + category + title)
@@ -1158,18 +1550,34 @@ const App: React.FC = () => {
         const mergedNovelTechniques = [...(workingNovelState.novelTechniques || [])];
         
         // Process item updates
+        // #region agent log
+        console.log('[DEBUG] Item Updates Processing]', {
+          itemUpdatesCount: extraction.itemUpdates?.length || 0,
+          itemUpdates: extraction.itemUpdates,
+          itemUpdatesWithCharacterName: extraction.itemUpdates?.filter(i => i.characterName)?.length || 0
+        });
+        // #endregion
         if (extraction.itemUpdates && extraction.itemUpdates.length > 0) {
+          const skippedItems: string[] = [];
           extraction.itemUpdates.forEach((itemUpdate: { name?: unknown; characterName?: unknown; category?: unknown; description?: unknown; addPowers?: unknown[] }) => {
             const itemName = String(itemUpdate?.name || '').trim();
             const characterName = String(itemUpdate?.characterName || '').trim();
-            if (!itemName || !characterName) return;
+            if (!itemName || !characterName) {
+              skippedItems.push(`Item "${itemName}" skipped: ${!itemName ? 'missing name' : 'missing characterName'}`);
+              return;
+            }
             
-            // Find character
-            const character = mergedCharacters.find(c => normalize(c.name) === normalize(characterName));
-            if (!character) {
+            // Find character index (not the character itself for immutable updates)
+            const characterIndex = mergedCharacters.findIndex(c => normalize(c.name) === normalize(characterName));
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1503',message:'Character lookup for item',data:{characterIndex,characterName,mergedCharactersCount:mergedCharacters.length,characterNames:mergedCharacters.map(c=>c.name)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            if (characterIndex === -1) {
               localAddLog(`Skipped item "${itemName}": Character "${characterName}" not found`, 'update');
               return;
             }
+            
+            const character = mergedCharacters[characterIndex];
             
             // Coerce category
             const coerceItemCategory = (cat: string): ItemCategory => {
@@ -1178,7 +1586,7 @@ const App: React.FC = () => {
               return categories.includes(normalized as ItemCategory) ? (normalized as ItemCategory) : 'Essential';
             };
             
-            const category = coerceItemCategoryLocal(String(itemUpdate?.category || 'Essential'));
+            const category = coerceItemCategory(String(itemUpdate?.category || 'Essential'));
             const description = String(itemUpdate?.description || '').trim();
             const powers = Array.isArray(itemUpdate?.addPowers) ? itemUpdate.addPowers.map((p: any) => String(p).trim()).filter((p: string) => p) : [];
             
@@ -1201,22 +1609,25 @@ const App: React.FC = () => {
                 mergedNovelItems.push(item);
               }
               
-              // Create or update character possession
-              if (!character.itemPossessions) character.itemPossessions = [];
-              
-              let possession = character.itemPossessions.find(p => p.itemId === item.id);
-              if (possession) {
+              // Create or update character possession using immutable update
+              const existingPossessions = character.itemPossessions || [];
+              const existingPossessionIndex = existingPossessions.findIndex(p => p.itemId === item.id);
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1542',message:'Before updating item possessions',data:{characterId:character.id,characterName:character.name,existingPossessionsCount:existingPossessions.length,existingPossessionIndex,itemId:item.id,itemName:item.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+              // #endregion
+              let updatedPossessions: CharacterItemPossession[];
+              if (existingPossessionIndex >= 0) {
                 // Update existing possession
-                possession = {
-                  ...possession,
-                  status: 'active',
-                  notes: possession.notes || '',
-                  updatedAt: Date.now()
-                };
-                const posIndex = character.itemPossessions.findIndex(p => p.id === possession!.id);
-                if (posIndex >= 0) {
-                  character.itemPossessions[posIndex] = possession;
-                }
+                updatedPossessions = existingPossessions.map((p, idx) => 
+                  idx === existingPossessionIndex
+                    ? {
+                        ...p,
+                        status: 'active' as const,
+                        notes: p.notes || '',
+                        updatedAt: Date.now()
+                      }
+                    : p
+                );
               } else {
                 // Create new possession
                 const newPossession: CharacterItemPossession = {
@@ -1229,8 +1640,17 @@ const App: React.FC = () => {
                   createdAt: Date.now(),
                   updatedAt: Date.now()
                 };
-                character.itemPossessions.push(newPossession);
+                updatedPossessions = [...existingPossessions, newPossession];
               }
+              
+              // Create new character object with updated possessions (immutable update)
+              const updatedCharacter: Character = {
+                ...character,
+                itemPossessions: updatedPossessions
+              };
+              
+              // Update mergedCharacters array with new character object
+              mergedCharacters[characterIndex] = updatedCharacter;
               
               localAddLog(
                 wasCreated 
@@ -1243,28 +1663,42 @@ const App: React.FC = () => {
               localAddLog(`Failed to process item "${itemName}": ${error}`, 'update');
             }
           });
+          if (skippedItems.length > 0) {
+            console.warn('[DEBUG] Skipped item updates:', skippedItems);
+            localAddLog(`⚠️ ${skippedItems.length} item update(s) skipped due to missing characterName`, 'update');
+          }
         }
         
         // Process technique updates
+        // #region agent log
+        console.log('[DEBUG] Technique Updates Processing]', {
+          techniqueUpdatesCount: extraction.techniqueUpdates?.length || 0,
+          techniqueUpdates: extraction.techniqueUpdates,
+          techniqueUpdatesWithCharacterName: extraction.techniqueUpdates?.filter(t => t.characterName)?.length || 0
+        });
+        // #endregion
         if (extraction.techniqueUpdates && extraction.techniqueUpdates.length > 0) {
+          const skippedTechniques: string[] = [];
           extraction.techniqueUpdates.forEach((techUpdate: { name?: unknown; characterName?: unknown; category?: unknown; type?: unknown; description?: unknown; addFunctions?: unknown[]; masteryLevel?: unknown }) => {
             const techName = String(techUpdate?.name || '').trim();
             const characterName = String(techUpdate?.characterName || '').trim();
-            if (!techName || !characterName) return;
+            if (!techName || !characterName) {
+              skippedTechniques.push(`Technique "${techName}" skipped: ${!techName ? 'missing name' : 'missing characterName'}`);
+              return;
+            }
             
-            // Find character
-            const character = mergedCharacters.find(c => normalize(c.name) === normalize(characterName));
-            if (!character) {
+            // Find character index (not the character itself for immutable updates)
+            const characterIndex = mergedCharacters.findIndex(c => normalize(c.name) === normalize(characterName));
+            if (characterIndex === -1) {
               localAddLog(`Skipped technique "${techName}": Character "${characterName}" not found`, 'update');
               return;
             }
             
-            // Use shared coercion utilities
-            const coerceTechCategoryLocal = (cat: string) => coerceTechniqueCategory(cat);
-            const coerceTechTypeLocal = (type: string) => coerceTechniqueType(type);
+            const character = mergedCharacters[characterIndex];
             
-            const category = coerceTechCategory(String(techUpdate?.category || 'Basic'));
-            const techType = coerceTechType(String(techUpdate?.type || 'Other'));
+            // Use shared coercion utilities
+            const category = coerceTechniqueCategory(techUpdate?.category || 'Basic');
+            const techType = coerceTechniqueType(techUpdate?.type || 'Other');
             const description = String(techUpdate?.description || '').trim();
             const functions = Array.isArray(techUpdate?.addFunctions) ? techUpdate.addFunctions.map((f: unknown) => String(f).trim()).filter((f: string) => f) : [];
             const masteryLevel = String(techUpdate?.masteryLevel || 'Novice').trim();
@@ -1289,23 +1723,26 @@ const App: React.FC = () => {
                 mergedNovelTechniques.push(technique);
               }
               
-              // Create or update character mastery
-              if (!character.techniqueMasteries) character.techniqueMasteries = [];
-              
-              let mastery = character.techniqueMasteries.find(m => m.techniqueId === technique.id);
-              if (mastery) {
+              // Create or update character mastery using immutable update
+              const existingMasteries = character.techniqueMasteries || [];
+              const existingMasteryIndex = existingMasteries.findIndex(m => m.techniqueId === technique.id);
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1639',message:'Before updating technique masteries',data:{characterId:character.id,characterName:character.name,existingMasteriesCount:existingMasteries.length,existingMasteryIndex,techniqueId:technique.id,techniqueName:technique.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+              // #endregion
+              let updatedMasteries: CharacterTechniqueMastery[];
+              if (existingMasteryIndex >= 0) {
                 // Update existing mastery
-                mastery = {
-                  ...mastery,
-                  status: 'active',
-                  masteryLevel: masteryLevel || mastery.masteryLevel,
-                  notes: mastery.notes || '',
-                  updatedAt: Date.now()
-                };
-                const mastIndex = character.techniqueMasteries.findIndex(m => m.id === mastery!.id);
-                if (mastIndex >= 0) {
-                  character.techniqueMasteries[mastIndex] = mastery;
-                }
+                updatedMasteries = existingMasteries.map((m, idx) => 
+                  idx === existingMasteryIndex
+                    ? {
+                        ...m,
+                        status: 'active' as const,
+                        masteryLevel: masteryLevel || m.masteryLevel,
+                        notes: m.notes || '',
+                        updatedAt: Date.now()
+                      }
+                    : m
+                );
               } else {
                 // Create new mastery
                 const newMastery: CharacterTechniqueMastery = {
@@ -1319,8 +1756,17 @@ const App: React.FC = () => {
                   createdAt: Date.now(),
                   updatedAt: Date.now()
                 };
-                character.techniqueMasteries.push(newMastery);
+                updatedMasteries = [...existingMasteries, newMastery];
               }
+              
+              // Create new character object with updated masteries (immutable update)
+              const updatedCharacter: Character = {
+                ...character,
+                techniqueMasteries: updatedMasteries
+              };
+              
+              // Update mergedCharacters array with new character object
+              mergedCharacters[characterIndex] = updatedCharacter;
               
               localAddLog(
                 wasCreated 
@@ -1335,10 +1781,78 @@ const App: React.FC = () => {
               localAddLog(`Failed to process technique "${techName}": ${error}`, 'update');
             }
           });
+          if (skippedTechniques.length > 0) {
+            console.warn('[DEBUG] Skipped technique updates:', skippedTechniques);
+            localAddLog(`⚠️ ${skippedTechniques.length} technique update(s) skipped due to missing characterName`, 'update');
+          }
         }
+
+        // Log item and technique linking summary
+        const itemsLinked = mergedCharacters.reduce((sum, char) => sum + (char.itemPossessions?.length || 0), 0);
+        const techniquesLinked = mergedCharacters.reduce((sum, char) => sum + (char.techniqueMasteries?.length || 0), 0);
+        logger.info('Items and techniques linked', 'chapterGeneration', {
+          chapterId: newChapter.id,
+          chapterNumber: newChapter.number,
+          itemsLinked: itemsLinked,
+          techniquesLinked: techniquesLinked,
+          totalItems: mergedNovelItems.length,
+          totalTechniques: mergedNovelTechniques.length,
+        });
 
         // 3.5) Process antagonist updates with fuzzy matching
         let mergedAntagonists = [...(workingNovelState.antagonists || [])];
+        let mergedThreads = [...(workingNovelState.storyThreads || [])];
+        
+        // Process story threads
+        if (extraction.threadUpdates && extraction.threadUpdates.length > 0) {
+          try {
+            const { processThreadUpdates } = await import('./services/storyThreadService');
+            const threadResults = processThreadUpdates(
+              extraction.threadUpdates,
+              mergedThreads,
+              workingNovelState.id,
+              newChapter.number,
+              newChapter.id,
+              {
+                characterCodex: mergedCharacters,
+                novelItems: mergedNovelItems,
+                novelTechniques: mergedNovelTechniques,
+                territories: mergedTerritories,
+                antagonists: mergedAntagonists,
+                plotLedger: workingNovelState.plotLedger, // Use original plotLedger since mergedLedger isn't created yet
+                worldBible: workingNovelState.worldBible,
+                realms: workingNovelState.realms,
+              }
+            );
+
+            for (const result of threadResults) {
+              const existingIndex = mergedThreads.findIndex(t => t.id === result.thread.id);
+              if (existingIndex >= 0) {
+                mergedThreads[existingIndex] = result.thread;
+                if (result.wasUpdated) {
+                  localAddLog(`Thread updated: ${result.thread.title}`, 'update');
+                }
+              } else {
+                mergedThreads.push(result.thread);
+                localAddLog(`Thread discovered: ${result.thread.title}`, 'discovery');
+              }
+
+              // Save progression event if available
+              if (result.progressionEvent) {
+                try {
+                  const { saveThreadProgressionEvent } = await import('./services/threadService');
+                  await saveThreadProgressionEvent(result.progressionEvent);
+                } catch (error) {
+                  console.warn('Failed to save thread progression event:', error);
+                }
+              }
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error('Error processing thread updates:', errorMessage);
+            localAddLog(`Failed to process thread updates: ${errorMessage}`, 'update');
+          }
+        }
         
         if (extraction.antagonistUpdates && extraction.antagonistUpdates.length > 0) {
           extraction.antagonistUpdates.forEach((antUpdate) => {
@@ -1569,6 +2083,37 @@ const App: React.FC = () => {
           c.id === newChapter.id ? updatedChapter : c
         );
 
+        // #region agent log
+        const finalItemPossessionsCount = mergedCharacters.reduce((sum, char) => sum + (char.itemPossessions?.filter(p => p.status === 'active').length || 0), 0);
+        const finalTechniqueMasteriesCount = mergedCharacters.reduce((sum, char) => sum + (char.techniqueMasteries?.filter(m => m.status === 'active').length || 0), 0);
+        const charactersWithItems = mergedCharacters.filter(c=>(c.itemPossessions||[]).length>0).map(c=>({name:c.name,itemCount:c.itemPossessions?.length||0,itemPossessions:c.itemPossessions}));
+        const charactersWithTechniques = mergedCharacters.filter(c=>(c.techniqueMasteries||[]).length>0).map(c=>({name:c.name,techniqueCount:c.techniqueMasteries?.length||0,techniqueMasteries:c.techniqueMasteries}));
+        console.log('[DEBUG] Before state update - final counts', {
+          finalItemPossessionsCount,
+          finalTechniqueMasteriesCount,
+          characterCount: mergedCharacters.length,
+          charactersWithItems,
+          charactersWithTechniques,
+          alexData: mergedCharacters.find(c => c.name === 'ALEX')?.itemPossessions,
+          meiLinData: mergedCharacters.find(c => c.name === 'MEI LIN')?.itemPossessions,
+          zhaoData: mergedCharacters.find(c => c.name === 'ZHAO')?.itemPossessions
+        });
+        // #endregion
+        
+        // Debug: Verify mergedCharacters before assigning to workingNovelState
+        logger.debug('Before workingNovelState update', 'chapterGeneration', {
+          chapterId: newChapter.id,
+          mergedCharactersCount: mergedCharacters.length,
+          sampleCharacters: mergedCharacters.slice(0, 2).map(c => ({
+            name: c.name,
+            cultivation: c.currentCultivation,
+            hasAppearance: !!c.appearance,
+            hasBackground: !!c.background,
+            hasGoals: !!c.goals,
+            hasFlaws: !!c.flaws
+          }))
+        });
+        
         workingNovelState = {
           ...workingNovelState,
           chapters: updatedChapters,
@@ -1578,9 +2123,79 @@ const App: React.FC = () => {
           novelItems: mergedNovelItems,
           novelTechniques: mergedNovelTechniques,
           antagonists: mergedAntagonists,
+          storyThreads: mergedThreads,
           plotLedger: mergedLedger,
           updatedAt: now,
         };
+        
+        // Debug: Verify workingNovelState.characterCodex after assignment
+        logger.debug('After workingNovelState update', 'chapterGeneration', {
+          chapterId: newChapter.id,
+          characterCodexCount: workingNovelState.characterCodex.length,
+          matchesMerged: workingNovelState.characterCodex.length === mergedCharacters.length
+        });
+
+        // Final summary log
+        const totalRelationships = mergedCharacters.reduce((sum, char) => sum + (char.relationships?.length || 0), 0);
+        const totalItemPossessions = mergedCharacters.reduce((sum, char) => sum + (char.itemPossessions?.length || 0), 0);
+        const totalTechniqueMasteries = mergedCharacters.reduce((sum, char) => sum + (char.techniqueMasteries?.length || 0), 0);
+        logger.info('Chapter processing complete - final summary', 'chapterGeneration', {
+          chapterId: newChapter.id,
+          chapterNumber: newChapter.number,
+          totalCharacters: mergedCharacters.length,
+          totalRelationships: totalRelationships,
+          totalItemPossessions: totalItemPossessions,
+          totalTechniqueMasteries: totalTechniqueMasteries,
+          totalItems: mergedNovelItems.length,
+          totalTechniques: mergedNovelTechniques.length,
+          totalAntagonists: mergedAntagonists.length,
+          totalScenes: extractedScenes.length,
+        });
+        localAddLog(`✅ Codex updated: ${mergedCharacters.length} character(s), ${totalRelationships} relationship(s), ${totalItemPossessions} item possession(s), ${totalTechniqueMasteries} technique mastery(ies)`, 'discovery');
+
+        // Mark entities with chapter references for rollback tracking
+        if (snapshotCaptured) {
+          try {
+            markEntitiesWithChapter(
+              newChapter.id,
+              newChapter.number,
+              extraction,
+              workingNovelState
+            );
+            
+            // Track arc checklist completions
+            trackArcChecklistCompletions(
+              newChapter.id,
+              newChapter.number,
+              extraction,
+              workingNovelState
+            );
+            
+            // Check for realm changes
+            const newRealmId = workingNovelState.currentRealmId;
+            const realmCreated = extraction.worldEntryUpserts?.some(w => w.isNewRealm) || false;
+            if (realmCreated && newRealmId && newRealmId !== oldRealmId) {
+              trackRealmChanges(
+                newChapter.id,
+                newChapter.number,
+                oldRealmId,
+                newRealmId,
+                true
+              );
+            }
+            
+            logger.info('Entities marked with chapter references', 'chapterGeneration', {
+              chapterId: newChapter.id,
+              chapterNumber: newChapter.number,
+            });
+          } catch (trackingError) {
+            logger.error('Failed to mark entities with chapter references', 'chapterGeneration', {
+              chapterId: newChapter.id,
+              error: trackingError instanceof Error ? trackingError : new Error(String(trackingError)),
+            });
+            // Don't fail generation if tracking fails - non-critical
+          }
+        }
 
         // Chapter appearances will be saved after the novel (including antagonists and chapters) is saved to the database
         // This ensures both the antagonist and chapter exist before creating the relationship
@@ -1673,14 +2288,14 @@ const App: React.FC = () => {
             localAddLog(`⚠️ Low trust score: ${trustScore.overall}/100 - Review extractions carefully`, 'update');
           }
 
-          // 6. Add suggestions to logs
+          // 7. Add suggestions to logs
           if (extractionPreview.suggestions.length > 0) {
             extractionPreview.suggestions.slice(0, 3).forEach(suggestion => {
               localAddLog(`💡 ${suggestion}`, 'update');
             });
           }
 
-          // 7. Log warnings
+          // 8. Log warnings
           if (extractionPreview.warnings.length > 0) {
             extractionPreview.warnings.slice(0, 3).forEach(warning => {
               localAddLog(`⚠️ ${warning}`, 'update');
@@ -1693,9 +2308,36 @@ const App: React.FC = () => {
           // Don't fail the whole chapter processing if automation analysis fails
         }
 
-        // CONSISTENCY CHECKING
+        // ENHANCED CONSISTENCY CHECKING
         try {
-          // Check consistency for the new chapter
+          // Enhanced: Post-generation consistency check with knowledge graph
+          const { getPostGenerationConsistencyChecker } = await import('./services/postGenerationConsistencyChecker');
+          const extraction = await extractPostChapterUpdates(workingNovelState, newChapter, activeArc);
+          const postChecker = getPostGenerationConsistencyChecker();
+          const consistencyReport = postChecker.checkConsistency(workingNovelState, newChapter, extraction);
+          
+          if (!consistencyReport.valid) {
+            const criticalIssues = consistencyReport.issues.filter(i => i.severity === 'critical');
+            const warningIssues = consistencyReport.issues.filter(i => i.severity === 'warning');
+            
+            if (criticalIssues.length > 0) {
+              localAddLog(`🔴 ${criticalIssues.length} critical consistency issue(s) detected`, 'update');
+              criticalIssues.slice(0, 2).forEach(issue => {
+                localAddLog(`  • ${issue.message}`, 'update');
+              });
+            }
+            
+            if (warningIssues.length > 0) {
+              localAddLog(`⚠️ ${warningIssues.length} consistency warning(s)`, 'update');
+              warningIssues.slice(0, 2).forEach(issue => {
+                localAddLog(`  • ${issue.message}`, 'update');
+              });
+            }
+          } else {
+            localAddLog(`✅ Chapter consistency check passed (Score: ${consistencyReport.summary.overallScore}/100)`, 'discovery');
+          }
+          
+          // Also run standard chapter consistency check
           const chapterConsistencyIssues = checkChapterConsistency(
             workingNovelState,
             newChapter.number
@@ -1722,8 +2364,9 @@ const App: React.FC = () => {
             localAddLog(`✅ Chapter consistency check passed`, 'discovery');
           }
 
-          // Run full consistency check periodically (every 5 chapters)
-          if (newChapter.number % 5 === 0) {
+          // Enhanced: Run consistency check with knowledge graph
+          try {
+            const { checkConsistency } = await import('./services/consistencyChecker');
             const fullConsistencyReport = checkConsistency(workingNovelState);
             
             if (fullConsistencyReport.summary.overallScore >= 90) {
@@ -1739,6 +2382,15 @@ const App: React.FC = () => {
                 localAddLog(`💡 ${rec}`, 'update');
               });
             }
+
+            // Run full consistency check periodically (every 5 chapters)
+            if (newChapter.number % 5 === 0 && fullConsistencyReport.summary.critical > 0) {
+              localAddLog(`🔍 Full consistency audit: ${fullConsistencyReport.summary.total} issue(s) found`, 'update');
+            }
+          } catch (consistencyError) {
+            logger.warn('Consistency check failed', 'chapterProcessing', {
+              error: consistencyError instanceof Error ? consistencyError.message : String(consistencyError)
+            });
           }
         } catch (consistencyError) {
           logger.warn('Consistency check failed', 'chapterProcessing', {
@@ -1758,6 +2410,32 @@ const App: React.FC = () => {
         systemLogs: [...activeNovel.systemLogs, ...newLogs],
         updatedAt: Date.now(),
       };
+      
+      // Debug: Verify finalNovelState includes updated characterCodex
+      logger.debug('Final novel state created', 'chapterGeneration', {
+        chapterId: newChapter.id,
+        characterCodexCount: finalNovelState.characterCodex.length,
+        workingNovelStateCharacterCount: workingNovelState.characterCodex.length,
+        matches: finalNovelState.characterCodex.length === workingNovelState.characterCodex.length,
+        sampleCharacter: finalNovelState.characterCodex[0] ? {
+          name: finalNovelState.characterCodex[0].name,
+          cultivation: finalNovelState.characterCodex[0].currentCultivation
+        } : null
+      });
+      
+      // #region agent log
+      console.log('[DEBUG] Final Novel State Before Update]', {
+        characterCodexCount: finalNovelState.characterCodex.length,
+        alexItemPossessions: finalNovelState.characterCodex.find(c => c.name === 'ALEX')?.itemPossessions?.length || 0,
+        alexTechniqueMasteries: finalNovelState.characterCodex.find(c => c.name === 'ALEX')?.techniqueMasteries?.length || 0,
+        meiLinItemPossessions: finalNovelState.characterCodex.find(c => c.name === 'MEI LIN')?.itemPossessions?.length || 0,
+        meiLinTechniqueMasteries: finalNovelState.characterCodex.find(c => c.name === 'MEI LIN')?.techniqueMasteries?.length || 0,
+        zhaoItemPossessions: finalNovelState.characterCodex.find(c => c.name === 'ZHAO')?.itemPossessions?.length || 0,
+        zhaoTechniqueMasteries: finalNovelState.characterCodex.find(c => c.name === 'ZHAO')?.techniqueMasteries?.length || 0,
+        totalItemPossessions: finalNovelState.characterCodex.reduce((sum, c) => sum + (c.itemPossessions?.length || 0), 0),
+        totalTechniqueMasteries: finalNovelState.characterCodex.reduce((sum, c) => sum + (c.techniqueMasteries?.length || 0), 0)
+      });
+      // #endregion
 
       // Update foreshadowing and symbolism elements after chapter generation
       try {
@@ -1997,7 +2675,6 @@ const App: React.FC = () => {
             }
             
             // Check if there are fix proposals requiring approval
-            const editorReportWithInternal = editorReport as EditorReportWithInternal;
             const fixProposals = editorReportWithInternal._fixProposals || [];
             if (fixProposals.length > 0) {
               setPendingFixProposals(fixProposals);
@@ -2022,10 +2699,273 @@ const App: React.FC = () => {
       logger.error('Error generating chapter', 'App', e instanceof Error ? e : new Error(String(e)));
       const errorMessage = e instanceof Error ? e.message : String(e);
       showError(
-        `Dao failure! Connection severed.\n\nError: ${errorMessage}\n\nPlease check:\n1. Your selected LLM API key is set in .env.local (GEMINI_API_KEY and/or DEEPSEEK_API_KEY)\n2. Your internet connection\n3. Browser console for more details (F12)`
+        `Dao failure! Connection severed.\n\nError: ${errorMessage}\n\nPlease check:\n1. Your DEEPSEEK_API_KEY is set in .env.local\n2. Your internet connection\n3. Browser console for more details (F12)`
       );
     } finally {
       // Only end "generating" if this is still the active request (cancel may have already flipped it).
+      if (activeGenerationIdRef.current === generationId) {
+        setIsGenerating(false);
+        activeGenerationIdRef.current = null;
+      }
+      setInstruction('');
+    }
+  };
+
+  const handleBatchGenerate = async (customInstruction?: string) => {
+    if (!activeNovel) return;
+    const generationId = crypto.randomUUID();
+    activeGenerationIdRef.current = generationId;
+    setIsGenerating(true);
+    setGenerationProgress(0);
+    setGenerationStatus('Starting batch generation...');
+    const newLogs: SystemLog[] = [];
+
+    const localAddLog = (msg: string, type: SystemLog['type'] = 'discovery') => {
+      const log: SystemLog = { id: generateUUID(), message: msg, type, timestamp: Date.now() };
+      newLogs.push(log);
+    };
+
+    const BATCH_SIZE = 5;
+    let currentNovelState = activeNovel;
+    let chaptersGenerated = 0;
+
+    try {
+      for (let chapterIndex = 0; chapterIndex < BATCH_SIZE; chapterIndex++) {
+        // Check if cancelled before starting next chapter
+        if (activeGenerationIdRef.current !== generationId) {
+          return;
+        }
+
+        const chapterNumber = chapterIndex + 1;
+        const baseProgress = (chapterIndex / BATCH_SIZE) * 100;
+        
+        setGenerationProgress(baseProgress + 1);
+        setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Analyzing story context...`);
+        addEphemeralLog(`Starting Chapter ${chapterNumber}/${BATCH_SIZE}...`, 'discovery');
+
+        // Calculate next chapter number based on current novel state
+        const nextChapterNumber = currentNovelState.chapters.length > 0
+          ? Math.max(...currentNovelState.chapters.map(c => c.number), 0) + 1
+          : 1;
+
+        // Pre-generation gap analysis
+        try {
+          const preGenerationSuggestions = generatePreGenerationSuggestions(currentNovelState, nextChapterNumber);
+          if (preGenerationSuggestions.length > 0 && chapterNumber === 1) {
+            addEphemeralLog('Analyzing story structure...', 'discovery');
+            preGenerationSuggestions.filter(s => s.includes('⚠️')).slice(0, 2).forEach(suggestion => {
+              localAddLog(suggestion, 'update');
+            });
+          }
+        } catch (gapAnalysisError) {
+          logger.warn('Pre-generation gap analysis failed', 'chapterGeneration', {
+            error: gapAnalysisError instanceof Error ? gapAnalysisError.message : String(gapAnalysisError)
+          });
+        }
+
+        addEphemeralLog(`Chapter ${chapterNumber}/${BATCH_SIZE} - Building prompt context...`, 'discovery');
+        
+        // Generate chapter with progress tracking scaled to this chapter's window
+        const result = await generateNextChapter(currentNovelState, customInstruction || instruction, {
+          onPhase: (phase, data) => {
+            if (activeGenerationIdRef.current !== generationId) return;
+            
+            const chapterProgressWindow = 100 / BATCH_SIZE; // 20% per chapter
+            const phaseProgress = baseProgress + (chapterProgressWindow * 0.95); // Use 95% of window, leave 5% for finalization
+            
+            if (phase === 'prompt_build_start') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.1));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Constructing narrative context...`);
+            }
+            if (phase === 'prompt_build_end') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.2));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Context assembled. Preparing request...`);
+            }
+            if (phase === 'queue_estimate') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.25));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Checking system load...`);
+            }
+            if (phase === 'queue_dequeued') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.3));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Starting generation...`);
+            }
+            if (phase === 'llm_request_start') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.4));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Consulting the Muse...`);
+            }
+            if (phase === 'llm_request_end') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.8));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Content received. Processing...`);
+            }
+            if (phase === 'quality_check') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.08));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Validating narrative quality...`);
+            }
+            if (phase === 'quality_validation') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.85));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Validating generated chapter quality...`);
+            }
+            if (phase === 'parse_start') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.85));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Structuring narrative elements...`);
+            }
+            if (phase === 'parse_end') {
+              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.95));
+              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Finalizing chapter...`);
+            }
+          }
+        });
+
+        // Check if cancelled after generation
+        if (activeGenerationIdRef.current !== generationId) {
+          return;
+        }
+
+        // Validate result
+        if (!result || !result.chapterContent || typeof result.chapterContent !== 'string') {
+          throw new Error(`Invalid chapter generation result for Chapter ${chapterNumber}: missing or invalid content`);
+        }
+
+        // Normalize chapter title
+        let normalizedTitle = result.chapterTitle?.trim() || '';
+        if (!normalizedTitle) {
+          normalizedTitle = `Chapter ${nextChapterNumber}`;
+        } else {
+          const titleLower = normalizedTitle.toLowerCase();
+          const chapterPattern = /^chapter\s+\d+/i;
+          if (!chapterPattern.test(titleLower)) {
+            normalizedTitle = `Chapter ${nextChapterNumber}: ${normalizedTitle}`;
+          } else {
+            const match = normalizedTitle.match(/^Chapter\s+\d+[:\s]+(.*)$/i);
+            if (match && match[1]) {
+              normalizedTitle = `Chapter ${nextChapterNumber}: ${match[1].trim()}`;
+            } else {
+              normalizedTitle = normalizedTitle.replace(/^Chapter\s+\d+/i, `Chapter ${nextChapterNumber}`);
+            }
+          }
+        }
+
+        // Validate word count
+        const wordCount = result.chapterContent.split(/\s+/).filter((word: string) => word.trim().length > 0).length;
+        if (wordCount < 1500) {
+          localAddLog(`Chapter ${chapterNumber} has ${wordCount} words (below 1500 minimum)`, 'update');
+        } else if (wordCount > 5000) {
+          localAddLog(`Chapter ${chapterNumber} has ${wordCount} words (quite long)`, 'update');
+        }
+
+        if (result.chapterContent.trim().length < 500) {
+          throw new Error(`Generated chapter ${chapterNumber} content is too short or contains only whitespace`);
+        }
+
+        const newChapter: Chapter = {
+          id: generateUUID(),
+          number: nextChapterNumber,
+          title: normalizedTitle,
+          content: result.chapterContent.trim(),
+          summary: (result.chapterSummary || '').trim() || `Chapter ${nextChapterNumber}: ${normalizedTitle.replace(/^Chapter\s+\d+[:\s]+/i, '').trim()}`,
+          logicAudit: result.logicAudit,
+          scenes: [],
+          createdAt: Date.now()
+        };
+
+        // Process updates (simplified - reuse the complex logic from handleGenerateNext)
+        // For batch generation, we'll do a simplified update and let the full processing happen at the end
+        // This is necessary because the full update logic is 1000+ lines
+        
+        // Add chapter to current state
+        currentNovelState = {
+          ...currentNovelState,
+          chapters: [...currentNovelState.chapters, newChapter],
+          updatedAt: Date.now()
+        };
+
+        // Update active novel state after each chapter so next chapter has context
+        updateActiveNovel(() => currentNovelState);
+
+        chaptersGenerated++;
+        localAddLog(`Chapter ${chapterNumber}/${BATCH_SIZE} generated successfully`, 'discovery');
+
+        // Process post-chapter updates (simplified)
+        try {
+          let activeArc = currentNovelState.plotLedger.find(a => a.status === 'active') || null;
+          const extraction = await extractPostChapterUpdates(currentNovelState, newChapter, activeArc);
+          
+          // Apply character updates
+          if (extraction.characterUpserts) {
+            const existingCharacters = [...currentNovelState.characterCodex];
+            extraction.characterUpserts.forEach((u) => {
+              const name = String(u?.name || '').trim();
+              if (!name) return;
+              const idx = existingCharacters.findIndex(c => c.name.toLowerCase() === name.toLowerCase());
+              
+              if (idx > -1) {
+                const char = { ...existingCharacters[idx] };
+                if (u.set) {
+                  if (u.set.currentCultivation) char.currentCultivation = String(u.set.currentCultivation);
+                  if (u.set.notes) char.notes = (char.notes || '') + '\n' + String(u.set.notes);
+                  if (u.set.status) char.status = u.set.status as Character['status'];
+                }
+                if (u.addSkills) char.skills = [...new Set([...(char.skills || []), ...u.addSkills])];
+                if (u.addItems) char.items = [...new Set([...(char.items || []), ...u.addItems])];
+                existingCharacters[idx] = char;
+              } else if (u.set) {
+                // Create new character
+                const newChar = createNewCharacter({
+                  name,
+                  currentCultivation: String(u.set.currentCultivation || ''),
+                  notes: String(u.set.notes || ''),
+                  status: (u.set.status as Character['status']) || 'Alive'
+                });
+                existingCharacters.push(newChar);
+              }
+            });
+            currentNovelState = { ...currentNovelState, characterCodex: existingCharacters };
+          }
+
+          // Update active novel with processed updates
+          updateActiveNovel(() => currentNovelState);
+        } catch (updateError) {
+          logger.warn('Post-chapter update failed for batch chapter', 'chapterGeneration', {
+            error: updateError instanceof Error ? updateError.message : String(updateError)
+          });
+          // Continue with next chapter even if updates fail
+        }
+      }
+
+      // Final update with all logs
+      const finalNovelState: NovelState = {
+        ...currentNovelState,
+        systemLogs: [...activeNovel.systemLogs, ...newLogs],
+        updatedAt: Date.now(),
+      };
+
+      updateActiveNovel(() => finalNovelState);
+      setActiveLogs(newLogs);
+
+      setGenerationProgress(100);
+      setGenerationStatus(`Batch generation complete! Generated ${chaptersGenerated}/${BATCH_SIZE} chapters`);
+      addEphemeralLog(`Batch generation complete! Successfully generated ${chaptersGenerated} chapters.`, 'discovery');
+      
+      showSuccess(`Successfully generated ${chaptersGenerated} chapters!`);
+
+    } catch (e) {
+      logger.error('Error in batch generation', 'App', e instanceof Error ? e : new Error(String(e)));
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      showError(
+        `Batch generation failed after ${chaptersGenerated} chapters.\n\nError: ${errorMessage}\n\nPlease check your API keys and connection.`
+      );
+      
+      // Save any chapters that were successfully generated
+      if (chaptersGenerated > 0 && currentNovelState) {
+        const partialNovelState: NovelState = {
+          ...currentNovelState,
+          systemLogs: [...activeNovel.systemLogs, ...newLogs],
+          updatedAt: Date.now(),
+        };
+        updateActiveNovel(() => partialNovelState);
+        showWarning(`${chaptersGenerated} chapter(s) were saved before the error occurred.`);
+      }
+    } finally {
       if (activeGenerationIdRef.current === generationId) {
         setIsGenerating(false);
         activeGenerationIdRef.current = null;
@@ -2061,20 +3001,22 @@ const App: React.FC = () => {
   };
 
   const handleGeneratePortrait = async (char: Character) => {
-    if (!activeNovel) return;
-    setIsGeneratingPortrait(char.id);
-    try {
-      const url = await generatePortrait(char, activeNovel.worldBible?.[0]?.content || "");
-      if (url) {
-        updateActiveNovel(prev => ({
-          ...prev,
-          characterCodex: prev.characterCodex.map(c => c.id === char.id ? { ...c, portraitUrl: url } : c)
-        }));
-      }
-    } catch (e) {
-      logger.error('Error generating portrait', 'portraitGeneration', e instanceof Error ? e : new Error(String(e)), { characterId: char.id, characterName: char.name });
-    } finally { setIsGeneratingPortrait(null); }
+    // Portrait generation is no longer available (required Gemini API)
+    logger.warn('Portrait generation is not available', 'portraitGeneration', { characterId: char.id, characterName: char.name });
+    setIsGeneratingPortrait(null);
   };
+
+  const handleSetProtagonist = useCallback((characterId: string) => {
+    if (!activeNovel) return;
+    updateActiveNovel(prev => ({
+      ...prev,
+      characterCodex: prev.characterCodex.map(c => ({
+        ...c,
+        isProtagonist: c.id === characterId ? !c.isProtagonist : c.isProtagonist,
+      })),
+      updatedAt: Date.now(),
+    }));
+  }, [activeNovel, updateActiveNovel]);
 
   const DEFAULT_ARC_TARGET_CHAPTERS = 10;
   const buildDefaultArcChecklist = (): NonNullable<Arc['checklist']> => ([
@@ -2238,6 +3180,197 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleSaveCharacter = useCallback((character: Character) => {
+    updateActiveNovel(prev => {
+      const nextCodex = prev.characterCodex.some(c => c.id === character.id)
+        ? prev.characterCodex.map(c => (c.id === character.id ? character : c))
+        : [...prev.characterCodex, character];
+
+      return { ...prev, characterCodex: nextCodex };
+    });
+    setEditingChar(null);
+    
+    // Save immediately to ensure persistence
+    if (activeNovel) {
+      const nextCodex = activeNovel.characterCodex.some(c => c.id === character.id)
+        ? activeNovel.characterCodex.map(c => (c.id === character.id ? character : c))
+        : [...activeNovel.characterCodex, character];
+
+      const updatedNovel = {
+        ...activeNovel,
+        characterCodex: nextCodex,
+        updatedAt: Date.now(),
+      };
+      updateActiveNovel(() => updatedNovel);
+    }
+  }, [activeNovel, updateActiveNovel]);
+
+  const handleSaveArc = useCallback(async (arc: Arc) => {
+    updateActiveNovel(prev => {
+      const edited = ensureArcDefaults(arc);
+      // Find existing arc to preserve state
+      const existingArc = prev.plotLedger.find(a => a.id === edited.id);
+      const preserveStartedAt = existingArc?.startedAtChapter && 
+                                 existingArc.startedAtChapter > 0 &&
+                                 existingArc.startedAtChapter <= prev.chapters.length;
+      
+      const nextLedger =
+        edited.status === 'active'
+          ? prev.plotLedger.map(a => {
+              if (a.id === edited.id) {
+                return ensureArcDefaults({
+                  ...edited,
+                  status: 'active' as const,
+                  // Preserve existing start chapter if valid, otherwise set to next chapter
+                  startedAtChapter: preserveStartedAt 
+                    ? existingArc.startedAtChapter 
+                    : (prev.chapters.length + 1),
+                  endedAtChapter: undefined,
+                });
+              }
+              // If we are completing a previously-active arc, stamp its end.
+              if (a.status === 'active') {
+                return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: prev.chapters.length });
+              }
+              return ensureArcDefaults({ ...a, status: 'completed' as const });
+            })
+          : prev.plotLedger.map(a => {
+              if (a.id === edited.id) {
+                // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
+                const preserveEndedAt = existingArc?.endedAtChapter && 
+                                        existingArc.endedAtChapter > 0 &&
+                                        existingArc.endedAtChapter <= prev.chapters.length;
+                return ensureArcDefaults({
+                  ...edited,
+                  status: 'completed' as const,
+                  endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : prev.chapters.length),
+                  // Also preserve startedAtChapter for completed arcs
+                  startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
+                });
+              }
+              return ensureArcDefaults(a);
+            });
+      return { ...prev, plotLedger: nextLedger };
+    });
+    setEditingArc(null);
+    
+    // Save immediately to ensure persistence
+    if (activeNovel) {
+      const edited = ensureArcDefaults(arc, activeNovel);
+      // Find existing arc to preserve state
+      const existingArc = activeNovel.plotLedger.find(a => a.id === edited.id);
+      const preserveStartedAt = existingArc?.startedAtChapter && 
+                                 existingArc.startedAtChapter > 0 &&
+                                 existingArc.startedAtChapter <= activeNovel.chapters.length;
+      
+      let nextLedger =
+        edited.status === 'active'
+          ? activeNovel.plotLedger.map(a => {
+              if (a.id === edited.id) {
+                return ensureArcDefaults({
+                  ...edited,
+                  status: 'active' as const,
+                  // Preserve existing start chapter if valid, otherwise set to next chapter
+                  startedAtChapter: preserveStartedAt 
+                    ? existingArc.startedAtChapter 
+                    : (activeNovel.chapters.length + 1),
+                  endedAtChapter: undefined,
+                }, activeNovel);
+              }
+              if (a.status === 'active') {
+                return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: activeNovel.chapters.length }, activeNovel);
+              }
+              return ensureArcDefaults({ ...a, status: 'completed' as const }, activeNovel);
+            })
+          : activeNovel.plotLedger.map(a => {
+              if (a.id === edited.id) {
+                // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
+                const preserveEndedAt = existingArc?.endedAtChapter && 
+                                        existingArc.endedAtChapter > 0 &&
+                                        existingArc.endedAtChapter <= activeNovel.chapters.length;
+                return ensureArcDefaults({
+                  ...edited,
+                  status: 'completed' as const,
+                  endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : activeNovel.chapters.length),
+                  // Also preserve startedAtChapter for completed arcs
+                  startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
+                }, activeNovel);
+              }
+              return ensureArcDefaults(a, activeNovel);
+            });
+
+      // Validate and auto-repair arc states
+      const validatedArcs = nextLedger.map(arc => {
+        const result = arcAnalyzer.validateArcState(arc, activeNovel.chapters, nextLedger);
+        if (result.wasRepaired && result.issues.length > 0) {
+          // Log validation issues in console (can be shown to user if needed)
+          logger.warn(`Arc validation for "${arc.title}"`, 'arc', {
+            issues: result.issues
+          });
+        }
+        return result.arc;
+      });
+      nextLedger = validatedArcs;
+
+      const updatedNovel = {
+        ...activeNovel,
+        plotLedger: nextLedger,
+        updatedAt: Date.now(),
+      };
+      updateActiveNovel(() => updatedNovel);
+
+      // Trigger editor review if arc was completed
+      const completedArc = nextLedger.find(a => a.id === edited.id && a.status === 'completed');
+      if (completedArc && completedArc.startedAtChapter && completedArc.endedAtChapter) {
+        try {
+          startLoading(`Editor analyzing arc: ${completedArc.title}...`, true);
+          addEphemeralLog(`Editor analyzing arc "${completedArc.title}"...`, 'discovery');
+          const editorReport = await triggerEditorReview(updatedNovel, 'arc_complete', completedArc, {
+            onProgress: (phase: string, progress?: number) => {
+              if (progress !== undefined) {
+                updateProgress(progress, `Editor: ${phase}`);
+                setGenerationProgress(progress);
+                setGenerationStatus(`Editor: ${phase}`);
+              } else {
+                updateMessage(`Editor: ${phase}`);
+              }
+              addEphemeralLog(`Editor: ${phase}`, 'discovery');
+            },
+            onAutoFix: (fix: EditorFix) => {
+              addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
+            },
+          });
+          
+          if (editorReport) {
+            // Save the report
+            await saveEditorReport(editorReport);
+            
+            // Show notification with readiness status
+            const arcAnalysis = editorReport.analysis as any;
+            if (arcAnalysis && arcAnalysis.readiness) {
+              const readiness = arcAnalysis.readiness;
+              if (readiness.isReadyForRelease) {
+                showSuccess(`Arc "${completedArc.title}" is ready for release! Editor review complete.`);
+              } else if (readiness.blockingIssues && Array.isArray(readiness.blockingIssues)) {
+                showWarning(`Arc "${completedArc.title}" needs ${readiness.blockingIssues.length} issue(s) fixed before release.`);
+              }
+            }
+            
+            addEphemeralLog(`Editor review complete for arc "${completedArc.title}"`, 'discovery');
+            stopLoading();
+          } else {
+            stopLoading();
+          }
+        } catch (editorError) {
+          logger.error('Error in arc editor review', 'editor', editorError instanceof Error ? editorError : new Error(String(editorError)));
+          stopLoading();
+          // Don't block arc completion if editor fails
+          addEphemeralLog('Arc editor review failed - arc marked as completed', 'update');
+        }
+      }
+    }
+  }, [activeNovel, updateActiveNovel, ensureArcDefaults, startLoading, stopLoading, updateProgress, updateMessage, showSuccess, showWarning, addEphemeralLog, setGenerationProgress, setGenerationStatus]);
+
   const handleSaveTerritory = (territory: Territory) => {
     updateActiveNovel(prev => {
       const exists = prev.territories.some(t => t.id === territory.id);
@@ -2371,11 +3504,55 @@ const App: React.FC = () => {
         variant="banner"
         position="top"
       />
-      <Sidebar />
+      {/* Mobile Menu Button */}
+      <button
+        onClick={() => setMobileSidebarOpen(true)}
+        className="md:hidden fixed top-4 left-4 z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2"
+        aria-label="Open navigation menu"
+        title="Open menu"
+      >
+        <span className="text-xl">☰</span>
+      </button>
 
-      <NotificationPanel activeLogs={activeLogs} />
+      {/* Mobile Notification Panel Button */}
+      <button
+        onClick={() => setMobileNotificationPanelOpen(true)}
+        className="md:hidden fixed top-4 right-4 z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2"
+        aria-label="Open notifications"
+        title="Open notifications"
+      >
+        <span className="text-xl">🔔</span>
+      </button>
 
-      <main className="flex-1 relative overflow-y-auto mr-80">
+      {/* Mobile Sidebar Backdrop */}
+      {mobileSidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/95 backdrop-blur-xl z-40"
+          onClick={() => setMobileSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar - Hidden on mobile when closed, shown on desktop or mobile when open */}
+      <aside
+        className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto transform transition-transform duration-300 ease-in-out ${
+          mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        }`}
+      >
+        <Sidebar onNavigate={() => setMobileSidebarOpen(false)} />
+      </aside>
+
+      <NotificationPanel 
+        activeLogs={activeLogs} 
+        isOpen={mobileNotificationPanelOpen}
+        isDesktopOpen={desktopNotificationPanelOpen}
+        isDesktopMinimized={desktopNotificationPanelMinimized}
+        onClose={() => setMobileNotificationPanelOpen(false)}
+        onDesktopToggle={() => setDesktopNotificationPanelOpen(!desktopNotificationPanelOpen)}
+        onDesktopMinimize={() => setDesktopNotificationPanelMinimized(!desktopNotificationPanelMinimized)}
+      />
+
+      <main className={`flex-1 relative overflow-y-auto ${desktopNotificationPanelOpen && !desktopNotificationPanelMinimized ? 'md:mr-80' : ''}`} data-tour="main-content">
         {isSaving && (
           <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 bg-zinc-900/95 backdrop-blur-sm border border-amber-600/50 rounded-xl px-3 md:px-4 py-2 md:py-2.5 flex items-center space-x-2 md:space-x-3 z-50 shadow-xl shadow-amber-900/20 animate-in slide-in duration-200">
             <div className="animate-spin rounded-full h-4 w-4 border-2 border-zinc-600 border-t-amber-600 flex-shrink-0"></div>
@@ -2384,10 +3561,20 @@ const App: React.FC = () => {
         )}
         <button 
           onClick={() => setView('library')}
-          className="fixed top-4 left-[280px] z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 hidden md:block"
+          className="fixed top-4 left-[232px] z-50 p-2.5 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 hidden md:block"
           title="Return to Hall"
           aria-label="Return to library"
         >🏛️</button>
+        {!desktopNotificationPanelOpen && (
+          <button 
+            onClick={() => setDesktopNotificationPanelOpen(true)}
+            className="fixed top-4 right-4 z-50 p-2.5 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 hidden md:block"
+            title="Show notifications"
+            aria-label="Show notifications panel"
+          >
+            🔔
+          </button>
+        )}
         <button 
           onClick={() => setView('library')}
           className="fixed top-4 left-4 z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 md:hidden"
@@ -2396,6 +3583,26 @@ const App: React.FC = () => {
         >🏛️</button>
 
         {currentView === 'dashboard' && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <DashboardView
+              novel={activeNovel}
+              onGenerateChapter={handleGenerateNext}
+              onBatchGenerate={handleBatchGenerate}
+              isGenerating={isGenerating}
+              generationProgress={generationProgress}
+              generationStatus={generationStatus}
+              instruction={instruction}
+              onInstructionChange={setInstruction}
+              onViewChange={setView}
+              activeChapterId={activeChapter?.id || null}
+              onChapterSelect={(chapterId) => {
+                setActiveChapterId(chapterId);
+                setView('editor');
+              }}
+            />
+          </Suspense>
+        )}
+        {false && currentView === 'dashboard' && (
           <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto space-y-8 md:space-y-12 animate-in fade-in duration-300 pt-20 md:pt-24">
             <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 border-b border-zinc-700 pb-6 md:pb-8">
               <div className="flex-1 min-w-0">
@@ -2430,6 +3637,37 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   <div className="p-6 md:p-8">
+                    {/* Pre-Generation Analysis */}
+                    {(() => {
+                      try {
+                        const nextChapterNumber = activeNovel.chapters.length > 0
+                          ? Math.max(...activeNovel.chapters.map(c => c.number), 0) + 1
+                          : 1;
+                        const gapAnalysis = analyzeGaps(activeNovel, nextChapterNumber);
+                        
+                        if (gapAnalysis.gaps.length > 0 && !isGenerating) {
+                          return (
+                            <div className="mb-6">
+                              <PreGenerationAnalysis
+                                gapAnalysis={gapAnalysis}
+                                onProceed={() => {
+                                  setShowPreGenerationAnalysis(false);
+                                  handleGenerateNext();
+                                }}
+                                onReview={() => {
+                                  setShowPreGenerationAnalysis(false);
+                                  // Could navigate to a review view or scroll to gap analysis section
+                                }}
+                              />
+                            </div>
+                          );
+                        }
+                      } catch {
+                        // Ignore errors
+                      }
+                      return null;
+                    })()}
+
                     <textarea 
                       value={instruction}
                       onChange={(e) => setInstruction(e.target.value)}
@@ -2515,16 +3753,20 @@ const App: React.FC = () => {
               </div>
 
               <div className="space-y-6 md:space-y-8">
-                <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 md:p-8 shadow-xl overflow-hidden">
-                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-6">Protagonist</h3>
+                <div className="bg-gradient-to-br from-zinc-900 via-zinc-900/95 to-zinc-900 border border-zinc-700/50 rounded-2xl p-6 md:p-8 shadow-xl overflow-hidden">
+                  <div className="flex items-center gap-2 mb-6">
+                    <span className="text-lg">⭐</span>
+                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Protagonist</h3>
+                  </div>
                   <div className="space-y-6 text-center">
                     {(() => {
                       // Find protagonist:
                       // 1) Explicit Codex protagonist flag
                       // 2) Most mentioned character in chapters
                       // 3) First character fallback
-                      let protagonist = activeNovel.characterCodex.find(c => c.isProtagonist) || activeNovel.characterCodex[0];
-                      if (!activeNovel.characterCodex.find(c => c.isProtagonist) && activeNovel.chapters.length > 0 && activeNovel.characterCodex.length > 0) {
+                      const protagonists = activeNovel.characterCodex.filter(c => c.isProtagonist);
+                      let protagonist = protagonists.length > 0 ? protagonists[0] : activeNovel.characterCodex[0];
+                      if (activeNovel.characterCodex.filter(c => c.isProtagonist).length === 0 && activeNovel.chapters.length > 0 && activeNovel.characterCodex.length > 0) {
                         const characterMentions = activeNovel.characterCodex.map(char => {
                           const mentions = activeNovel.chapters.reduce((count, chapter) => {
                             const content = (chapter.content + ' ' + chapter.summary).toLowerCase();
@@ -2542,25 +3784,95 @@ const App: React.FC = () => {
                           {protagonist.portraitUrl ? (
                             <img 
                               src={protagonist.portraitUrl} 
-                              className="w-32 h-32 rounded-full mx-auto border-2 border-amber-600 shadow-xl object-cover" 
+                              className="w-32 h-32 rounded-full mx-auto border-2 border-amber-600/50 shadow-xl shadow-amber-900/20 object-cover ring-2 ring-amber-600/20" 
                               alt={`Portrait of ${protagonist.name}`}
                             />
                           ) : (
-                            <div className="w-32 h-32 rounded-full bg-zinc-800 border border-zinc-700 mx-auto flex items-center justify-center text-4xl">👤</div>
+                            <div className="w-32 h-32 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 border-2 border-amber-600/30 mx-auto flex items-center justify-center text-5xl shadow-xl shadow-amber-900/10 ring-2 ring-amber-600/20">👤</div>
                           )}
-                          <div>
-                            <h4 className="font-fantasy text-xl md:text-2xl font-bold text-amber-500">{protagonist.name}</h4>
-                            <p className="text-xs md:text-sm text-emerald-500 font-bold uppercase mt-2 tracking-wider">{protagonist.currentCultivation}</p>
+                          <div className="space-y-2">
+                            <h4 className="font-fantasy text-xl md:text-2xl font-bold text-amber-500 leading-tight break-words">{protagonist.name}</h4>
+                            {protagonist.currentCultivation && (
+                              <p className="text-xs md:text-sm text-zinc-400 font-medium mt-2 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50 inline-block">
+                                {protagonist.currentCultivation}
+                              </p>
+                            )}
                           </div>
                         </>
                       ) : (
                         <div className="py-8">
-                          <p className="text-sm text-zinc-500">No characters yet</p>
+                          <div className="text-4xl mb-3 opacity-50">👤</div>
+                          <p className="text-sm text-zinc-500">No protagonist set</p>
+                          <p className="text-xs text-zinc-600 mt-1">Mark a character as protagonist</p>
                         </div>
                       );
                     })()}
                   </div>
                 </div>
+
+                {/* Automation Status - Trust Score */}
+                {(() => {
+                  try {
+                    // Extract trust score from logs
+                    const trustLog = activeNovel.systemLogs
+                      .slice()
+                      .reverse()
+                      .find(log => log.message.includes('trust score') || log.message.includes('Trust score'));
+                    
+                    let trustScore = null;
+                    if (trustLog) {
+                      const match = trustLog.message.match(/(\d+)\/100/);
+                      if (match) {
+                        const score = parseInt(match[1], 10);
+                        // Return a simplified trust score (we don't have full breakdown from logs)
+                        trustScore = {
+                          overall: score,
+                          extractionQuality: score,
+                          connectionQuality: score,
+                          dataCompleteness: score,
+                          consistencyScore: score,
+                          factors: {
+                            highConfidenceExtractions: 0,
+                            lowConfidenceExtractions: 0,
+                            missingRequiredFields: 0,
+                            inconsistencies: 0,
+                            warnings: 0,
+                          },
+                        };
+                      }
+                    }
+                    
+                    return (
+                      <TrustScoreWidget 
+                        trustScore={trustScore}
+                        size="sm"
+                        onClick={() => setView('dashboard')}
+                      />
+                    );
+                  } catch {
+                    return null;
+                  }
+                })()}
+
+                {/* Automation Status - Gap Analysis */}
+                {(() => {
+                  try {
+                    const gapAnalysis = analyzeGaps(activeNovel, activeNovel.chapters.length || 0);
+                    if (gapAnalysis.gaps.length > 0) {
+                      return (
+                        <GapAnalysisPanel 
+                          gapAnalysis={gapAnalysis}
+                          collapsible={true}
+                          defaultExpanded={false}
+                          onReview={() => setView('dashboard')}
+                        />
+                      );
+                    }
+                  } catch {
+                    // Ignore errors
+                  }
+                  return null;
+                })()}
 
                 <div className="bg-zinc-900/60 border border-zinc-700 rounded-2xl p-6">
                   <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-4 flex items-center">
@@ -2596,7 +3908,7 @@ const App: React.FC = () => {
         )}
 
         {currentView === 'editor' && activeChapter && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <ChapterEditor 
               chapter={activeChapter} 
               novelState={activeNovel} 
@@ -2610,42 +3922,42 @@ const App: React.FC = () => {
           </Suspense>
         )}
         {currentView === 'world-map' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <WorldMapView state={activeNovel} onSaveTerritory={handleSaveTerritory} onDeleteTerritory={handleDeleteTerritory} />
           </Suspense>
         )}
         {currentView === 'storyboard' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <StoryboardView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'timeline' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <TimelineView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'beatsheet' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <BeatSheetView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'matrix' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <MatrixView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'analytics' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <ProgressDashboard novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'search' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <GlobalSearch novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'goals' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <WritingGoals 
               novelState={activeNovel} 
               onUpdateGoals={(goals) => updateActiveNovel(prev => ({ ...prev, writingGoals: goals }))}
@@ -2654,127 +3966,62 @@ const App: React.FC = () => {
         )}
         {/* World-Class Enhancements Views */}
         {currentView === 'structure-visualizer' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <StructureVisualizer novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'engagement-dashboard' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <EngagementDashboard novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'tension-curve' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <TensionCurveView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'theme-evolution' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <ThemeEvolutionView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'character-psychology' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <CharacterPsychologyView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'device-dashboard' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <DeviceDashboard novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'draft-comparison' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <DraftComparisonView novelState={activeNovel} />
           </Suspense>
         )}
         {currentView === 'excellence-scorecard' && (
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-4 border-zinc-700 border-t-amber-600"></div></div>}>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
             <ExcellenceScorecard novelState={activeNovel} />
           </Suspense>
         )}
+        {currentView === 'improvement-history' && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <ImprovementHistoryPage />
+          </Suspense>
+        )}
         {currentView === 'chapters' && (
-          <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto space-y-6 md:space-y-8 pt-20 md:pt-24">
-            <div className="flex justify-between items-center mb-6 md:mb-8 border-b border-zinc-700 pb-4 md:pb-6">
-              <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Chronicles</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={fixExistingChapters}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold text-sm transition-all duration-200 flex items-center gap-2"
-                  title="Fix duplicate chapter numbers and normalize titles (adds 'Chapter X: ' prefix if missing)"
-                >
-                  <span>🔧</span>
-                  <span>Fix Chapters</span>
-                </button>
-                <button
-                  onClick={() => setShowManualEditor(true)}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold text-sm transition-all duration-200 flex items-center gap-2"
-                  title="Manually trigger editor review for chapters"
-                >
-                  <span>✏️</span>
-                  <span>Editor Review</span>
-                </button>
-              </div>
-            </div>
-            {activeNovel.chapters.length === 0 ? (
-              <div className="py-16 px-8 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
-                <div className="text-6xl mb-4">📖</div>
-                <h3 className="text-xl font-fantasy font-bold text-zinc-300 mb-2">No Chapters Yet</h3>
-                <p className="text-sm text-zinc-500 mb-6">Start writing your epic by generating your first chapter from the Dashboard.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:gap-6">
-                {[...activeNovel.chapters].reverse().map(chapter => (
-                  <div 
-                    key={chapter.id}
-                    className="bg-zinc-900/60 border border-zinc-700 p-6 md:p-8 rounded-2xl hover:border-amber-500/50 transition-all duration-200 group relative hover:shadow-xl hover:shadow-amber-900/10"
-                  >
-                    <div className="absolute top-4 right-4 flex items-center space-x-2 z-10">
-                      <button 
-                        type="button"
-                        onClick={() => { handleExportChapter(chapter); }} 
-                        className="text-xs text-zinc-500 hover:text-emerald-500 uppercase font-semibold bg-zinc-800/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-emerald-500/50 transition-all duration-200 hover:bg-emerald-950/20 focus-visible:outline-emerald-600 focus-visible:outline-2 shadow-lg"
-                        aria-label={`Export chapter ${chapter.number}`}
-                      >
-                        Export
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => { handleDeleteChapter(chapter.id); }} 
-                        className="text-xs text-zinc-500 hover:text-red-500 uppercase font-semibold bg-zinc-800/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-red-500/50 transition-all duration-200 hover:bg-red-950/20 focus-visible:outline-red-600 focus-visible:outline-2 shadow-lg"
-                        aria-label={`Delete chapter ${chapter.number}`}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                    <div className="flex items-center space-x-4 mb-3 flex-wrap gap-2 pr-32">
-                      <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider px-2 py-1 bg-zinc-800/50 rounded-md">Sequence {chapter.number}</span>
-                      {chapter.logicAudit && (
-                        <span className="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded-md border border-indigo-500/30 uppercase font-bold">Value Shifted</span>
-                      )}
-                    </div>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => { setActiveChapterId(chapter.id); setView('editor'); }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setActiveChapterId(chapter.id);
-                          setView('editor');
-                        }
-                      }}
-                      className="block text-left w-full focus-visible:outline-amber-600 focus-visible:outline-2 rounded-lg pr-32 cursor-pointer"
-                      aria-label={`Open chapter ${chapter.number}: ${chapter.title}`}
-                    >
-                      <h3 className="text-xl md:text-2xl font-fantasy font-bold text-zinc-200 group-hover:text-amber-500 transition-colors mt-1 break-words">{formatChapterTitleForDisplay(chapter)}</h3>
-                      <p className="text-sm md:text-base text-zinc-400 mt-4 italic line-clamp-2 leading-relaxed font-serif-novel">"{chapter.summary || 'No summary available...'}"</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <ChaptersView
+              novel={activeNovel}
+              onChapterSelect={setActiveChapterId}
+              onChapterDelete={handleDeleteChapter}
+              onChapterExport={handleExportChapter}
+              onFixChapters={fixExistingChapters}
+              onEditorReview={() => setShowManualEditor(true)}
+              onViewChange={setView}
+            />
+          </Suspense>
         )}
 
         {currentView === 'world-bible' && (
@@ -2850,7 +4097,21 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {currentView === 'characters' && (
+        {currentView === 'characters' && activeNovel && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <CharactersView
+              novel={activeNovel}
+              onEditCharacter={(char) => setEditingChar(char)}
+              onAddCharacter={() => setEditingChar(createNewCharacter())}
+              onSetProtagonist={handleSetProtagonist}
+              onGeneratePortrait={handleGeneratePortrait}
+              isGeneratingPortrait={isGeneratingPortrait}
+              onUpdateNovel={updateActiveNovel}
+              onNavigate={() => {}}
+            />
+          </Suspense>
+        )}
+        {false && currentView === 'characters_old' && (
           <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 md:mb-12 border-b border-zinc-700 pb-6">
               <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Codex</h2>
@@ -3377,6 +4638,17 @@ const App: React.FC = () => {
           </div>
         )}
 
+        {false && currentView === 'characters_old' && (
+          <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
+            {/* Old inline characters view - disabled */}
+          </div>
+        )}
+
+        {currentView === 'story-threads' && activeNovel && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <StoryThreadsView novelState={activeNovel} />
+          </Suspense>
+        )}
         {currentView === 'antagonists' && activeNovel && (
           <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
             <Suspense fallback={<div className="text-zinc-400 text-center py-12">Loading Opposition Registry...</div>}>
@@ -3390,1349 +4662,84 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {currentView === 'planning' && (
-          <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto space-y-8 md:space-y-12 animate-in fade-in duration-300 pt-20 md:pt-24">
-            <div className="flex justify-between items-center mb-6 md:mb-8 border-b border-zinc-700 pb-4 md:pb-6">
-              <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Arc Ledger</h2>
-              <button
-                onClick={() => setShowManualEditor(true)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold text-sm transition-all duration-200 flex items-center gap-2"
-                title="Manually trigger editor review for arcs or chapters"
-              >
-                <span>✏️</span>
-                <span>Editor Review</span>
-              </button>
-            </div>
-             <section className="bg-zinc-900/60 border border-zinc-700 p-6 md:p-10 rounded-2xl shadow-xl border-t-4 border-t-amber-600">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Grand Saga</h3>
-                <div className="flex items-center space-x-2">
-                  <CreativeSpark 
-                    type="Grand Saga" 
-                    currentValue={activeNovel.grandSaga} 
-                    state={activeNovel} 
-                    onIdea={(idea) => updateActiveNovel(prev => ({ ...prev, grandSaga: idea }))} 
-                  />
-                  <VoiceInput onResult={(text) => updateActiveNovel(prev => ({ ...prev, grandSaga: prev.grandSaga ? prev.grandSaga + " " + text : text }))} />
-                </div>
-              </div>
-              <textarea 
-                value={activeNovel.grandSaga} 
-                onChange={(e) => updateActiveNovel(prev => ({ ...prev, grandSaga: e.target.value }))} 
-                className="w-full bg-transparent border-none focus:ring-0 text-lg md:text-2xl font-serif-novel italic text-zinc-300 resize-none h-32 scrollbar-hide leading-relaxed"
-                aria-label="Grand Saga"
-                placeholder="Describe the overarching story..."
+        {currentView === 'character-systems' && activeNovel && (
+          <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
+            <Suspense fallback={<div className="text-zinc-400 text-center py-12">Loading Character Systems Registry...</div>}>
+              <SystemManager
+                novel={activeNovel}
+                onUpdate={(updatedNovel) => {
+                  updateActiveNovel(() => updatedNovel);
+                }}
               />
-            </section>
-            <section className="space-y-6">
-              <div className="flex justify-between items-center">
-                <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Plot Arcs</h3>
-                <button 
-                  disabled={isPlanning} 
-                  onClick={handlePlanNewArc} 
-                  className="text-sm bg-zinc-800 hover:bg-zinc-700 px-6 py-2.5 rounded-xl font-semibold text-amber-500 border border-amber-900/30 hover:border-amber-600/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-800"
-                  title="AI will plan a new plot arc based on your story"
-                  aria-label="Plan new plot arc"
-                >
-                  {isPlanning ? (
-                    <span className="flex items-center">
-                      <span className="animate-spin rounded-full h-3 w-3 border-2 border-amber-500/30 border-t-amber-500 mr-2"></span>
-                      Planning...
-                    </span>
-                  ) : (
-                    'Plan New Arc'
-                  )}
-                </button>
-              </div>
-              {activeNovel.plotLedger.length === 0 ? (
-                <div className="py-12 px-8 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
-                  <div className="text-5xl mb-4">🗺️</div>
-                  <h3 className="text-lg font-fantasy font-bold text-zinc-300 mb-2">No Plot Arcs Yet</h3>
-                  <p className="text-sm text-zinc-500 mb-4">Start planning your story by creating plot arcs.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-4 md:gap-6">
-                  {activeNovel.plotLedger.map((arc, index) => {
-                    const arcWithDefaults = ensureArcDefaults(arc, activeNovel);
-                    
-                    // Debug logging for troubleshooting
-                    if (process.env.NODE_ENV === 'development') {
-                      logger.debug(`Arc ${index + 1} "${arcWithDefaults.title}"`, 'arc', {
-                        id: arcWithDefaults.id,
-                        status: arcWithDefaults.status,
-                        startedAtChapter: arcWithDefaults.startedAtChapter,
-                        endedAtChapter: arcWithDefaults.endedAtChapter,
-                        targetChapters: arcWithDefaults.targetChapters,
-                        totalChapters: activeNovel.chapters.length,
-                        chapterNumbers: activeNovel.chapters.map(ch => ch.number).sort((a, b) => a - b),
-                      });
-                    }
-                    
-                    // Use getArcChapters to get actual chapters instead of calculated range
-                    const arcChapters = arcAnalyzer.getArcChapters(arcWithDefaults, activeNovel.chapters, activeNovel.plotLedger);
-                    const chaptersWrittenInArc = arcChapters.length;
-                    
-                    // Debug logging for chapter assignment
-                    if (process.env.NODE_ENV === 'development') {
-                      logger.debug(`Arc "${arcWithDefaults.title}" chapters`, 'arc', {
-                        found: chaptersWrittenInArc,
-                        chapterNumbers: arcChapters.map(ch => ch.number).sort((a, b) => a - b),
-                        startedAtChapter: arcWithDefaults.startedAtChapter,
-                      });
-                    }
-                    
-                    const checklist = arcWithDefaults.checklist || [];
-                    const checklistDone = checklist.filter(i => i.completed).length;
-                    const checklistPct = checklist.length ? Math.round((checklistDone / checklist.length) * 100) : 0;
-                    
-                    // Validation checks - run validation first
-                    const validationResult = arcAnalyzer.validateArcState(arcWithDefaults, activeNovel.chapters, activeNovel.plotLedger);
-                    const hasWarnings = validationResult.issues.length > 0;
-                    
-                    // Special fix: If arc has startedAtChapter but finds very few chapters, check if it's incorrectly set
-                    // This handles cases where startedAtChapter was set incorrectly (e.g., to 21 instead of 11)
-                    let displayArc = arcWithDefaults;
-                    let needsBoundaryFix = false;
-                    let boundaryFixMessage = '';
-                    
-                    // Detect if arc is showing too few chapters relative to what's expected
-                    // This happens when startedAtChapter is set incorrectly (e.g., to the current chapter count instead of the actual start)
-                    if (arcWithDefaults.startedAtChapter && arcWithDefaults.startedAtChapter > 0 && activeNovel.chapters.length > 10) {
-                      const sortedArcs = [...activeNovel.plotLedger].sort((a, b) => {
-                        const aStart = a.startedAtChapter || 0;
-                        const bStart = b.startedAtChapter || 0;
-                        return aStart - bStart;
-                      });
-                      const currentArcIndex = sortedArcs.findIndex(a => a.id === arcWithDefaults.id);
-                      
-                      // If this arc finds very few chapters (< 3) and we're past the first arc, likely a boundary issue
-                      if (currentArcIndex > 0 && arcChapters.length < 3) {
-                        const prevArc = sortedArcs[currentArcIndex - 1];
-                        const sortedChapters = [...activeNovel.chapters].sort((a, b) => a.number - b.number);
-                        let expectedStart: number | undefined = undefined;
-                        
-                        // Method 1: Previous arc has explicit end
-                        if (prevArc.status === 'completed' && prevArc.endedAtChapter && prevArc.endedAtChapter > 0) {
-                          expectedStart = prevArc.endedAtChapter + 1;
-                        }
-                        // Method 2: Find actual chapter distribution - if prev arc has ~10 chapters and we're the second arc
-                        else if (currentArcIndex === 1 && prevArc.startedAtChapter === 1) {
-                          // Second arc should typically start around chapter 11 if first arc has ~10 chapters
-                          // Check how many chapters could belong to first arc
-                          const firstArcPossibleChapters = sortedChapters.filter(ch => 
-                            ch.number >= 1 && ch.number < arcWithDefaults.startedAtChapter!
-                          );
-                          // If there are ~10 chapters before current arc's start, likely first arc has ~10 chapters
-                          if (firstArcPossibleChapters.length >= 8 && firstArcPossibleChapters.length <= 12) {
-                            // First arc likely has ~10 chapters, so second should start at ~11
-                            const maxFirstChapter = Math.max(...firstArcPossibleChapters.map(ch => ch.number));
-                            expectedStart = maxFirstChapter + 1;
-                            if (expectedStart === arcWithDefaults.startedAtChapter) {
-                              expectedStart = undefined; // Already correct
-                            }
-                          }
-                          // Also check: if current arc's start is very high (like 21) but there are many chapters total,
-                          // and first arc started at 1, then second arc should probably start around 11
-                          else if (arcWithDefaults.startedAtChapter! >= activeNovel.chapters.length - 1 && activeNovel.chapters.length >= 20) {
-                            // Current arc starts at the very end - likely should start around chapter 11
-                            // Estimate: if total is 21, first arc is ~10 chapters, second should start at 11
-                            const estimatedSecondArcStart = Math.floor(activeNovel.chapters.length / 2) + 1;
-                            if (estimatedSecondArcStart !== arcWithDefaults.startedAtChapter && estimatedSecondArcStart >= 10) {
-                              expectedStart = estimatedSecondArcStart;
-                            }
-                          }
-                        }
-                        // Method 3: Estimate based on prev arc start + typical length
-                        else if (prevArc.startedAtChapter) {
-                          // If prev arc started at 1 and has no explicit end, estimate it ends around chapter 10
-                          const estimatedPrevEnd = prevArc.startedAtChapter + 9; // Estimate 10 chapters
-                          expectedStart = estimatedPrevEnd + 1;
-                        }
-                        
-                        if (expectedStart && expectedStart !== arcWithDefaults.startedAtChapter && expectedStart <= activeNovel.chapters.length) {
-                          // Verify the fix would actually give us more chapters
-                          const testFixedArc = { ...arcWithDefaults, startedAtChapter: expectedStart };
-                          const testChapters = arcAnalyzer.getArcChapters(testFixedArc, activeNovel.chapters, activeNovel.plotLedger);
-                          if (testChapters.length > arcChapters.length) {
-                            needsBoundaryFix = true;
-                            displayArc = testFixedArc;
-                            const prevArcEnd = prevArc.endedAtChapter || (expectedStart - 1);
-                            boundaryFixMessage = `Arc should start at Ch ${expectedStart} instead of Ch ${arcWithDefaults.startedAtChapter}. First arc should end at Ch ${prevArcEnd}. This will correctly assign ${testChapters.length} chapters instead of ${arcChapters.length}.`;
-                            if (process.env.NODE_ENV === 'development') {
-                              logger.debug(`Auto-fixing arc "${arcWithDefaults.title}": startedAtChapter from ${arcWithDefaults.startedAtChapter} to ${expectedStart}. Will find ${testChapters.length} chapters instead of ${arcChapters.length}.`, 'arc', {
-                                arcId: arcWithDefaults.id,
-                                oldStart: arcWithDefaults.startedAtChapter,
-                                newStart: expectedStart,
-                                chaptersFound: testChapters.length,
-                                chaptersBefore: arcChapters.length
-                              });
-                            }
-                          }
-                        }
-                      } else if (currentArcIndex === 1 && !sortedArcs[0].endedAtChapter && sortedArcs[0].status === 'completed') {
-                        // Special case: Second arc, first arc is completed but has no endedAtChapter
-                        // This is a common issue - fix both arcs
-                        const firstArc = sortedArcs[0];
-                        // Estimate first arc ends around chapter 10 if it's the first arc
-                        const estimatedFirstArcEnd = Math.min(10, activeNovel.chapters.length);
-                        const expectedStart = estimatedFirstArcEnd + 1;
-                        
-                        if (expectedStart !== arcWithDefaults.startedAtChapter && expectedStart <= activeNovel.chapters.length && arcChapters.length < 5) {
-                          const testFixedArc = { ...arcWithDefaults, startedAtChapter: expectedStart };
-                          const testChapters = arcAnalyzer.getArcChapters(testFixedArc, activeNovel.chapters, activeNovel.plotLedger);
-                          if (testChapters.length > arcChapters.length) {
-                            needsBoundaryFix = true;
-                            displayArc = testFixedArc;
-                            boundaryFixMessage = `Both arcs need fixing: First arc should end at Ch ${estimatedFirstArcEnd}, second arc should start at Ch ${expectedStart} instead of Ch ${arcWithDefaults.startedAtChapter}. This will correctly assign ${testChapters.length} chapters instead of ${arcChapters.length}.`;
-                            if (process.env.NODE_ENV === 'development') {
-                              logger.debug(`Auto-fixing second arc "${arcWithDefaults.title}": startedAtChapter from ${arcWithDefaults.startedAtChapter} to ${expectedStart}. Will find ${testChapters.length} chapters instead of ${arcChapters.length}.`, 'arc', {
-                                arcId: arcWithDefaults.id,
-                                oldStart: arcWithDefaults.startedAtChapter,
-                                newStart: expectedStart,
-                                chaptersFound: testChapters.length,
-                                chaptersBefore: arcChapters.length
-                              });
-                            }
-                          }
-                        }
-                      }
-                    }
-                    
-                    // If validation found issues and auto-repaired, use the repaired arc
-                    if (validationResult.wasRepaired || needsBoundaryFix) {
-                      displayArc = validationResult.wasRepaired ? validationResult.arc : displayArc;
-                      // Recalculate chapters with repaired arc
-                      const repairedArcChapters = arcAnalyzer.getArcChapters(displayArc, activeNovel.chapters, activeNovel.plotLedger);
-                      if (repairedArcChapters.length !== arcChapters.length) {
-                        // Update chapters count if repair changed it
-                        arcChapters.length = repairedArcChapters.length;
-                        arcChapters.splice(0, arcChapters.length, ...repairedArcChapters);
-                      }
-                    }
-                    
-                    // Calculate chapter range - use repaired arc if available
-                    const arcToDisplay = displayArc;
-                    const finalArcChapters = arcAnalyzer.getArcChapters(arcToDisplay, activeNovel.chapters, activeNovel.plotLedger);
-                    const finalChaptersWrittenInArc = finalArcChapters.length;
-                    
-                    const chapterRange = finalArcChapters.length > 0 
-                      ? `Ch ${Math.min(...finalArcChapters.map(ch => ch.number))}-${Math.max(...finalArcChapters.map(ch => ch.number))}`
-                      : arcToDisplay.startedAtChapter 
-                        ? `Starts at Ch ${arcToDisplay.startedAtChapter}` 
-                        : 'No chapters yet';
-                    
-                    // Update the counts based on final chapters
-                    const finalTargetChapters = arcToDisplay.targetChapters || DEFAULT_ARC_TARGET_CHAPTERS;
-                    const finalChapterPct = finalTargetChapters > 0 ? Math.min(100, Math.round((finalChaptersWrittenInArc / finalTargetChapters) * 100)) : 0;
-                    
-                    // Check if arc is nearly complete or over target (using final counts)
-                    const isNearlyComplete = finalChapterPct >= 80 && finalChaptersWrittenInArc < finalTargetChapters;
-                    const isOverTarget = finalChaptersWrittenInArc > finalTargetChapters;
-
-                    return (
-                      <div key={arcWithDefaults.id} className={`p-6 md:p-8 border rounded-2xl transition-all duration-200 group relative ${arcWithDefaults.status === 'active' ? 'bg-amber-600/10 border-amber-600/40 shadow-lg shadow-amber-600/10' : 'bg-zinc-900 border-zinc-700 opacity-70 hover:opacity-100'} ${hasWarnings ? 'ring-2 ring-yellow-500/50' : ''}`}>
-                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                          <div className="flex-1 w-full">
-                            <div className="flex items-start justify-between gap-4 mb-3">
-                              <div className="flex-1">
-                                <h4 
-                                  className="font-fantasy text-xl md:text-2xl font-bold text-zinc-100 mb-1 cursor-pointer hover:text-amber-500 transition-colors inline-block"
-                                  onClick={() => setEditingArc(arcWithDefaults)}
-                                  title="Click to edit arc"
-                                >
-                                  {arcWithDefaults.title}
-                                </h4>
-                                <div className="flex items-center gap-3 mt-1 flex-wrap">
-                                  <span className="text-xs text-zinc-500 font-medium">{chapterRange}</span>
-                                  {arcWithDefaults.status === 'completed' && arcWithDefaults.endedAtChapter && (
-                                    <span className="text-xs text-zinc-600">• {finalArcChapters.length} chapters</span>
-                                  )}
-                                  {hasWarnings && (
-                                    <span className="text-xs text-yellow-500 font-semibold flex items-center gap-1">
-                                      ⚠️ {validationResult.issues.length} issue{validationResult.issues.length !== 1 ? 's' : ''}
-                                    </span>
-                                  )}
-                                  {isNearlyComplete && (
-                                    <span className="text-xs text-emerald-400 font-semibold">✓ Nearly Complete</span>
-                                  )}
-                                  {isOverTarget && (
-                                    <span className="text-xs text-orange-400 font-semibold">📊 Exceeded Target</span>
-                                  )}
-                                </div>
-                              </div>
-                              <span className={`text-xs font-bold uppercase px-3 py-1.5 rounded-full whitespace-nowrap ${arcWithDefaults.status === 'active' ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30' : 'bg-zinc-800 text-zinc-500'}`}>
-                                {arcWithDefaults.status}
-                              </span>
-                            </div>
-                            
-                            <p className="text-sm md:text-base text-zinc-400 leading-relaxed font-serif-novel mb-5 line-clamp-2">{arcWithDefaults.description}</p>
-
-                            <div className="space-y-3 mb-4">
-                              <div>
-                                <div className="flex justify-between items-center text-[11px] text-zinc-500 font-semibold uppercase tracking-wider mb-1">
-                                  <span>Chapter Progress</span>
-                                  <span className={`normal-case font-bold ${isOverTarget ? 'text-orange-400' : finalChapterPct >= 100 ? 'text-emerald-400' : 'text-zinc-400'}`}>
-                                    {finalChaptersWrittenInArc}/{finalTargetChapters} ({finalChapterPct}%)
-                                  </span>
-                                </div>
-                                <div className="h-2.5 bg-zinc-950/40 rounded-full overflow-hidden border border-zinc-700/70 mt-1.5 relative">
-                                  <div 
-                                    className={`h-full transition-all duration-500 ${isOverTarget ? 'bg-orange-500/80' : finalChapterPct >= 100 ? 'bg-emerald-500' : 'bg-emerald-500/80'}`} 
-                                    style={{ width: `${Math.min(100, finalChapterPct)}%` }} 
-                                  />
-                                  {finalChapterPct > 100 && (
-                                    <div className="absolute top-0 left-0 h-full w-full bg-orange-500/40" style={{ width: '100%' }} />
-                                  )}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="flex justify-between items-center text-[11px] text-zinc-500 font-semibold uppercase tracking-wider mb-1">
-                                  <span>Arc Elements</span>
-                                  <span className={`normal-case font-bold ${checklistPct >= 100 ? 'text-emerald-400' : 'text-zinc-400'}`}>
-                                    {checklistDone}/{checklist.length} ({checklistPct}%)
-                                  </span>
-                                </div>
-                                <div className="h-2.5 bg-zinc-950/40 rounded-full overflow-hidden border border-zinc-700/70 mt-1.5">
-                                  <div className={`h-full transition-all duration-500 ${checklistPct >= 100 ? 'bg-indigo-500' : 'bg-indigo-500/80'}`} style={{ width: `${checklistPct}%` }} />
-                                </div>
-                              </div>
-                            </div>
-                            
-                            {/* Chapter List - Collapsible */}
-                            {finalArcChapters.length > 0 && (
-                              <details className="mt-4 group/details">
-                                <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-300 font-semibold uppercase tracking-wider mb-2 flex items-center gap-2 select-none">
-                                  <span className="transition-transform group-open/details:rotate-90">▶</span>
-                                  View {finalArcChapters.length} Chapter{finalArcChapters.length !== 1 ? 's' : ''} ({chapterRange})
-                                </summary>
-                                <div className="mt-2 max-h-48 overflow-y-auto scrollbar-thin bg-zinc-950/50 rounded-lg p-3 border border-zinc-800">
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    {finalArcChapters.sort((a, b) => a.number - b.number).map((ch) => (
-                                      <div 
-                                        key={ch.id}
-                                        onClick={() => {
-                                          setActiveChapterId(ch.id);
-                                          setView('chapters');
-                                        }}
-                                        className="text-xs p-2 rounded border border-zinc-800 hover:border-amber-500/50 hover:bg-amber-500/10 cursor-pointer transition-all flex items-center justify-between gap-2"
-                                        title={`Ch ${ch.number}: ${ch.title}`}
-                                      >
-                                        <span className="text-zinc-500 font-mono">#{ch.number}</span>
-                                        <span className="text-zinc-300 truncate flex-1">{ch.title}</span>
-                                        {ch.summary && (
-                                          <span className="text-zinc-600 text-[10px]" title={ch.summary}>ℹ️</span>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </details>
-                            )}
-                            
-                            {/* Validation Warnings & Boundary Fix */}
-                            {(hasWarnings || needsBoundaryFix) && (
-                              <div className="mt-4 p-3 bg-yellow-950/30 border border-yellow-700/50 rounded-lg">
-                                <div className="flex items-start justify-between gap-3 mb-2">
-                                  <div className="text-xs text-yellow-400 font-semibold">
-                                    {needsBoundaryFix ? '🔧 Boundary Fix Needed:' : '⚠️ Validation Issues:'}
-                                  </div>
-                                  {(validationResult.wasRepaired || needsBoundaryFix) && (
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        // Apply the repaired/fixed arc state
-                                        const fixedArc = needsBoundaryFix ? displayArc : validationResult.arc;
-                                        
-                                        // Also fix the first arc's endedAtChapter if needed (for boundary fixes)
-                                        let repairedArcs = activeNovel.plotLedger.map(a => {
-                                          if (a.id === arcWithDefaults.id) {
-                                            return fixedArc;
-                                          }
-                                          // If fixing second arc and first arc is completed but has no end, fix it too
-                                          if (needsBoundaryFix && a.id !== arcWithDefaults.id && a.status === 'completed' && !a.endedAtChapter) {
-                                            const sortedArcs = [...activeNovel.plotLedger].sort((a1, b1) => {
-                                              const aStart = a1.startedAtChapter || 0;
-                                              const bStart = b1.startedAtChapter || 0;
-                                              return aStart - bStart;
-                                            });
-                                            const firstArcIndex = sortedArcs.findIndex(a1 => a1.id === a.id);
-                                            const secondArcIndex = sortedArcs.findIndex(a1 => a1.id === arcWithDefaults.id);
-                                            if (firstArcIndex === 0 && secondArcIndex === 1 && fixedArc.startedAtChapter) {
-                                              // First arc should end just before second arc starts
-                                              const firstArcEnd = fixedArc.startedAtChapter - 1;
-                                              return { ...a, endedAtChapter: firstArcEnd };
-                                            }
-                                          }
-                                          return a;
-                                        });
-                                        
-                                        const updatedNovel = {
-                                          ...activeNovel,
-                                          plotLedger: repairedArcs,
-                                          updatedAt: Date.now(),
-                                        };
-                                        updateActiveNovel(() => updatedNovel);
-                                        
-                                        // Save to database
-                                        try {
-                                          const { saveNovel } = await import('./services/supabaseService');
-                                          await saveNovel(updatedNovel);
-                                          showSuccess(`Arc "${arcWithDefaults.title}" has been ${needsBoundaryFix ? 'boundary-corrected' : 'auto-repaired'} and saved! Found ${finalArcChapters.length} chapters.`);
-                                          // Force a re-render - trigger update
-                                          setTimeout(() => {
-                                            updateActiveNovel((prev) => ({ ...prev, updatedAt: Date.now() }));
-                                          }, 100);
-                                        } catch (error) {
-                                          logger.error('Failed to save repaired arc', 'arc', error instanceof Error ? error : new Error(String(error)));
-                                          showError('Failed to save repaired arc. Changes are only local.');
-                                        }
-                                      }}
-                                      className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold border border-emerald-500/30 hover:border-emerald-500/50 px-3 py-1.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 transition-all duration-200"
-                                      title={needsBoundaryFix ? "Fix arc boundary and save" : "Apply auto-repairs to this arc"}
-                                    >
-                                      {needsBoundaryFix ? '🔧 Fix Boundary' : '✓ Apply Fixes'}
-                                    </button>
-                                  )}
-                                </div>
-                                <ul className="space-y-1">
-                                  {needsBoundaryFix && (
-                                    <li className="text-xs text-yellow-300/80">
-                                      • {boundaryFixMessage ? boundaryFixMessage : `Arc startedAtChapter is ${arcWithDefaults.startedAtChapter} but should be ${displayArc.startedAtChapter}`}. 
-                                      Currently showing {chaptersWrittenInArc} chapter(s) but should show {finalChaptersWrittenInArc} chapter(s).
-                                    </li>
-                                  )}
-                                  {validationResult.issues.slice(0, needsBoundaryFix ? 2 : 3).map((issue, idx) => (
-                                    <li key={idx} className="text-xs text-yellow-300/80">• {issue}</li>
-                                  ))}
-                                  {validationResult.issues.length > (needsBoundaryFix ? 2 : 3) && (
-                                    <li className="text-xs text-yellow-500/60">... and {validationResult.issues.length - (needsBoundaryFix ? 2 : 3)} more</li>
-                                  )}
-                                </ul>
-                              </div>
-                            )}
-                            
-                            {/* Arc Stats Summary */}
-                            {finalArcChapters.length > 0 && (
-                              <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                                <div className="bg-zinc-950/50 rounded-lg p-2 border border-zinc-800">
-                                  <div className="text-zinc-500 uppercase tracking-wider mb-1">Chapter Range</div>
-                                  <div className="text-zinc-200 font-mono font-semibold">{chapterRange}</div>
-                                  <div className="text-[10px] text-zinc-600 mt-1">
-                                    Start: Ch {arcToDisplay.startedAtChapter || '?'} • 
-                                    {arcToDisplay.status === 'completed' && arcToDisplay.endedAtChapter ? ` End: Ch ${arcToDisplay.endedAtChapter}` : ' Active'}
-                                  </div>
-                                </div>
-                                <div className="bg-zinc-950/50 rounded-lg p-2 border border-zinc-800">
-                                  <div className="text-zinc-500 uppercase tracking-wider mb-1">Completion</div>
-                                  <div className={`font-semibold ${finalChapterPct >= 100 ? 'text-emerald-400' : isNearlyComplete ? 'text-amber-400' : 'text-zinc-200'}`}>
-                                    {finalChapterPct >= 100 ? '✓ Complete' : isNearlyComplete ? 'Nearly Done' : `${finalChapterPct}%`}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0 w-full sm:w-auto">
-                            <button 
-                              onClick={() => setEditingArc(arcWithDefaults)}
-                              className="text-xs text-amber-500 hover:text-amber-400 font-semibold border border-amber-500/30 hover:border-amber-500/50 px-4 py-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 transition-all duration-200 focus-visible:outline-amber-600 focus-visible:outline-2 flex items-center justify-center gap-2"
-                              title="Edit Plot Arc"
-                              aria-label={`Edit arc: ${arcWithDefaults.title}`}
-                            >
-                              <span>✏️</span>
-                              <span>Refine</span>
-                            </button>
-                            
-                            {arcWithDefaults.status === 'completed' && arcChapters.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    setIsGenerating(true);
-                                    startLoading(`Starting editor review for arc: ${arcWithDefaults.title}...`, true);
-                                    setGenerationProgress(5);
-                                    setGenerationStatus(`Starting editor review for arc "${arcWithDefaults.title}"...`);
-                                    
-                                    const editorReport = await triggerEditorReview(activeNovel, 'manual', arcWithDefaults, {
-                                      onProgress: (phase, progress) => {
-                                        if (progress !== undefined) {
-                                          updateProgress(progress, `Editor: ${phase}`);
-                                          setGenerationProgress(progress);
-                                          setGenerationStatus(`Editor: ${phase}`);
-                                        } else {
-                                          updateMessage(`Editor: ${phase}`);
-                                        }
-                                        addEphemeralLog(`Editor: ${phase}`, 'discovery');
-                                      },
-                                      onAutoFix: (fix) => {
-                                        addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
-                                      },
-                                    });
-
-                                    if (editorReport) {
-                                      await saveEditorReport(editorReport);
-                                      setCurrentEditorReport(editorReport);
-                                      
-                                      // Update novel with fixed chapters if any auto-fixes were applied
-                                      if ((editorReport as any)._updatedChapters && (editorReport as any)._updatedChapters.length > 0) {
-                                        const updatedChapters = (editorReport as any)._updatedChapters as Chapter[];
-                                        updateActiveNovel(prev => {
-                                          const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
-                                          const updatedNovel = {
-                                            ...prev,
-                                            chapters: prev.chapters.map(ch => updatedChapterMap.get(ch.id) || ch),
-                                            updatedAt: Date.now(),
-                                          };
-                                          import('./services/supabaseService').then(({ saveNovel }) => {
-                                            saveNovel(updatedNovel).catch(err => logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err))));
-                                          });
-                                          return updatedNovel;
-                                        });
-                                      }
-                                      
-                                      const { createFixProposals } = await import('./services/editorFixer');
-                                      const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
-                                      
-                                      if (proposals.length > 0) {
-                                        setPendingFixProposals(proposals);
-                                        setIsGenerating(false);
-                                        stopLoading();
-                                      } else {
-                                        setIsGenerating(false);
-                                        stopLoading();
-                                        if (editorReport.autoFixedCount > 0) {
-                                          showSuccess(`Editor fixed ${editorReport.autoFixedCount} issue(s) automatically`);
-                                        }
-                                        const arcAnalysis = editorReport.analysis as any;
-                                        if (arcAnalysis?.readiness?.isReadyForRelease) {
-                                          showSuccess(`Arc "${arcWithDefaults.title}" is ready for release!`);
-                                        }
-                                        showSuccess(`Editor review complete for arc "${arcWithDefaults.title}"`);
-                                      }
-                                    } else {
-                                      stopLoading();
-                                    }
-                                  } catch (error) {
-                                    logger.error('Error in arc editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
-                                    stopLoading();
-                                    const errorMessage = error instanceof Error 
-                                      ? error.message 
-                                      : typeof error === 'string' 
-                                        ? error 
-                                        : 'Unknown error occurred';
-                                    
-                                    // Check if it's a module loading error
-                                    if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
-                                      showError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
-                                    } else {
-                                      showError(`Editor review failed: ${errorMessage}`);
-                                    }
-                                    
-                                    setIsGenerating(false);
-                                    setGenerationProgress(0);
-                                    setGenerationStatus('');
-                                  }
-                                }}
-                                className="text-xs text-blue-500 hover:text-blue-400 font-semibold border border-blue-500/30 hover:border-blue-500/50 px-4 py-2.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 transition-all duration-200 focus-visible:outline-blue-600 focus-visible:outline-2 flex items-center justify-center gap-2"
-                                title="Run editor review on this arc"
-                                aria-label={`Review arc: ${arcWithDefaults.title}`}
-                              >
-                                <span>📝</span>
-                                <span>Review</span>
-                              </button>
-                            )}
-                            
-                            {arcWithDefaults.status !== 'active' && (
-                              <button
-                                type="button"
-                                onClick={() => handleSetActiveArc(arcWithDefaults.id)}
-                                className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold border border-emerald-500/30 hover:border-emerald-500/50 px-4 py-2.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-all duration-200 focus-visible:outline-emerald-600 focus-visible:outline-2 flex items-center justify-center gap-2"
-                                title="Set this arc as the active arc"
-                                aria-label={`Set active arc: ${arcWithDefaults.title}`}
-                              >
-                                <span>▶</span>
-                                <span>Activate</span>
-                              </button>
-                            )}
-                            
-                            {arcChapters.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  // Jump to first chapter of this arc
-                                  const firstChapter = arcChapters.sort((a, b) => a.number - b.number)[0];
-                                  if (firstChapter) {
-                                    setActiveChapterId(firstChapter.id);
-                                    setView('chapters');
-                                  }
-                                }}
-                                className="text-xs text-purple-400 hover:text-purple-300 font-semibold border border-purple-500/30 hover:border-purple-500/50 px-4 py-2.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 transition-all duration-200 focus-visible:outline-purple-600 focus-visible:outline-2 flex items-center justify-center gap-2"
-                                title="Jump to first chapter of this arc"
-                                aria-label={`View chapters for arc: ${arcWithDefaults.title}`}
-                              >
-                                <span>📖</span>
-                                <span>Read</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+            </Suspense>
           </div>
         )}
 
-        {editingArc && (
-          <div 
-            className="fixed inset-0 bg-black/95 flex items-center justify-center z-[60] p-4 backdrop-blur-xl animate-in fade-in duration-200"
-            onClick={(e) => e.target === e.currentTarget && setEditingArc(null)}
-          >
-            <div className="bg-zinc-900 border border-zinc-700 p-6 md:p-10 rounded-2xl w-full max-w-xl shadow-2xl animate-in scale-in max-h-[90vh] overflow-y-auto scrollbar-thin">
-              <div className="flex justify-between items-center mb-6 md:mb-8">
-                <h3 className="text-xl md:text-2xl font-fantasy font-bold text-amber-500">Refine Plot Arc</h3>
-                <div className="flex items-center space-x-2">
-                  <CreativeSpark 
-                    type="Plot Arc expansion" 
-                    currentValue={editingArc.description} 
-                    state={activeNovel!} 
-                    onIdea={(idea) => setEditingArc({...editingArc, description: idea})} 
-                  />
-                  <VoiceInput onResult={(text) => setEditingArc({...editingArc, description: text})} />
-                  <button
-                    onClick={() => setEditingArc(null)}
-                    className="text-zinc-500 hover:text-zinc-300 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors duration-200"
-                    aria-label="Close dialog"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="arc-title">Arc Title</label>
-                    <VoiceInput onResult={(text) => setEditingArc({...editingArc, title: text})} />
-                  </div>
-                  <input 
-                    id="arc-title"
-                    value={editingArc.title} 
-                    onChange={e => setEditingArc({...editingArc, title: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
-                    aria-label="Arc Title"
-                    placeholder="Enter arc title..."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="arc-status">Arc Status</label>
-                  <select
-                    id="arc-status"
-                    value={editingArc.status}
-                    onChange={(e) => setEditingArc({ ...editingArc, status: e.target.value as any })}
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all cursor-pointer"
-                    aria-label="Arc Status"
-                  >
-                    <option value="active">Active (current focus)</option>
-                    <option value="completed">Completed</option>
-                  </select>
-                  <p className="text-[11px] text-zinc-500">
-                    Only one arc can be Active. Setting this to Active will automatically complete all others.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="arc-target">
-                    Target Chapters
-                  </label>
-                  <input
-                    id="arc-target"
-                    type="number"
-                    min={1}
-                    value={editingArc.targetChapters ?? DEFAULT_ARC_TARGET_CHAPTERS}
-                    onChange={(e) => {
-                      const n = Number.parseInt(e.target.value || '', 10);
-                      setEditingArc({
-                        ...editingArc,
-                        targetChapters: Number.isFinite(n) && n > 0 ? n : DEFAULT_ARC_TARGET_CHAPTERS,
-                      });
-                    }}
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
-                    aria-label="Target chapters for this arc"
-                  />
-                  <p className="text-[11px] text-zinc-500">
-                    Used to calculate the arc chapters progress bar.
-                  </p>
-                </div>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">
-                      Arc Elements Checklist
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setEditingArc({ ...editingArc, checklist: buildDefaultArcChecklist() })}
-                      className="text-[11px] uppercase font-semibold tracking-widest px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-950/50 text-zinc-400 hover:text-zinc-200 hover:border-amber-500/40 transition-all"
-                      aria-label="Reset arc checklist"
-                      title="Reset checklist to defaults"
-                    >
-                      Reset
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {(editingArc.checklist && editingArc.checklist.length > 0 ? editingArc.checklist : buildDefaultArcChecklist()).map((item) => (
-                      <label
-                        key={item.id}
-                        className="flex items-start gap-3 p-3 rounded-xl border border-zinc-700/70 bg-zinc-950/30 hover:bg-zinc-950/40 transition-all"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!!item.completed}
-                          onChange={(e) => {
-                            const current = (editingArc.checklist && editingArc.checklist.length > 0)
-                              ? editingArc.checklist
-                              : buildDefaultArcChecklist();
-                            const next = current.map((ci) => {
-                              if (ci.id !== item.id) return ci;
-                              const checked = e.target.checked;
-                              return {
-                                ...ci,
-                                completed: checked,
-                                completedAt: checked ? (ci.completedAt || Date.now()) : undefined,
-                                sourceChapterNumber: checked ? (ci.sourceChapterNumber || activeNovel?.chapters.length) : undefined,
-                              };
-                            });
-                            setEditingArc({ ...editingArc, checklist: next });
-                          }}
-                          className="mt-1 h-4 w-4 accent-amber-500"
-                          aria-label={`Mark complete: ${item.label}`}
-                        />
-                        <div className="flex-1">
-                          <div className="text-sm text-zinc-200 font-semibold leading-snug">
-                            {item.label}
-                          </div>
-                          {item.completed && (
-                            <div className="text-[11px] text-zinc-500 mt-1">
-                              {typeof item.sourceChapterNumber === 'number' ? `Updated by Chapter ${item.sourceChapterNumber}` : 'Completed'}
-                            </div>
-                          )}
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="arc-description">Arc Vision</label>
-                  <textarea 
-                    id="arc-description"
-                    value={editingArc.description} 
-                    onChange={e => setEditingArc({...editingArc, description: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 h-48 font-serif-novel resize-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all leading-relaxed"
-                    aria-label="Arc Vision"
-                    placeholder="Describe the arc vision..."
-                  />
-                </div>
-                <div className="flex justify-end space-x-4 pt-4 border-t border-zinc-700">
-                  <button 
-                    onClick={() => setEditingArc(null)} 
-                    className="px-6 py-2.5 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={async () => {
-                      updateActiveNovel(prev => {
-                        const edited = ensureArcDefaults(editingArc);
-                        // Find existing arc to preserve state
-                        const existingArc = prev.plotLedger.find(a => a.id === edited.id);
-                        const preserveStartedAt = existingArc?.startedAtChapter && 
-                                                   existingArc.startedAtChapter > 0 &&
-                                                   existingArc.startedAtChapter <= prev.chapters.length;
-                        
-                        const nextLedger =
-                          edited.status === 'active'
-                            ? prev.plotLedger.map(a => {
-                                if (a.id === edited.id) {
-                                  return ensureArcDefaults({
-                                    ...edited,
-                                    status: 'active' as const,
-                                    // Preserve existing start chapter if valid, otherwise set to next chapter
-                                    startedAtChapter: preserveStartedAt 
-                                      ? existingArc.startedAtChapter 
-                                      : (prev.chapters.length + 1),
-                                    endedAtChapter: undefined,
-                                  });
-                                }
-                                // If we are completing a previously-active arc, stamp its end.
-                                if (a.status === 'active') {
-                                  return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: prev.chapters.length });
-                                }
-                                return ensureArcDefaults({ ...a, status: 'completed' as const });
-                              })
-                            : prev.plotLedger.map(a => {
-                                if (a.id === edited.id) {
-                                  // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
-                                  const preserveEndedAt = existingArc?.endedAtChapter && 
-                                                          existingArc.endedAtChapter > 0 &&
-                                                          existingArc.endedAtChapter <= prev.chapters.length;
-                                  return ensureArcDefaults({
-                                    ...edited,
-                                    status: 'completed' as const,
-                                    endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : prev.chapters.length),
-                                    // Also preserve startedAtChapter for completed arcs
-                                    startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
-                                  });
-                                }
-                                return ensureArcDefaults(a);
-                              });
-                        return { ...prev, plotLedger: nextLedger };
-                      });
-                      setEditingArc(null);
-                      
-                      // Save immediately to ensure persistence
-                      if (activeNovel) {
-                        const edited = ensureArcDefaults(editingArc, activeNovel);
-                        // Find existing arc to preserve state
-                        const existingArc = activeNovel.plotLedger.find(a => a.id === edited.id);
-                        const preserveStartedAt = existingArc?.startedAtChapter && 
-                                                   existingArc.startedAtChapter > 0 &&
-                                                   existingArc.startedAtChapter <= activeNovel.chapters.length;
-                        
-                        let nextLedger =
-                          edited.status === 'active'
-                            ? activeNovel.plotLedger.map(a => {
-                                if (a.id === edited.id) {
-                                  return ensureArcDefaults({
-                                    ...edited,
-                                    status: 'active' as const,
-                                    // Preserve existing start chapter if valid, otherwise set to next chapter
-                                    startedAtChapter: preserveStartedAt 
-                                      ? existingArc.startedAtChapter 
-                                      : (activeNovel.chapters.length + 1),
-                                    endedAtChapter: undefined,
-                                  }, activeNovel);
-                                }
-                                if (a.status === 'active') {
-                                  return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: activeNovel.chapters.length }, activeNovel);
-                                }
-                                return ensureArcDefaults({ ...a, status: 'completed' as const }, activeNovel);
-                              })
-                            : activeNovel.plotLedger.map(a => {
-                                if (a.id === edited.id) {
-                                  // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
-                                  const preserveEndedAt = existingArc?.endedAtChapter && 
-                                                          existingArc.endedAtChapter > 0 &&
-                                                          existingArc.endedAtChapter <= activeNovel.chapters.length;
-                                  return ensureArcDefaults({
-                                    ...edited,
-                                    status: 'completed' as const,
-                                    endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : activeNovel.chapters.length),
-                                    // Also preserve startedAtChapter for completed arcs
-                                    startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
-                                  }, activeNovel);
-                                }
-                                return ensureArcDefaults(a, activeNovel);
-                              });
-
-                        // Validate and auto-repair arc states
-                        const validatedArcs = nextLedger.map(arc => {
-                          const result = arcAnalyzer.validateArcState(arc, activeNovel.chapters, nextLedger);
-                          if (result.wasRepaired && result.issues.length > 0) {
-                            // Log validation issues in console (can be shown to user if needed)
-                            logger.warn(`Arc validation for "${arc.title}"`, 'arc', {
-                              issues: result.issues
-                            });
-                          }
-                          return result.arc;
-                        });
-                        nextLedger = validatedArcs;
-
-                        const updatedNovel = {
-                          ...activeNovel,
-                          plotLedger: nextLedger,
-                          updatedAt: Date.now(),
-                        };
-                        updateActiveNovel(() => updatedNovel);
-
-                        // Trigger editor review if arc was completed
-                        const completedArc = nextLedger.find(a => a.id === edited.id && a.status === 'completed');
-                        if (completedArc && completedArc.startedAtChapter && completedArc.endedAtChapter) {
-                          try {
-                            startLoading(`Editor analyzing arc: ${completedArc.title}...`, true);
-                            addEphemeralLog(`Editor analyzing arc "${completedArc.title}"...`, 'discovery');
-                            const editorReport = await triggerEditorReview(updatedNovel, 'arc_complete', completedArc, {
-                              onProgress: (phase: string, progress?: number) => {
-                                if (progress !== undefined) {
-                                  updateProgress(progress, `Editor: ${phase}`);
-                                  setGenerationProgress(progress);
-                                  setGenerationStatus(`Editor: ${phase}`);
-                                } else {
-                                  updateMessage(`Editor: ${phase}`);
-                                }
-                                addEphemeralLog(`Editor: ${phase}`, 'discovery');
-                              },
-                              onAutoFix: (fix: EditorFix) => {
-                                addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
-                              },
-                            });
-                            
-                            if (editorReport) {
-                              // Save the report
-                              await saveEditorReport(editorReport);
-                              
-                              // Show notification with readiness status
-                              const arcAnalysis = editorReport.analysis as any;
-                              if (arcAnalysis && arcAnalysis.readiness) {
-                                const readiness = arcAnalysis.readiness;
-                                if (readiness.isReadyForRelease) {
-                                  showSuccess(`Arc "${completedArc.title}" is ready for release! Editor review complete.`);
-                                } else if (readiness.blockingIssues && Array.isArray(readiness.blockingIssues)) {
-                                  showWarning(`Arc "${completedArc.title}" needs ${readiness.blockingIssues.length} issue(s) fixed before release.`);
-                                }
-                              }
-                              
-                              addEphemeralLog(`Editor review complete for arc "${completedArc.title}"`, 'discovery');
-                              stopLoading();
-                            } else {
-                              stopLoading();
-                            }
-                          } catch (editorError) {
-                            logger.error('Error in arc editor review', 'editor', editorError instanceof Error ? editorError : new Error(String(editorError)));
-                            stopLoading();
-                            // Don't block arc completion if editor fails
-                            addEphemeralLog('Arc editor review failed - arc marked as completed', 'update');
-                          }
-                        }
-                      }
-                    }}
-                    className="px-8 py-2.5 bg-amber-600 hover:bg-amber-500 rounded-xl font-semibold shadow-lg shadow-amber-900/30 transition-all duration-200 hover:scale-105"
-                  >
-                    Seal Fate
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+        {currentView === 'planning' && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <PlanningView
+              novel={activeNovel}
+              isPlanning={isPlanning}
+              onPlanNewArc={handlePlanNewArc}
+              onUpdateGrandSaga={(saga) => updateActiveNovel(prev => ({ ...prev, grandSaga: saga }))}
+              onEditArc={setEditingArc}
+              onSetActiveArc={handleSetActiveArc}
+              onChapterSelect={setActiveChapterId}
+              onViewChange={setView}
+              onEditorReview={() => setShowManualEditor(true)}
+              onUpdateNovel={updateActiveNovel}
+              onShowSuccess={showSuccess}
+              onShowError={showError}
+              onStartLoading={startLoading}
+              onStopLoading={stopLoading}
+              onUpdateProgress={updateProgress}
+              onUpdateMessage={updateMessage}
+              onSetGenerationStatus={setGenerationStatus}
+              onSetIsGenerating={setIsGenerating}
+              onAddLog={addEphemeralLog}
+              onSetCurrentEditorReport={setCurrentEditorReport}
+              onSetPendingFixProposals={setPendingFixProposals}
+            />
+          </Suspense>
         )}
 
-        {editingWorld && (
-          <div 
-            className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4 backdrop-blur-xl animate-in fade-in duration-200"
-            onClick={(e) => e.target === e.currentTarget && setEditingWorld(null)}
-          >
-            <div className="bg-zinc-900 border border-zinc-700 p-6 md:p-10 rounded-2xl w-full max-w-xl shadow-2xl animate-in scale-in max-h-[90vh] overflow-y-auto scrollbar-thin">
-              <div className="flex justify-between items-center mb-6 md:mb-8">
-                <h3 className="text-xl md:text-2xl font-fantasy font-bold text-amber-500">Forge Knowledge</h3>
-                <div className="flex items-center space-x-2">
-                  {(editingWorld.category === 'PowerLevels' || editingWorld.category === 'Systems') && (
-                    <CreativeSpark 
-                      type={`${editingWorld.category} Architect Expansion`} 
-                      currentValue={editingWorld.content} 
-                      state={activeNovel!} 
-                      onIdea={(idea) => setEditingWorld({...editingWorld, content: idea})} 
-                      label="AI Help"
-                      className="bg-indigo-600 text-white border-indigo-500 hover:bg-indigo-500"
-                    />
-                  )}
-                  <CreativeSpark 
-                    type={editingWorld.category} 
-                    currentValue={editingWorld.content} 
-                    state={activeNovel!} 
-                    onIdea={(idea) => setEditingWorld({...editingWorld, content: idea})} 
-                  />
-                  <button
-                    onClick={() => setEditingWorld(null)}
-                    className="text-zinc-500 hover:text-zinc-300 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors duration-200"
-                    aria-label="Close dialog"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="world-category">Category</label>
-                  <select 
-                    id="world-category"
-                    value={editingWorld.category} 
-                    onChange={e => setEditingWorld({...editingWorld, category: getWorldCategory(e.target.value)})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all appearance-none cursor-pointer"
-                    aria-label="World Entry Category"
-                  >
-                    <option>Geography</option>
-                    <option>Sects</option>
-                    <option>PowerLevels</option>
-                    <option>Systems</option>
-                    <option>Techniques</option>
-                    <option>Laws</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="world-title">Title</label>
-                    <VoiceInput onResult={(text) => setEditingWorld({...editingWorld, title: text})} />
-                  </div>
-                  <input 
-                    id="world-title"
-                    placeholder="Title" 
-                    value={editingWorld.title} 
-                    onChange={e => setEditingWorld({...editingWorld, title: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
-                    aria-required="true"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="world-content">Content</label>
-                    <VoiceInput onResult={(text) => setEditingWorld({...editingWorld, content: editingWorld.content ? editingWorld.content + " " + text : text})} />
-                  </div>
-                  <textarea 
-                    id="world-content"
-                    placeholder="Content..." 
-                    value={editingWorld.content} 
-                    onChange={e => setEditingWorld({...editingWorld, content: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 h-64 font-serif-novel resize-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all leading-relaxed"
-                    aria-required="true"
-                  />
-                </div>
-                <div className="flex justify-end space-x-4 pt-4 border-t border-zinc-700">
-                  <button 
-                    onClick={() => setEditingWorld(null)} 
-                    className="px-6 py-2.5 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={() => {
-                      // Validate input with Zod
-                      const validation = validateWorldEntryInput(editingWorld);
-                      if (!validation.success) {
-                        showWarning(validation.error || 'Please provide both a title and content for this world entry.');
-                        return;
-                      }
-                      updateActiveNovel(prev => ({
-                        ...prev,
-                        worldBible: prev.worldBible.some(e => e.id === editingWorld.id) 
-                          ? prev.worldBible.map(e => e.id === editingWorld.id ? editingWorld : e)
-                          : [...prev.worldBible, editingWorld]
-                      }));
-                      setEditingWorld(null);
-                    }} 
-                    className="px-8 py-2.5 bg-amber-600 hover:bg-amber-500 rounded-xl font-semibold shadow-lg shadow-amber-900/30 transition-all duration-200 hover:scale-105"
-                  >
-                    Seal
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+        {editingArc && activeNovel && (
+          <ArcForm
+            arc={editingArc}
+            novelState={activeNovel}
+            onSave={handleSaveArc}
+            onCancel={() => setEditingArc(null)}
+            onUpdateArc={(arc) => setEditingArc(arc)}
+          />
         )}
 
-        {editingChar && (
-          <div 
-            className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4 backdrop-blur-xl animate-in fade-in duration-200"
-            onClick={(e) => e.target === e.currentTarget && setEditingChar(null)}
-          >
-            <div className="bg-zinc-900 border border-zinc-700 p-6 md:p-10 rounded-2xl w-full max-w-3xl shadow-2xl overflow-y-auto max-h-[95vh] scrollbar-thin animate-in scale-in">
-              <div className="flex justify-between items-center mb-6 md:mb-8">
-                <h3 className="text-xl md:text-2xl font-fantasy font-bold text-amber-500">Character Manifestation</h3>
-                <div className="flex items-center space-x-2">
-                  <CreativeSpark 
-                    type="Character Backstory" 
-                    currentValue={editingChar.notes} 
-                    state={activeNovel!} 
-                    onIdea={(idea) => setEditingChar({...editingChar, notes: idea})} 
-                  />
-                  <VoiceInput onResult={(text) => setEditingChar({...editingChar, notes: editingChar.notes ? editingChar.notes + " " + text : text})} />
-                  <button
-                    onClick={() => setEditingChar(null)}
-                    className="text-zinc-500 hover:text-zinc-300 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-800 transition-colors duration-200"
-                    aria-label="Close dialog"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-name">Name</label>
-                    <VoiceInput onResult={(text) => setEditingChar({...editingChar, name: text})} />
-                  </div>
-                  <input 
-                    id="char-name"
-                    placeholder="Name" 
-                    value={editingChar.name} 
-                    onChange={e => setEditingChar({...editingChar, name: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-realm">Realm</label>
-                    <VoiceInput onResult={(text) => setEditingChar({...editingChar, currentCultivation: text})} />
-                  </div>
-                  <input 
-                    id="char-realm"
-                    placeholder="Realm" 
-                    value={editingChar.currentCultivation} 
-                    onChange={e => setEditingChar({...editingChar, currentCultivation: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
-                  />
-                </div>
+        {editingWorld && activeNovel && (
+          <WorldEntryForm
+            entry={editingWorld}
+            novelState={activeNovel}
+            onSave={(entry) => {
+              updateActiveNovel(prev => ({
+                ...prev,
+                worldBible: prev.worldBible.some(e => e.id === entry.id) 
+                  ? prev.worldBible.map(e => e.id === entry.id ? entry : e)
+                  : [...prev.worldBible, entry]
+              }));
+              setEditingWorld(null);
+            }}
+            onCancel={() => setEditingWorld(null)}
+            onUpdateEntry={(entry) => setEditingWorld(entry)}
+            showWarning={showWarning}
+          />
+        )}
 
-                <div className="col-span-2 pt-2">
-                  <label className="flex items-center justify-between gap-4 bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3">
-                    <span className="text-sm font-semibold text-zinc-300">
-                      Protagonist (main character)
-                      <span className="block text-[11px] text-zinc-500 font-normal mt-1">
-                        If enabled, this character will replace any existing protagonist.
-                      </span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={!!editingChar.isProtagonist}
-                      onChange={(e) => setEditingChar({ ...editingChar, isProtagonist: e.target.checked })}
-                      className="h-5 w-5 accent-amber-500"
-                      aria-label="Mark as protagonist"
-                    />
-                  </label>
-                </div>
-
-                <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-zinc-700">
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Techniques</label>
-                      <CreativeSpark 
-                        type="Spiritual Technique or Spell" 
-                        currentValue="" 
-                        state={activeNovel!} 
-                        onIdea={(idea) => setEditingChar({...editingChar, skills: [...editingChar.skills, idea.split('\n')[0].replace('Name: ', '')]})} 
-                        label="Forge Skill"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {editingChar.skills.map((s, i) => (
-                        <div key={i} className="flex items-center bg-emerald-950/40 border border-emerald-900/40 px-3 py-1.5 rounded-lg">
-                          <span className="text-xs text-emerald-400 font-semibold">{s}</span>
-                          <button 
-                            onClick={() => setEditingChar({...editingChar, skills: editingChar.skills.filter((_, idx) => idx !== i)})} 
-                            className="ml-2 text-emerald-700 hover:text-emerald-400 transition-colors"
-                            aria-label={`Remove ${s}`}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                      {editingChar.skills.length === 0 && (
-                        <p className="text-xs text-zinc-500 italic">No techniques added yet</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Treasures</label>
-                      <CreativeSpark 
-                        type="Magical Item or Treasure" 
-                        currentValue="" 
-                        state={activeNovel!} 
-                        onIdea={(idea) => setEditingChar({...editingChar, items: [...editingChar.items, idea.split('\n')[0].replace('Name: ', '')]})} 
-                        label="Forge Item"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {editingChar.items.map((it, i) => (
-                        <div key={i} className="flex items-center bg-amber-950/40 border border-amber-900/40 px-3 py-1.5 rounded-lg">
-                          <span className="text-xs text-amber-400 font-semibold">{it}</span>
-                          <button 
-                            onClick={() => setEditingChar({...editingChar, items: editingChar.items.filter((_, idx) => idx !== i)})} 
-                            className="ml-2 text-amber-700 hover:text-amber-400 transition-colors"
-                            aria-label={`Remove ${it}`}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                      {editingChar.items.length === 0 && (
-                        <p className="text-xs text-zinc-500 italic">No treasures added yet</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="col-span-2 space-y-4 pt-6 border-t border-zinc-700 mt-4">
-                  <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-wider flex justify-between items-center">
-                    Karma Links
-                    <button 
-                      onClick={() => setEditingChar({
-                        ...editingChar,
-                        relationships: [...editingChar.relationships, { characterId: '', type: 'Ally', history: '', impact: '' }]
-                      })}
-                      className="text-xs bg-zinc-800 px-4 py-1.5 rounded-full text-amber-500 hover:bg-amber-600 hover:text-white transition-all duration-200 font-semibold"
-                      aria-label="Add karma link"
-                    >
-                      + Add Karma
-                    </button>
-                  </h4>
-                  <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 scrollbar-thin">
-                    {editingChar.relationships.length > 0 ? editingChar.relationships.map((rel, idx) => (
-                      <div key={idx} className="bg-zinc-950 p-4 md:p-6 rounded-2xl border border-zinc-700 space-y-4 relative group/rel shadow-lg">
-                        <button 
-                          onClick={() => setEditingChar({...editingChar, relationships: editingChar.relationships.filter((_, i) => i !== idx)})}
-                          className="absolute top-3 right-3 text-zinc-600 hover:text-red-500 transition-colors duration-200 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-500/10"
-                          aria-label="Remove relationship"
-                        >
-                          ×
-                        </button>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <label className="text-xs text-zinc-400 uppercase font-semibold tracking-wide" htmlFor={`rel-char-${idx}`}>Connect to Being</label>
-                            <select 
-                              id={`rel-char-${idx}`}
-                              className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm w-full outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 transition-all"
-                              value={rel.characterId}
-                              onChange={(e) => {
-                                const newRels = [...editingChar.relationships];
-                                newRels[idx].characterId = e.target.value;
-                                setEditingChar({...editingChar, relationships: newRels});
-                              }}
-                              aria-label="Connect to Being"
-                            >
-                              <option value="">Select Being...</option>
-                              {activeNovel.characterCodex.filter(c => c.id !== editingChar.id).map(c => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-xs text-zinc-400 uppercase font-semibold tracking-wide" htmlFor={`rel-type-${idx}`}>Connection Type</label>
-                            <input 
-                              id={`rel-type-${idx}`}
-                              placeholder="e.g. Master, Rival, Family..." 
-                              className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm w-full outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 text-amber-400 font-semibold transition-all"
-                              value={rel.type}
-                              onChange={(e) => {
-                                const newRels = [...editingChar.relationships];
-                                newRels[idx].type = e.target.value;
-                                setEditingChar({...editingChar, relationships: newRels});
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-3">
-                          <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                              <label className="text-xs text-zinc-400 uppercase font-semibold tracking-wide" htmlFor={`rel-history-${idx}`}>History of Fate</label>
-                              <VoiceInput onResult={(text) => {
-                                const newRels = [...editingChar.relationships];
-                                newRels[idx].history = text;
-                                setEditingChar({...editingChar, relationships: newRels});
-                              }} />
-                            </div>
-                            <textarea 
-                              id={`rel-history-${idx}`}
-                              placeholder="Describe how their lives collided..."
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm text-zinc-300 h-20 resize-none outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 transition-all leading-relaxed"
-                              value={rel.history}
-                              onChange={(e) => {
-                                const newRels = [...editingChar.relationships];
-                                newRels[idx].history = e.target.value;
-                                setEditingChar({...editingChar, relationships: newRels});
-                              }}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                              <label className="text-xs text-zinc-400 uppercase font-semibold tracking-wide" htmlFor={`rel-impact-${idx}`}>Impact on Dao</label>
-                              <VoiceInput onResult={(text) => {
-                                const newRels = [...editingChar.relationships];
-                                newRels[idx].impact = text;
-                                setEditingChar({...editingChar, relationships: newRels});
-                              }} />
-                            </div>
-                            <textarea 
-                              id={`rel-impact-${idx}`}
-                              placeholder="How this link changes their path..."
-                              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm text-zinc-300 h-20 resize-none outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20 italic transition-all leading-relaxed"
-                              value={rel.impact}
-                              onChange={(e) => {
-                                const newRels = [...editingChar.relationships];
-                                newRels[idx].impact = e.target.value;
-                                setEditingChar({...editingChar, relationships: newRels});
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )) : (
-                      <div className="py-12 text-center bg-zinc-950/50 border border-dashed border-zinc-700 rounded-2xl">
-                        <p className="text-sm text-zinc-500 italic">No threads of fate yet connect this being to the world.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="col-span-2 space-y-2 mt-4">
-                  <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-notes">Fate Summary</label>
-                  <textarea 
-                    id="char-notes"
-                    placeholder="The legend of this being..." 
-                    value={editingChar.notes} 
-                    onChange={e => setEditingChar({...editingChar, notes: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 h-40 font-serif-novel resize-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all leading-relaxed"
-                  />
-                </div>
-                <div className="flex justify-end col-span-2 space-x-4 pt-6 border-t border-zinc-700 mt-4">
-                  <button 
-                    onClick={() => setEditingChar(null)} 
-                    className="px-6 py-2.5 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={async () => {
-                      updateActiveNovel(prev => {
-                        const baseCodex = prev.characterCodex.some(c => c.id === editingChar.id)
-                          ? prev.characterCodex.map(c => (c.id === editingChar.id ? editingChar : c))
-                          : [...prev.characterCodex, editingChar];
-
-                        // Enforce single protagonist if this character is set as protagonist.
-                        const nextCodex = editingChar.isProtagonist
-                          ? baseCodex.map(c => ({ ...c, isProtagonist: c.id === editingChar.id }))
-                          : baseCodex;
-
-                        return { ...prev, characterCodex: nextCodex };
-                      });
-                      setEditingChar(null);
-                      
-                      // Save immediately to ensure persistence
-                      if (activeNovel) {
-                        const baseCodex = activeNovel.characterCodex.some(c => c.id === editingChar.id)
-                          ? activeNovel.characterCodex.map(c => (c.id === editingChar.id ? editingChar : c))
-                          : [...activeNovel.characterCodex, editingChar];
-
-                        const nextCodex = editingChar.isProtagonist
-                          ? baseCodex.map(c => ({ ...c, isProtagonist: c.id === editingChar.id }))
-                          : baseCodex;
-
-                        const updatedNovel = {
-                          ...activeNovel,
-                          characterCodex: nextCodex,
-                          updatedAt: Date.now(),
-                        };
-                        updateActiveNovel(() => updatedNovel);
-                      }
-                    }} 
-                    className="px-8 py-2.5 bg-amber-600 hover:bg-amber-500 rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg shadow-amber-900/30"
-                  >
-                    Seal Fate
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+        {editingChar && activeNovel && (
+          <CharacterForm
+            character={editingChar}
+            novelState={activeNovel}
+            onSave={handleSaveCharacter}
+            onCancel={() => setEditingChar(null)}
+            onUpdateCharacter={(character) => setEditingChar(character)}
+          />
         )}
       </main>
 
@@ -4751,6 +4758,104 @@ const App: React.FC = () => {
         <Suspense fallback={null}>
           <ExportDialog novel={activeNovel} onClose={() => setShowExportDialog(false)} />
         </Suspense>
+      )}
+
+      {/* Keyboard Shortcuts Help */}
+      {showShortcutsHelp && (
+        <Suspense fallback={null}>
+          <KeyboardShortcutsHelp isOpen={showShortcutsHelp} onClose={() => setShowShortcutsHelp(false)} />
+        </Suspense>
+      )}
+
+      {/* Onboarding Tour */}
+      {activeTour && (() => {
+        const tour = getTourById(activeTour);
+        if (!tour) return null;
+        return (
+          <OnboardingTour
+            tour={tour}
+            currentStep={currentStep}
+            onNext={nextStep}
+            onPrevious={previousStep}
+            onClose={() => endTour(activeTour)}
+            onComplete={() => {
+              if (activeTour === MAIN_ONBOARDING_TOUR.id) {
+                markOnboardingComplete();
+              }
+              endTour(activeTour);
+            }}
+          />
+        );
+      })()}
+
+      {/* Help Menu */}
+      {showOnboardingMenu && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-amber-600/50 rounded-2xl p-6 max-w-md w-full">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-fantasy font-bold text-amber-400">Help & Tours</h3>
+              <button
+                onClick={() => setShowOnboardingMenu(false)}
+                className="text-zinc-500 hover:text-zinc-300 transition-colors"
+                aria-label="Close help menu"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  startTour(MAIN_ONBOARDING_TOUR.id);
+                  setShowOnboardingMenu(false);
+                }}
+                className="w-full text-left px-4 py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+              >
+                <div className="font-semibold text-zinc-200">Welcome Tour</div>
+                <div className="text-sm text-zinc-400">Get started with the basics</div>
+              </button>
+              <button
+                onClick={() => {
+                  startTour('dashboard-tour');
+                  setShowOnboardingMenu(false);
+                }}
+                className="w-full text-left px-4 py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+              >
+                <div className="font-semibold text-zinc-200">Dashboard Tour</div>
+                <div className="text-sm text-zinc-400">Learn about dashboard features</div>
+              </button>
+              <button
+                onClick={() => {
+                  startTour('editor-tour');
+                  setShowOnboardingMenu(false);
+                }}
+                className="w-full text-left px-4 py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+              >
+                <div className="font-semibold text-zinc-200">Editor Tour</div>
+                <div className="text-sm text-zinc-400">Master the chapter editor</div>
+              </button>
+              <button
+                onClick={() => {
+                  startTour('planning-tour');
+                  setShowOnboardingMenu(false);
+                }}
+                className="w-full text-left px-4 py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+              >
+                <div className="font-semibold text-zinc-200">Planning Tour</div>
+                <div className="text-sm text-zinc-400">Plan your story arcs</div>
+              </button>
+              <button
+                onClick={() => {
+                  setShowShortcutsHelp(true);
+                  setShowOnboardingMenu(false);
+                }}
+                className="w-full text-left px-4 py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+              >
+                <div className="font-semibold text-zinc-200">Keyboard Shortcuts</div>
+                <div className="text-sm text-zinc-400">View all shortcuts</div>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
         {/* Manual Editor Dialog */}
@@ -4833,7 +4938,7 @@ const App: React.FC = () => {
                       
                       if (validatedFixes.length > 0) {
                         // Apply fixes
-                        const { updatedChapters, appliedFixes, failedFixes } = applyApprovedFixes(chaptersToUpdate, validatedFixes);
+                        const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
                         
                         // Get failed auto-fixes from review if available
                         const editorReportWithInternal = editorReport as EditorReportWithInternal;
@@ -5093,7 +5198,7 @@ const App: React.FC = () => {
                       
                       if (validatedFixes.length > 0) {
                         // Apply fixes
-                        const { updatedChapters, appliedFixes, failedFixes } = applyApprovedFixes(chaptersToUpdate, validatedFixes);
+                        const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
                         
                         // Get failed auto-fixes from review if available
                         const editorReportWithInternal = editorReport as EditorReportWithInternal;
@@ -5339,7 +5444,7 @@ const App: React.FC = () => {
                       
                       if (validatedFixes.length > 0) {
                         // Apply fixes
-                        const { updatedChapters, appliedFixes, failedFixes } = applyApprovedFixes(chaptersToUpdate, validatedFixes);
+                        const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
                         
                         // Get failed auto-fixes from review if available
                         const editorReportWithInternal = editorReport as EditorReportWithInternal;
@@ -5574,7 +5679,7 @@ const App: React.FC = () => {
               }
               
               // Apply fixes
-              const { updatedChapters, appliedFixes, failedFixes } = applyApprovedFixes(chaptersToUpdate, validatedFixes);
+              const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
               
               // Get failed auto-fixes from review if available
               const editorReportWithInternal = currentEditorReport as EditorReportWithInternal;

@@ -72,7 +72,7 @@ export function useCharacterManagement(
       ...prev,
       characterCodex: prev.characterCodex.map((c: Character) => ({
         ...c,
-        isProtagonist: c.id === charId,
+        isProtagonist: c.id === charId ? !c.isProtagonist : c.isProtagonist,
       })),
       updatedAt: Date.now(),
     }));

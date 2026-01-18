@@ -9,7 +9,7 @@ Hall of Jade Manuscripts is a React + TypeScript application for AI-powered nove
 - **Frontend**: React 19.2.3, TypeScript 5.8.2
 - **Build Tool**: Vite 6.2.0
 - **Database**: Supabase (PostgreSQL)
-- **AI Services**: Google Gemini API, DeepSeek API
+- **AI Services**: DeepSeek API
 - **Styling**: Tailwind CSS 3.4.19
 - **State Management**: React Context API
 - **Testing**: Vitest 4.0.16
@@ -28,7 +28,6 @@ Hall of Jade Manuscripts is a React + TypeScript application for AI-powered nove
 │   └── LlmContext.tsx       # LLM selection state
 ├── services/           # Business logic and API services
 │   ├── aiService.ts         # AI generation orchestration
-│   ├── geminiService.ts     # Gemini API integration
 │   ├── deepseekService.ts   # DeepSeek API integration
 │   ├── supabaseService.ts   # Database operations
 │   ├── promptEngine/        # Prompt building system

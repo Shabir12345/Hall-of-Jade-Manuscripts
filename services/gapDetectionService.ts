@@ -56,15 +56,15 @@ export function analyzeGaps(state: NovelState, currentChapterNumber: number): Ga
   const gaps: Gap[] = [];
 
   // 1. Check for missing protagonist
-  const protagonist = state.characterCodex.find(c => c.isProtagonist);
-  if (!protagonist) {
+  const protagonists = state.characterCodex.filter(c => c.isProtagonist);
+  if (protagonists.length === 0) {
     gaps.push({
       type: 'missing-protagonist',
       severity: 'critical',
       entityName: 'Protagonist',
       entityType: 'character',
-      message: 'No protagonist is marked. Every novel needs a protagonist.',
-      suggestion: 'Mark one character as the protagonist in the character manager.',
+      message: 'No protagonist is marked. Every novel needs at least one protagonist.',
+      suggestion: 'Mark one or more characters as protagonists in the character manager.',
       autoFixable: false,
       confidence: 1.0
     });
@@ -173,7 +173,7 @@ export function analyzeGaps(state: NovelState, currentChapterNumber: number): Ga
          ch.summary?.toLowerCase().includes(character.name.toLowerCase()))
       );
 
-      if (appearsInArc && character.name !== protagonist?.name) {
+      if (appearsInArc && !character.isProtagonist) {
         // Character appears in arc but might not be associated
         // This is more of an info-level gap
         gaps.push({

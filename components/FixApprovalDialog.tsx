@@ -596,14 +596,14 @@ const FixApprovalDialog: React.FC<FixApprovalDialogProps> = ({
           <div className="flex gap-4">
             <button
               onClick={onCancel}
-              className="px-6 py-2.5 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
+              className="px-4 py-2 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
             >
               Cancel
             </button>
             <button
               onClick={handleReject}
               disabled={rejectedProposals.size === 0}
-              className="px-6 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-xl font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Reject Selected ({rejectedProposals.size})
             </button>

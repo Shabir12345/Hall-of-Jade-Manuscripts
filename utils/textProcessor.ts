@@ -11,6 +11,14 @@ export interface TextChunk {
 }
 
 /**
+ * Normalize text for comparison (simple normalization)
+ * Trims whitespace and normalizes internal whitespace
+ */
+export function normalize(text: string): string {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+/**
  * Normalize text for better TTS pronunciation
  */
 export function normalizeText(text: string): string {

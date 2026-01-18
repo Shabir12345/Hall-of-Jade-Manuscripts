@@ -1,11 +1,28 @@
 import React, { useEffect, useState, useRef } from 'react';
 
+interface AutomationMilestone {
+  label: string;
+  progressRange: [number, number];
+  icon?: string;
+}
+
 interface GenerationProgressBarProps {
   isVisible: boolean;
   progress: number; // 0 to 100
   statusMessage: string;
   onCancel?: () => void;
+  showAutomationSteps?: boolean;
 }
+
+const AUTOMATION_MILESTONES: AutomationMilestone[] = [
+  { label: 'Gap Analysis', progressRange: [0, 5], icon: '🔍' },
+  { label: 'Prompt Building', progressRange: [5, 20], icon: '📝' },
+  { label: 'LLM Generation', progressRange: [20, 80], icon: '⚡' },
+  { label: 'Trust Calculation', progressRange: [80, 85], icon: '✅' },
+  { label: 'Auto-Connections', progressRange: [85, 90], icon: '🔗' },
+  { label: 'Consistency Check', progressRange: [90, 95], icon: '✓' },
+  { label: 'Finalizing', progressRange: [95, 100], icon: '✨' },
+];
 
 // Easing function for smooth animation
 const easeOutCubic = (t: number): number => {
@@ -16,7 +33,8 @@ const GenerationProgressBar: React.FC<GenerationProgressBarProps> = ({
   isVisible, 
   progress, 
   statusMessage,
-  onCancel 
+  onCancel,
+  showAutomationSteps = true
 }) => {
   // Smooth progress animation using requestAnimationFrame
   const [displayProgress, setDisplayProgress] = useState(0);
@@ -28,9 +46,32 @@ const GenerationProgressBar: React.FC<GenerationProgressBarProps> = ({
   const currentDisplayProgressRef = useRef(0);
   const animationDuration = 500; // 500ms for smooth transitions
 
-  // Track milestone achievements
+  // Track milestone achievements (25%, 50%, 75% progress milestones)
   const [milestones, setMilestones] = useState<Set<number>>(new Set());
   const milestonesRef = useRef<Set<number>>(new Set());
+  
+  // Track automation step completion
+  const [completedAutomationSteps, setCompletedAutomationSteps] = useState<Set<string>>(new Set());
+  const completedStepsRef = useRef<Set<string>>(new Set());
+  
+  // Get current automation step based on progress
+  const getCurrentAutomationStep = (currentProgress: number): AutomationMilestone | null => {
+    return AUTOMATION_MILESTONES.find(
+      step => currentProgress >= step.progressRange[0] && currentProgress < step.progressRange[1]
+    ) || null;
+  };
+  
+  // Check which automation steps are completed
+  useEffect(() => {
+    if (!isVisible || !showAutomationSteps) return;
+    
+    AUTOMATION_MILESTONES.forEach(step => {
+      if (progress >= step.progressRange[1] && !completedStepsRef.current.has(step.label)) {
+        completedStepsRef.current.add(step.label);
+        setCompletedAutomationSteps(new Set(completedStepsRef.current));
+      }
+    });
+  }, [progress, isVisible, showAutomationSteps]);
 
   useEffect(() => {
     if (!isVisible) {
@@ -38,6 +79,8 @@ const GenerationProgressBar: React.FC<GenerationProgressBarProps> = ({
       currentDisplayProgressRef.current = 0;
       milestonesRef.current.clear();
       setMilestones(new Set());
+      completedStepsRef.current.clear();
+      setCompletedAutomationSteps(new Set());
       if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = null;
@@ -123,9 +166,49 @@ const GenerationProgressBar: React.FC<GenerationProgressBarProps> = ({
           </span>
         </div>
         
+        {/* Automation Steps (if enabled) */}
+        {showAutomationSteps && (
+          <div className="mb-3 flex items-center justify-between text-xs text-zinc-500 overflow-x-auto scrollbar-thin">
+            {AUTOMATION_MILESTONES.map((step, idx) => {
+              const isCompleted = completedAutomationSteps.has(step.label);
+              const isActive = getCurrentAutomationStep(displayProgress)?.label === step.label;
+              
+              return (
+                <div
+                  key={step.label}
+                  className={`flex items-center gap-1 flex-shrink-0 ${
+                    isCompleted ? 'text-emerald-400' : isActive ? 'text-amber-400 font-semibold' : 'text-zinc-600'
+                  }`}
+                >
+                  <span className="text-xs">{step.icon || '○'}</span>
+                  <span className="hidden sm:inline whitespace-nowrap">{step.label}</span>
+                  {idx < AUTOMATION_MILESTONES.length - 1 && (
+                    <span className="text-zinc-700 mx-1 hidden md:inline">→</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        
         <div className="h-4 w-full bg-zinc-800 rounded-full overflow-hidden border border-zinc-700/50 relative">
-          {/* Progress milestones */}
-          {[25, 50, 75].map((milestone) => (
+          {/* Automation milestone markers */}
+          {showAutomationSteps && AUTOMATION_MILESTONES.map((step) => (
+            <div
+              key={step.label}
+              className={`absolute top-0 bottom-0 w-0.5 ${
+                displayProgress >= step.progressRange[1]
+                  ? 'bg-emerald-500'
+                  : displayProgress >= step.progressRange[0]
+                  ? 'bg-amber-400'
+                  : 'bg-zinc-600/30'
+              } transition-colors duration-300`}
+              style={{ left: `${step.progressRange[1]}%` }}
+            />
+          ))}
+          
+          {/* Traditional progress milestones (25%, 50%, 75%) - shown when automation steps are disabled */}
+          {!showAutomationSteps && [25, 50, 75].map((milestone) => (
             <div
               key={milestone}
               className={`absolute top-0 bottom-0 w-0.5 ${

@@ -78,7 +78,10 @@ STRUCTURAL EXCELLENCE REQUIREMENTS:
 - Ensure smooth transitions between acts
 
 Current position: ${positionPercentage.toFixed(1)}% through story
-Chapter ${nextChapterNumber} of estimated ${totalChapters} chapters`;
+Chapter ${nextChapterNumber} of estimated ${totalChapters} chapters
+
+ACCESSIBILITY FOR AGES 10-40:
+When writing this chapter, use clear, accessible language. Prefer common words over rare ones. If you must use a complex word, provide context that makes its meaning clear. Keep sentences clear and direct. Make the chapter understandable to readers aged 10-40 while maintaining professional quality.`;
     },
   },
   {
@@ -106,7 +109,10 @@ DEPTH LEVELS:
 - Mid: Theme explored through character actions and dialogue
 - Deep: Theme examined through philosophical questions and meaningful choices
 
-For this chapter, aim for MID to DEEP thematic integration.`;
+For this chapter, aim for MID to DEEP thematic integration.
+
+ACCESSIBILITY FOR AGES 10-40:
+When writing this chapter, use clear, accessible language. Prefer common words over rare ones. Explain complex concepts simply. Make themes accessible through clear examples and actions, not abstract language.`;
     },
   },
   {
@@ -147,7 +153,10 @@ PSYCHOLOGICAL EXCELLENCE:
 - Show, don't tell character psychology
 - Use actions and choices to reveal internal state
 - Dialogue should reflect psychological depth
-- Internal monologue can reveal inner conflict`;
+- Internal monologue can reveal inner conflict
+
+ACCESSIBILITY FOR AGES 10-40:
+When writing this chapter, use clear, accessible language. Show character psychology through actions and dialogue that readers can understand. Use simple, direct language to describe feelings and thoughts.`;
     },
   },
   {
@@ -196,7 +205,10 @@ PROSE QUALITY CHECKLIST:
 ✓ Show emotions through actions
 ✓ Use sensory details
 ✓ Balance dialogue and narrative
-✓ Avoid repetitive words and phrases`;
+✓ Avoid repetitive words and phrases
+
+ACCESSIBILITY FOR AGES 10-40:
+When writing this chapter, use clear, accessible language. Prefer common words over rare ones. Keep sentences clear and direct. Make the prose understandable to readers aged 10-40 while maintaining quality.`;
     },
   },
   {
@@ -245,7 +257,10 @@ ENGAGEMENT CHECKLIST:
 ✓ Effective chapter ending
 ✓ Emotional impact
 ✓ Forward momentum
-✓ No fatigue-inducing sections`;
+✓ No fatigue-inducing sections
+
+ACCESSIBILITY FOR AGES 10-40:
+When writing this chapter, use clear, accessible language. Keep sentences clear and direct. Use common words over rare ones. Make the chapter engaging and understandable to readers aged 10-40.`;
     },
   },
   {
@@ -295,7 +310,10 @@ TENSION CHECKLIST:
 ✓ Variety in tension types
 ✓ Proper escalation pattern
 ✓ Tension-release balance
-✓ Multiple tension layers`;
+✓ Multiple tension layers
+
+ACCESSIBILITY FOR AGES 10-40:
+When writing this chapter, use clear, accessible language. Show tension through clear actions and consequences that readers can understand. Use simple, direct language.`;
     },
   },
   {
@@ -342,7 +360,10 @@ DEVICE EXCELLENCE:
 - Quality over quantity
 - Devices serve story, not decoration
 - Subtlety is key - readers should feel, not be told
-- Synergy: Devices working together`;
+- Synergy: Devices working together
+
+ACCESSIBILITY FOR AGES 10-40:
+When writing this chapter, use clear, accessible language. Use literary devices in ways that enhance understanding, not confuse. Prefer clear imagery over abstract concepts. Make symbols and metaphors understandable to readers aged 10-40.`;
     },
   },
 ];

@@ -22,6 +22,8 @@ export interface PlotThread {
   introducedInChapter?: number;
   status: 'active' | 'resolved' | 'pending';
   relatedArcId?: string;
+  priority?: 'high' | 'medium' | 'low'; // Priority for resolution enforcement
+  threadType?: 'meeting' | 'commitment' | 'pursuit' | 'question' | 'conflict' | 'checklist' | 'character_arc' | 'antagonist';
 }
 
 export interface StoryStateSummary {
@@ -170,11 +172,13 @@ export function extractCharacterStates(
 
 /**
  * Extracts active plot threads from chapters and arcs
- * Identifies unresolved questions, conflicts, and pending consequences
+ * Identifies unresolved questions, conflicts, pending consequences, promises, and character pursuits
+ * Enhanced to detect: promised meetings, character commitments, character pursuits, ongoing arcs
  */
 export function extractActivePlotThreads(
   chapters: Chapter[],
-  arcs: Arc[]
+  arcs: Arc[],
+  characters?: Character[]
 ): PlotThread[] {
   const threads: PlotThread[] = [];
 
@@ -187,6 +191,8 @@ export function extractActivePlotThreads(
       introducedInChapter: arc.startedAtChapter,
       status: 'active',
       relatedArcId: arc.id,
+      priority: 'medium',
+      threadType: 'conflict',
     });
 
     // Extract unresolved checklist items as threads
@@ -198,15 +204,18 @@ export function extractActivePlotThreads(
           introducedInChapter: item.sourceChapterNumber,
           status: 'pending',
           relatedArcId: arc.id,
+          priority: 'high', // Checklist items are high priority
+          threadType: 'checklist',
         });
       });
     }
   });
 
-  // Extract unresolved questions from recent chapters
-  const recentChapters = chapters.slice(-5);
+  // Extract unresolved questions from recent chapters (increased window from 5 to 10)
+  const recentChapters = chapters.slice(-10);
   recentChapters.forEach((chapter, index) => {
     const content = chapter.content.toLowerCase();
+    const fullContent = chapter.content;
     
     // Look for question patterns
     const questionPatterns = [
@@ -217,7 +226,7 @@ export function extractActivePlotThreads(
     ];
 
     questionPatterns.forEach(pattern => {
-      const matches = content.match(pattern);
+      const matches = fullContent.match(pattern);
       if (matches) {
         matches.slice(0, 2).forEach(match => {
           threads.push({
@@ -225,6 +234,8 @@ export function extractActivePlotThreads(
             description: match.trim(),
             introducedInChapter: chapter.number,
             status: 'active',
+            priority: 'medium',
+            threadType: 'question',
           });
         });
       }
@@ -242,21 +253,174 @@ export function extractActivePlotThreads(
             description: audit.resultingValue,
             introducedInChapter: chapter.number,
             status: 'active',
+            priority: 'medium',
+            threadType: 'conflict',
           });
         }
       }
     }
+
+    // NEW: Detect promised meetings and arrangements
+    const meetingPatterns = [
+      /\b(we'll|we will|they'll|they will|he'll|he will|she'll|she will|i'll|i will)\s+(meet|gather|come together|reconvene|assemble|convene)/gi,
+      /\b(set up|arranged|scheduled|planned|agreed to)\s+(a |an |the )?(meeting|gathering|appointment|rendezvous|conference)/gi,
+      /\b(meet|meeting|gathering|appointment)\s+(at|in|with|tomorrow|later|soon|next)/gi,
+      /\b(promised|agreed|vowed|swore|committed)\s+(to\s+)?(meet|gather|see|visit)/gi,
+    ];
+
+    meetingPatterns.forEach(pattern => {
+      const matches = fullContent.match(pattern);
+      if (matches) {
+        matches.slice(0, 2).forEach(match => {
+          // Extract context around the match (previous and next 30 chars)
+          const matchIndex = fullContent.toLowerCase().indexOf(match.toLowerCase());
+          if (matchIndex >= 0) {
+            const contextStart = Math.max(0, matchIndex - 30);
+            const contextEnd = Math.min(fullContent.length, matchIndex + match.length + 30);
+            const context = fullContent.substring(contextStart, contextEnd).trim();
+            
+            threads.push({
+              id: `meeting-${chapter.id}-${threads.length}`,
+              description: `Meeting/arrangement: ${context.substring(0, 150)}`,
+              introducedInChapter: chapter.number,
+              status: 'pending',
+              priority: 'high', // Promised meetings are high priority
+              threadType: 'meeting',
+            });
+          }
+        });
+      }
+    });
+
+    // NEW: Detect character commitments and promises
+    const commitmentPatterns = [
+      /\b(will|shall|going to|planning to|intend to|promised to|agreed to|vowed to|swore to)\s+(investigate|find out|discover|learn|explore|check|examine|look into|figure out|determine)/gi,
+      /\b(promised|agreed|vowed|committed|swore)\s+(to\s+)?(investigate|find|discover|help|assist|support|protect|defend|do)/gi,
+      /\b(commitment|promise|vow|oath|pledge)\s+(to\s+)?(investigate|find|discover|help|do)/gi,
+    ];
+
+    commitmentPatterns.forEach(pattern => {
+      const matches = fullContent.match(pattern);
+      if (matches) {
+        matches.slice(0, 2).forEach(match => {
+          const matchIndex = fullContent.toLowerCase().indexOf(match.toLowerCase());
+          if (matchIndex >= 0) {
+            const contextStart = Math.max(0, matchIndex - 40);
+            const contextEnd = Math.min(fullContent.length, matchIndex + match.length + 40);
+            const context = fullContent.substring(contextStart, contextEnd).trim();
+            
+            threads.push({
+              id: `commitment-${chapter.id}-${threads.length}`,
+              description: `Character commitment: ${context.substring(0, 150)}`,
+              introducedInChapter: chapter.number,
+              status: 'pending',
+              priority: 'high', // Character commitments are high priority
+              threadType: 'commitment',
+            });
+          }
+        });
+      }
+    });
+
+    // NEW: Detect character pursuits and tracking
+    const pursuitPatterns = [
+      /\b(following|following around|trying to get|trying to find|trying to discover|attempting to|seeking to|pursuing|tracking|hunting|stalking)/gi,
+      /\b(wanted to see|needs to see|must see|should meet|needs to meet|must meet)/gi,
+      /\b(after|pursuing|chasing|tracking|investigating)\s+(him|her|them|the\s+main\s+character|the\s+protagonist)/gi,
+    ];
+
+    pursuitPatterns.forEach(pattern => {
+      const matches = fullContent.match(pattern);
+      if (matches) {
+        matches.slice(0, 2).forEach(match => {
+          const matchIndex = fullContent.toLowerCase().indexOf(match.toLowerCase());
+          if (matchIndex >= 0) {
+            const contextStart = Math.max(0, matchIndex - 40);
+            const contextEnd = Math.min(fullContent.length, matchIndex + match.length + 40);
+            const context = fullContent.substring(contextStart, contextEnd).trim();
+            
+            threads.push({
+              id: `pursuit-${chapter.id}-${threads.length}`,
+              description: `Character pursuit/tracking: ${context.substring(0, 150)}`,
+              introducedInChapter: chapter.number,
+              status: 'active',
+              priority: 'high', // Character pursuits are high priority
+              threadType: 'pursuit',
+            });
+          }
+        });
+      }
+    });
   });
 
-  // Remove duplicates and return
+  // NEW: Detect ongoing character arcs (characters who appeared 2-5 chapters ago but not recently)
+  if (characters && chapters.length >= 3) {
+    const lastChapterNumber = chapters[chapters.length - 1]?.number || 0;
+    characters.forEach(char => {
+      const charNameLower = char.name.toLowerCase();
+      
+      // Find chapters where character appeared
+      const appearanceChapters: number[] = [];
+      chapters.forEach(ch => {
+        const chContent = (ch.content + ' ' + ch.summary).toLowerCase();
+        if (chContent.includes(charNameLower)) {
+          appearanceChapters.push(ch.number);
+        }
+      });
+
+      if (appearanceChapters.length > 0) {
+        const lastAppearance = Math.max(...appearanceChapters);
+        const chaptersSinceAppearance = lastChapterNumber - lastAppearance;
+        
+        // Character was active 2-5 chapters ago but hasn't appeared since
+        if (chaptersSinceAppearance >= 2 && chaptersSinceAppearance <= 5) {
+          // Check if character was mentioned as active or pursuing something
+          const recentMentionChapters = chapters.slice(-6);
+          const wasActiveRecently = recentMentionChapters.some(ch => {
+            const chContent = (ch.content + ' ' + ch.summary).toLowerCase();
+            const activeKeywords = ['active', 'pursuing', 'following', 'investigating', 'trying', 'wanted', 'needed'];
+            return chContent.includes(charNameLower) && 
+                   activeKeywords.some(kw => {
+                     const charIndex = chContent.indexOf(charNameLower);
+                     const keywordIndex = chContent.indexOf(kw);
+                     return keywordIndex >= 0 && Math.abs(charIndex - keywordIndex) < 100;
+                   });
+          });
+
+          if (wasActiveRecently) {
+            threads.push({
+              id: `character-arc-${char.id}`,
+              description: `Character "${char.name}" was active ${chaptersSinceAppearance} chapter(s) ago but hasn't appeared since. Follow up on their storyline.`,
+              introducedInChapter: lastAppearance,
+              status: 'active',
+              priority: 'medium',
+              threadType: 'character_arc',
+            });
+          }
+        }
+      }
+    });
+  }
+
+  // Remove duplicates and return (prioritized by priority: high > medium > low)
   const uniqueThreads = new Map<string, PlotThread>();
   threads.forEach(thread => {
-    if (!uniqueThreads.has(thread.id)) {
+    const existing = uniqueThreads.get(thread.id);
+    if (!existing || (thread.priority === 'high' && existing.priority !== 'high')) {
       uniqueThreads.set(thread.id, thread);
     }
   });
 
-  return Array.from(uniqueThreads.values()).slice(0, 10); // Limit to 10 most relevant
+  // Sort by priority (high first) and limit to 15 most relevant (increased from 10)
+  const sortedThreads = Array.from(uniqueThreads.values()).sort((a, b) => {
+    const priorityOrder = { high: 3, medium: 2, low: 1 };
+    const aPriority = priorityOrder[a.priority || 'medium'];
+    const bPriority = priorityOrder[b.priority || 'medium'];
+    if (aPriority !== bPriority) return bPriority - aPriority;
+    return (a.introducedInChapter || 0) - (b.introducedInChapter || 0); // More recent first within same priority
+  });
+
+  return sortedThreads.slice(0, 15);
 }
 
 /**
@@ -267,7 +431,7 @@ export function buildStoryStateSummary(state: NovelState): StoryStateSummary {
   const recentChapters = state.chapters.slice(-5);
   
   const characterStates = extractCharacterStates(recentChapters, state.characterCodex);
-  const activePlotThreads = extractActivePlotThreads(state.chapters, state.plotLedger);
+  const activePlotThreads = extractActivePlotThreads(state.chapters, state.plotLedger, state.characterCodex);
 
   // Extract current locations
   const currentLocations: string[] = [];

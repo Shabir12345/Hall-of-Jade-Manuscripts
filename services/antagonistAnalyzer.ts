@@ -1,5 +1,6 @@
-import { Antagonist, NovelState, Chapter, Arc, AntagonistProgression, AntagonistStatus } from '../types';
+import { Antagonist, NovelState, Chapter, Arc, AntagonistProgression, AntagonistStatus, ThreatLevel } from '../types';
 import { fetchAntagonists, getAntagonistsForArc, getAntagonistsForChapter } from './antagonistService';
+import { supabase } from './supabaseService';
 
 /**
  * Antagonist Analyzer
@@ -47,10 +48,6 @@ export async function analyzeAntagonistGaps(
   const gaps: AntagonistGap[] = [];
   const antagonists = await fetchAntagonists(novelId);
   
-  // Get protagonist
-  // Note: We'll need to get this from the novel state, but for now we'll check all characters
-  // This should be passed in or fetched separately
-  
   // Check each chapter for active antagonists
   for (const chapter of chapters) {
     const chapterAntagonists = await getAntagonistsForChapter(chapter.id);
@@ -91,9 +88,79 @@ export async function analyzeAntagonistGaps(
         });
       }
     }
+
+    // Check for missing appearances for active antagonists
+    const activeAntagonists = antagonists.filter(a => a.status === 'active');
+    for (const antagonist of activeAntagonists) {
+      // Check if antagonist should appear based on arc associations
+      const antagonistArcs = antagonist.arcAssociations || [];
+      const relevantArc = arcs.find(a => 
+        antagonistArcs.some(aa => aa.arcId === a.id) && 
+        a.status === 'active' &&
+        chapter.number >= (a.startChapter || 0) &&
+        chapter.number <= (a.endChapter || Infinity)
+      );
+
+      if (relevantArc && !chapterAntagonists.some(ca => ca.antagonistId === antagonist.id)) {
+        gaps.push({
+          chapterNumber: chapter.number,
+          severity: 'warning',
+          message: `${antagonist.name} is associated with active arc but not present in chapter ${chapter.number}.`,
+          suggestion: `Consider including ${antagonist.name} or referencing their influence in this chapter.`,
+        });
+      }
+
+      // Check for long gaps between appearances
+      if (antagonist.lastAppearedChapter && antagonist.lastAppearedChapter < chapter.number) {
+        const gap = chapter.number - antagonist.lastAppearedChapter;
+        if (gap >= 10 && antagonist.durationScope !== 'chapter') {
+          gaps.push({
+            chapterNumber: chapter.number,
+            severity: gap >= 15 ? 'warning' : 'info',
+            message: `${antagonist.name} hasn't appeared for ${gap} chapters (last: Ch ${antagonist.lastAppearedChapter}).`,
+            suggestion: gap >= 15 
+              ? `Consider reintroducing ${antagonist.name} or updating their status to dormant.`
+              : `Consider referencing ${antagonist.name} to maintain their presence in the story.`,
+          });
+        }
+      }
+    }
   }
 
   return gaps;
+}
+
+/**
+ * Fetch progression records for an antagonist
+ */
+async function fetchProgressionRecords(antagonistId: string): Promise<AntagonistProgression[]> {
+  try {
+    const { data, error } = await supabase
+      .from('antagonist_progression')
+      .select('*')
+      .eq('antagonist_id', antagonistId)
+      .order('chapter_number', { ascending: true });
+
+    if (error) {
+      console.debug('Error fetching progression records:', error);
+      return [];
+    }
+
+    return (data || []).map(p => ({
+      id: p.id,
+      antagonistId: p.antagonist_id,
+      chapterNumber: p.chapter_number,
+      powerLevel: p.power_level || '',
+      threatAssessment: p.threat_assessment || '',
+      keyEvents: p.key_events || [],
+      relationshipChanges: p.relationship_changes || '',
+      notes: p.notes || '',
+      createdAt: new Date(p.created_at).getTime(),
+    }));
+  } catch (error) {
+    console.debug('Error fetching progression records:', error);
+    return [];
+  }
 }
 
 /**
@@ -119,13 +186,55 @@ export async function analyzeAntagonistProgression(
       }
     }
 
-    // Determine progression trend
+    // Fetch progression records for detailed analysis
+    const progressionRecords = await fetchProgressionRecords(antagonist.id);
+
+    // Analyze threat level evolution
+    const threatLevels = progressionRecords
+      .filter(p => p.threatAssessment)
+      .map(p => p.threatAssessment);
+    const uniqueThreatLevels = [...new Set(threatLevels)];
+
+    // Analyze power level evolution
+    const powerLevels = progressionRecords
+      .filter(p => p.powerLevel)
+      .map(p => p.powerLevel);
+    const uniquePowerLevels = [...new Set(powerLevels)];
+
+    // Determine progression trend based on progression records
     let progressionTrend: 'escalating' | 'stable' | 'declining' | 'resolved' = 'stable';
+    
     if (antagonist.status === 'defeated' || antagonist.status === 'transformed') {
       progressionTrend = 'resolved';
+    } else if (progressionRecords.length > 0) {
+      // Analyze trend from progression records
+      const recentRecords = progressionRecords.slice(-3); // Last 3 records
+      const threatOrder = (t: string) => {
+        const order: Record<string, number> = { 'low': 1, 'medium': 2, 'high': 3, 'extreme': 4 };
+        return order[t.toLowerCase()] || 0;
+      };
+
+      if (recentRecords.length >= 2) {
+        const firstThreat = threatOrder(recentRecords[0].threatAssessment);
+        const lastThreat = threatOrder(recentRecords[recentRecords.length - 1].threatAssessment);
+        
+        if (lastThreat > firstThreat) {
+          progressionTrend = 'escalating';
+        } else if (lastThreat < firstThreat) {
+          progressionTrend = 'declining';
+        }
+      }
+
+      // Check status transitions in progression
+      const statusTransitions = progressionRecords
+        .filter(p => p.notes && p.notes.includes('Status changed'))
+        .map(p => p.notes);
+      
+      if (statusTransitions.some(t => t.includes('defeated') || t.includes('transformed'))) {
+        progressionTrend = 'resolved';
+      }
     } else if (antagonist.status === 'active') {
-      // Check if threat level or power has increased
-      // This would ideally use progression records, but for now we'll use status
+      // Fallback to basic analysis
       if (antagonist.threatLevel === 'extreme' || antagonist.threatLevel === 'high') {
         progressionTrend = 'escalating';
       }
@@ -134,17 +243,34 @@ export async function analyzeAntagonistProgression(
     // Count arcs
     const arcCount = antagonist.arcAssociations?.length || 0;
 
-    // Key milestones (simplified - would be better with progression records)
+    // Extract key milestones from progression records
     const keyMilestones: string[] = [];
     if (antagonist.firstAppearedChapter) {
       keyMilestones.push(`Introduced in Chapter ${antagonist.firstAppearedChapter}`);
     }
+    
+    // Add milestones from progression records
+    progressionRecords.forEach(record => {
+      if (record.keyEvents && record.keyEvents.length > 0) {
+        record.keyEvents.forEach(event => {
+          if (!keyMilestones.some(m => m.includes(event))) {
+            keyMilestones.push(`Ch ${record.chapterNumber}: ${event}`);
+          }
+        });
+      }
+    });
+
     if (antagonist.resolvedChapter) {
       keyMilestones.push(`Resolved in Chapter ${antagonist.resolvedChapter}`);
     }
     if (antagonist.lastAppearedChapter && antagonist.lastAppearedChapter !== antagonist.firstAppearedChapter) {
       keyMilestones.push(`Last appeared in Chapter ${antagonist.lastAppearedChapter}`);
     }
+
+    // Calculate appearance frequency
+    const appearanceFrequency = appearances.length > 1
+      ? appearances.length / (chapters.length || 1)
+      : 0;
 
     summaries.push({
       antagonistId: antagonist.id,

@@ -14,6 +14,15 @@ import { analyzeLiteraryDevices } from './literaryDeviceAnalyzer';
 import { analyzeTension } from './tensionAnalyzer';
 import { analyzeMarketReadiness } from './marketReadinessService';
 import { generateRevisionPlan } from './revisionPlanner';
+// NOE Module imports
+import { StructureOptimizer } from './optimizationModules/structureOptimizer';
+import { EngagementOptimizer } from './optimizationModules/engagementOptimizer';
+import { TensionOptimizer } from './optimizationModules/tensionOptimizer';
+import { ThemeOptimizer } from './optimizationModules/themeOptimizer';
+import { PsychologyOptimizer } from './optimizationModules/psychologyOptimizer';
+import { DeviceOptimizer } from './optimizationModules/deviceOptimizer';
+import { ExcellenceOptimizer } from './optimizationModules/excellenceOptimizer';
+import { normalizeCategory } from './optimizationModules/moduleRouter';
 
 /**
  * Improvement Strategy Generator
@@ -22,39 +31,51 @@ import { generateRevisionPlan } from './revisionPlanner';
 
 /**
  * Generates comprehensive improvement strategy from analysis
+ * Now integrates with NOE optimization modules
  */
 export function generateImprovementStrategy(
   state: NovelState,
   request: ImprovementRequest
 ): ImprovementStrategy {
+  // Normalize category (resolve aliases)
+  const normalizedCategory = normalizeCategory(request.category);
+  
   // Analyze weaknesses for the requested category
-  const weaknesses = analyzeCategoryWeaknesses(state, request.category);
+  const weaknesses = analyzeCategoryWeaknesses(state, normalizedCategory);
   
   // Map weaknesses to specific chapters
   const chapterMappings = mapWeaknessesToChapters(weaknesses, state);
   
-  // Generate strategy based on category and weaknesses
+  // Generate strategy using NOE modules when available
   let strategy: ImprovementStrategy;
   
-  switch (request.category) {
+  // Use NOE modules for supported categories
+  const targetScore = request.targetScore || weaknesses.targetScore;
+  
+  switch (normalizedCategory) {
     case 'excellence':
-      strategy = generateExcellenceStrategy(state, weaknesses, request);
+      strategy = ExcellenceOptimizer.generateInterventions(state, weaknesses, targetScore);
       break;
     case 'structure':
-      strategy = generateStructureStrategy(state, weaknesses, request);
-      break;
-    case 'character':
-      strategy = generateCharacterStrategy(state, weaknesses, request);
+      strategy = StructureOptimizer.generateInterventions(state, weaknesses, targetScore);
       break;
     case 'engagement':
-      strategy = generateEngagementStrategy(state, weaknesses, request);
-      break;
-    case 'theme':
-      strategy = generateThemeStrategy(state, weaknesses, request);
+      strategy = EngagementOptimizer.generateInterventions(state, weaknesses, targetScore);
       break;
     case 'tension':
-      strategy = generateTensionStrategy(state, weaknesses, request);
+      strategy = TensionOptimizer.generateInterventions(state, weaknesses, targetScore);
       break;
+    case 'theme':
+      strategy = ThemeOptimizer.generateInterventions(state, weaknesses, targetScore);
+      break;
+    case 'character':
+    case 'psychology':
+      strategy = PsychologyOptimizer.generateInterventions(state, weaknesses, targetScore);
+      break;
+    case 'literary_devices':
+      strategy = DeviceOptimizer.generateInterventions(state, weaknesses, targetScore);
+      break;
+    // Fallback to legacy strategies for other categories
     case 'prose':
       strategy = generateProseStrategy(state, weaknesses, request);
       break;
@@ -64,17 +85,48 @@ export function generateImprovementStrategy(
     case 'voice':
       strategy = generateVoiceStrategy(state, weaknesses, request);
       break;
-    case 'literary_devices':
-      strategy = generateLiteraryDevicesStrategy(state, weaknesses, request);
-      break;
     case 'market_readiness':
       strategy = generateMarketReadinessStrategy(state, weaknesses, request);
       break;
     default:
-      throw new Error(`Unknown improvement category: ${request.category}`);
+      // Fallback to excellence optimizer for unknown categories
+      strategy = ExcellenceOptimizer.generateInterventions(state, weaknesses, targetScore);
   }
   
   return strategy;
+}
+
+/**
+ * Generates module-specific strategy using NOE optimizers
+ * This is the new preferred method
+ */
+export function generateModuleSpecificStrategy(
+  state: NovelState,
+  category: ImprovementRequest['category'],
+  targetScore: number
+): ImprovementStrategy {
+  const normalizedCategory = normalizeCategory(category);
+  const weaknesses = analyzeCategoryWeaknesses(state, normalizedCategory);
+  
+  switch (normalizedCategory) {
+    case 'excellence':
+      return ExcellenceOptimizer.generateInterventions(state, weaknesses, targetScore);
+    case 'structure':
+      return StructureOptimizer.generateInterventions(state, weaknesses, targetScore);
+    case 'engagement':
+      return EngagementOptimizer.generateInterventions(state, weaknesses, targetScore);
+    case 'tension':
+      return TensionOptimizer.generateInterventions(state, weaknesses, targetScore);
+    case 'theme':
+      return ThemeOptimizer.generateInterventions(state, weaknesses, targetScore);
+    case 'character':
+    case 'psychology':
+      return PsychologyOptimizer.generateInterventions(state, weaknesses, targetScore);
+    case 'literary_devices':
+      return DeviceOptimizer.generateInterventions(state, weaknesses, targetScore);
+    default:
+      return ExcellenceOptimizer.generateInterventions(state, weaknesses, targetScore);
+  }
 }
 
 /**

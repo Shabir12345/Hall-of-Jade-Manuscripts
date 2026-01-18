@@ -4,11 +4,16 @@
 
 # Hall of Jade Manuscripts
 
-A sophisticated AI-powered novel writing application for Xianxia, Xuanhuan, and System epics. Built with React, TypeScript, Supabase, and AI integration (Gemini/DeepSeek).
+A sophisticated AI-powered novel writing application for Xianxia, Xuanhuan, and System epics. Built with React, TypeScript, Supabase, and DeepSeek AI integration.
 
 ## Features
 
-- **AI-Powered Chapter Generation**: Generate chapters using Google Gemini or DeepSeek AI
+- **AI-Powered Chapter Generation**: Generate chapters using DeepSeek AI
+- **Quality Assurance System**: Automatic quality validation and regeneration for publication-ready chapters
+  - Narrative craft analysis (sentence variation, subtext, interiority, dialogue naturalness)
+  - Originality detection (creative distance, novel metaphors, unique imagery)
+  - Authorial voice consistency enforcement
+  - Automatic regeneration for chapters failing quality checks
 - **World Building**: Manage realms, territories, and world entries
 - **Character Management**: Track characters, relationships, cultivation levels, and more
 - **Chapter & Scene Organization**: Organize your novel with chapters and scenes
@@ -25,9 +30,7 @@ A sophisticated AI-powered novel writing application for Xianxia, Xuanhuan, and 
 
 - **Node.js** (v18 or higher recommended)
 - **Supabase Account** (free tier works)
-- **AI API Key**: At least one of:
-  - Google Gemini API key ([Get one here](https://makersuite.google.com/app/apikey))
-  - DeepSeek API key ([Get one here](https://platform.deepseek.com/api_keys))
+- **DeepSeek API Key** ([Get one here](https://platform.deepseek.com/api_keys))
 
 ## Setup Instructions
 
@@ -59,12 +62,8 @@ npm install
    VITE_SUPABASE_URL=https://your-project.supabase.co
    VITE_SUPABASE_ANON_KEY=your-anon-key-here
 
-   # AI API Keys (at least one required)
-   # Gemini is recommended for full features (portraits + read-aloud)
-   GEMINI_API_KEY=your-gemini-api-key-here
-   
-   # Optional: DeepSeek as alternative LLM
-   # DEEPSEEK_API_KEY=your-deepseek-api-key-here
+   # DeepSeek API Key (required)
+   DEEPSEEK_API_KEY=your-deepseek-api-key-here
    ```
 
 ### 4. Run the Application
@@ -88,10 +87,7 @@ npm run preview
 |----------|----------|-------------|
 | `VITE_SUPABASE_URL` | Yes | Your Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | Yes | Your Supabase anonymous/public key |
-| `GEMINI_API_KEY` | Yes* | Google Gemini API key (recommended) |
-| `DEEPSEEK_API_KEY` | Yes* | DeepSeek API key (alternative) |
-
-*At least one AI API key is required. Gemini is recommended for full feature support.
+| `DEEPSEEK_API_KEY` | Yes | DeepSeek API key |
 
 **Note:** All environment variables are validated on app startup. If any are missing, you'll see a helpful error message with instructions.
 
@@ -110,6 +106,17 @@ The application uses Supabase (PostgreSQL) for data storage. The database schema
 - **Revisions**: Version history
 
 See `DATABASE_SETUP.md` for detailed schema documentation.
+
+## Quality System
+
+The application includes a comprehensive quality assurance system that ensures generated chapters meet professional fiction standards:
+
+- **Pre-Generation Checks**: Validates narrative craft readiness, originality preparation, and voice consistency
+- **Enhanced Prompts**: Automatically enforces narrative craft standards, originality constraints, and authorial voice consistency
+- **Post-Generation Validation**: Comprehensive quality metrics including narrative craft, originality, voice consistency, and editorial quality
+- **Automatic Regeneration**: Chapters failing critical quality checks are automatically regenerated with enhanced constraints (up to 3 attempts)
+
+See `docs/QUALITY_SYSTEM.md` for technical documentation and `docs/QUALITY_METRICS_GUIDE.md` for understanding quality scores.
 
 ## Troubleshooting
 

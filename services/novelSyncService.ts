@@ -30,6 +30,33 @@ const saveQueue = new Map<string, Promise<SaveResult>>();
 // Track novels that need a future cloud sync (because we only saved locally)
 const pendingCloudSyncIds = new Set<string>();
 
+// Track deleted novel IDs to prevent resurrection from IndexedDB
+// Maps novel ID to deletion timestamp
+const deletedNovelIds = new Map<string, number>();
+
+/**
+ * Remove a novel from pending sync (called when novel is deleted)
+ */
+export function removePendingSync(novelId: string): void {
+  pendingCloudSyncIds.delete(novelId);
+  // Mark as deleted to prevent resurrection
+  deletedNovelIds.set(novelId, Date.now());
+}
+
+/**
+ * Check if a novel was deleted (to prevent resurrection)
+ */
+export function isNovelDeleted(novelId: string): boolean {
+  return deletedNovelIds.has(novelId);
+}
+
+/**
+ * Clear deleted novel tracking (for cleanup, e.g., after successful deletion)
+ */
+export function clearDeletedNovel(novelId: string): void {
+  deletedNovelIds.delete(novelId);
+}
+
 // Track last save timestamps to prevent too-frequent saves
 const lastSaveTimestamp = new Map<string, number>();
 const MIN_SAVE_INTERVAL = 1000; // Minimum 1 second between saves for same novel
@@ -83,7 +110,9 @@ export async function loadMergedLibrary(): Promise<LoadMergedLibraryResult> {
     cloudNovels = cloudResult.value;
     cloudAvailable = true;
     lastCloudErrorMessage = null;
-    console.log(`✓ Successfully loaded ${cloudNovels.length} novel(s) from cloud`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`✓ Successfully loaded ${cloudNovels.length} novel(s) from cloud`);
+    }
   } else {
     cloudErr = cloudResult.reason;
     cloudAvailable = false;
@@ -122,9 +151,33 @@ export async function loadMergedLibrary(): Promise<LoadMergedLibraryResult> {
   // 2) Merge/Overwrite with local novels if newer OR if local has more chapters
   // This prevents losing chapters if a cloud save partially failed (e.g., novel updated but chapters didn't save)
   localNovels.forEach((local) => {
+    // Skip if this novel was deleted (prevents resurrection from IndexedDB)
+    if (isNovelDeleted(local.id)) {
+      // Clean up deleted novel from IndexedDB (best effort, don't fail if it errors)
+      void indexedDbService.deleteNovel(local.id).catch(() => {
+        // Ignore errors - we'll try again on next load
+      });
+      return;
+    }
+
     const cloud = novelMap.get(local.id);
     if (!cloud) {
-      // Exists locally but not on cloud (created offline)
+      // Exists locally but not on cloud
+      // If cloud is available, this means the novel was deleted from cloud, so delete it locally too
+      if (cloudAvailable) {
+        // Cloud is available and novel doesn't exist there = it was deleted
+        // Mark as deleted and clean up from IndexedDB
+        removePendingSync(local.id);
+        void indexedDbService.deleteNovel(local.id).catch(() => {
+          // Ignore errors - we'll try again on next load
+        });
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`🗑️ Removing novel "${local.title}" from IndexedDB - it was deleted from cloud`);
+        }
+        return;
+      }
+      
+      // Cloud is not available - assume it was created offline
       novelMap.set(local.id, local);
       novelsToSyncUp.push(local);
       pendingCloudSyncIds.add(local.id);
@@ -143,6 +196,28 @@ export async function loadMergedLibrary(): Promise<LoadMergedLibraryResult> {
   });
 
   const mergedNovels = Array.from(novelMap.values());
+
+  // Clean up any deleted novels from IndexedDB that weren't caught above
+  // This handles cases where a novel was deleted but IndexedDB cleanup failed
+  if (cloudAvailable) {
+    const cloudNovelIds = new Set(cloudNovels.map(n => n.id));
+    const localNovelIds = new Set(localNovels.map(n => n.id));
+    
+    // Find novels that exist in IndexedDB but not in cloud (and not in merged result)
+    for (const localId of localNovelIds) {
+      if (!cloudNovelIds.has(localId) && !novelMap.has(localId)) {
+        // This novel was deleted from cloud but still exists in IndexedDB
+        removePendingSync(localId);
+        void indexedDbService.deleteNovel(localId).catch(() => {
+          // Ignore errors - we'll try again on next load
+        });
+        if (process.env.NODE_ENV === 'development') {
+          const localNovel = localNovels.find(n => n.id === localId);
+          console.log(`🗑️ Cleaning up deleted novel "${localNovel?.title || localId}" from IndexedDB`);
+        }
+      }
+    }
+  }
 
   // Keep local cache updated with the merged result (best effort)
   void Promise.all(mergedNovels.map((n) => indexedDbService.saveNovel(n))).catch(() => {
@@ -266,7 +341,9 @@ export function enqueueSaveNovel(novel: NovelState): Promise<SaveResult> {
         
         await indexedDbService.saveNovel(novel);
         localSuccess = true;
-        console.log(`✓ Successfully saved novel "${novel.title}" to local storage`);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`✓ Successfully saved novel "${novel.title}" to local storage`);
+        }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error('❌ Local save failed:', errorMsg);
@@ -281,8 +358,8 @@ export function enqueueSaveNovel(novel: NovelState): Promise<SaveResult> {
         throw new Error('Failed to save to both cloud and local storage.');
       }
 
-      // If at least one succeeded, we consider it saved for now
-      novelChangeTracker.updateOriginal(novel);
+      // Note: updateOriginal is called in NovelContext after successful saves
+      // to ensure we use the latest library state version
 
       return { supabaseSuccess, localSuccess };
     });

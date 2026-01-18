@@ -61,7 +61,6 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({
 }) => {
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceIndex, setVoiceIndex] = useState(0);
-  const [useGemini, setUseGemini] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [speed, setSpeed] = useState(1.0);
   const [pitch, setPitch] = useState(1.0);
@@ -87,12 +86,11 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({
     availableProviders,
     error
   } = useTextToSpeech(text, {
-    provider: useGemini ? 'gemini' : 'browser',
-    voice: useGemini ? 'Kore' : availableVoices[voiceIndex],
+    provider: 'browser',
+    voice: availableVoices[voiceIndex],
     rate: speed,
     pitch,
     volume,
-    useCache: true,
     onError: (err) => {
       showToast(err.message, 'error');
     }
@@ -184,17 +182,10 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({
 
   const handleVoiceChange = useCallback((index: number) => {
     setVoiceIndex(index);
-    if (!useGemini && availableVoices[index]) {
+    if (availableVoices[index]) {
       setVoice(availableVoices[index]);
     }
-  }, [useGemini, availableVoices, setVoice]);
-
-  const handleToggleGemini = useCallback(() => {
-    if (state === 'playing' || state === 'paused') {
-      stop();
-    }
-    setUseGemini(!useGemini);
-  }, [useGemini, state, stop]);
+  }, [availableVoices, setVoice]);
 
   const handleSpeedChange = useCallback((newSpeed: number) => {
     setSpeed(newSpeed);
@@ -305,9 +296,6 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({
           onPitchChange={setPitch}
           volume={volume}
           onVolumeChange={setVolume}
-          useGemini={useGemini}
-          onToggleGemini={handleToggleGemini}
-          availableProviders={availableProviders}
           keyboardShortcuts={keyboardShortcuts}
           onKeyboardShortcutsChange={setKeyboardShortcuts}
           autoPlay={autoPlay}
@@ -315,8 +303,8 @@ const TextToSpeech: React.FC<TextToSpeechProps> = ({
         />
       )}
 
-      {/* Voice Selection (Browser TTS only) */}
-      {isExpanded && !useGemini && availableVoices.length > 0 && (
+      {/* Voice Selection */}
+      {isExpanded && availableVoices.length > 0 && (
         <div className="px-4 pb-4 border-t border-zinc-700">
           <VoiceSelector
             voices={availableVoices}

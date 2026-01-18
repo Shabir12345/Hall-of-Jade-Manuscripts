@@ -127,7 +127,7 @@ export function useChapterGeneration(): UseChapterGenerationResult {
             }
           }
           
-          if (phase === 'gemini_request_start') {
+          if (phase === 'llm_request_start') {
             setGenerationProgress(40);
             setGenerationStatus('Consulting the Muse...');
             localAddLog('Calling the selected LLM to write the chapter...', 'discovery');
@@ -170,7 +170,7 @@ export function useChapterGeneration(): UseChapterGenerationResult {
             }, 1000); // Update every second
           }
           
-          if (phase === 'gemini_request_end') {
+          if (phase === 'llm_request_end') {
             // Clear the simulated progress interval
             if (progressIntervalRef.current) {
               clearInterval(progressIntervalRef.current);

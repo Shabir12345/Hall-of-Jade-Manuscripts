@@ -15,6 +15,7 @@ import {
   calculateSmartArcTargetChapters,
   detectArcType
 } from '../arcContextAnalyzer';
+import { getGrandSagaCharacters, getAllGrandSagaCharacterNames } from '../../grandSagaAnalyzer';
 
 /**
  * Arc Prompt Writer
@@ -48,6 +49,17 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
   // Detect arc type for better context
   const arcType = detectArcType(state, context.arcContext);
 
+  // Define arc type descriptions (moved outside if block to be accessible)
+  const arcTypeDescriptions: Record<ReturnType<typeof detectArcType>, string> = {
+    'opening': 'Focus: Extensive world-building, character introduction, establishing initial conflict and Grand Saga setup. Needs more chapters (12-18) for proper establishment.',
+    'setup': 'Focus: Introduces new elements, locations, characters, or conflicts. Establishes groundwork for future arcs.',
+    'development': 'Focus: Advances plot threads, deepens character relationships, and builds tension. Core narrative progression.',
+    'climax': 'Focus: Peak tension, major conflict resolution, significant aftermath handling. Needs more chapters (15-25) for proper resolution.',
+    'denouement': 'Focus: Resolving remaining threads, providing closure. Shorter format (6-12 chapters) focusing on aftermath.',
+    'interlude': 'Focus: Brief respite, character moments, world-building moments. Shorter format (5-8 chapters).',
+    'transition': 'Focus: Bridging between major arcs, resolving some threads while setting up new conflicts.'
+  };
+
   // Build arc context sections (optimized for length)
   let arcContextSection = '';
   if (context.arcContext && completedArcs.length > 0) {
@@ -63,17 +75,6 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
 
     // Add progression analysis
     const progression = context.arcContext.progressionAnalysis;
-    
-    // Define arc type descriptions (moved here to be accessible)
-    const arcTypeDescriptions: Record<ReturnType<typeof detectArcType>, string> = {
-      'opening': 'Focus: Extensive world-building, character introduction, establishing initial conflict and Grand Saga setup. Needs more chapters (12-18) for proper establishment.',
-      'setup': 'Focus: Introduces new elements, locations, characters, or conflicts. Establishes groundwork for future arcs.',
-      'development': 'Focus: Advances plot threads, deepens character relationships, and builds tension. Core narrative progression.',
-      'climax': 'Focus: Peak tension, major conflict resolution, significant aftermath handling. Needs more chapters (15-25) for proper resolution.',
-      'denouement': 'Focus: Resolving remaining threads, providing closure. Shorter format (6-12 chapters) focusing on aftermath.',
-      'interlude': 'Focus: Brief respite, character moments, world-building moments. Shorter format (5-8 chapters).',
-      'transition': 'Focus: Bridging between major arcs, resolving some threads while setting up new conflicts.'
-    };
     
     arcContextSection += '\n\n[NARRATIVE MOMENTUM ANALYSIS]\n';
     arcContextSection += `Detected Arc Type: ${arcType.charAt(0).toUpperCase() + arcType.slice(1)} Arc\n`;
@@ -225,69 +226,137 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
     }
   }
 
-  const taskDescription = `Plan the next major plot arc for "${state.title}".
+  // Extract Grand Saga characters
+  const grandSagaData = getAllGrandSagaCharacterNames(state);
+  const grandSagaCharacters = grandSagaData.inCodex;
+  const grandSagaExtracted = grandSagaData.notInCodex;
+  
+  // Build Grand Saga characters section
+  let grandSagaCharactersSection = '';
+  if (state.grandSaga && state.grandSaga.trim().length > 0) {
+    grandSagaCharactersSection = '\n[CHARACTERS FROM GRAND SAGA]\n';
+    
+    if (grandSagaCharacters.length > 0) {
+      grandSagaCharactersSection += 'Characters mentioned in Grand Saga (already in character codex):\n';
+      grandSagaCharacters.forEach(char => {
+        grandSagaCharactersSection += `  - ${char.name}${char.isProtagonist ? ' (Protagonist)' : ''}`;
+        if (char.personality) {
+          grandSagaCharactersSection += ` - ${char.personality.substring(0, 100)}`;
+        }
+        grandSagaCharactersSection += '\n';
+      });
+    }
+    
+    if (grandSagaExtracted.length > 0) {
+      grandSagaCharactersSection += '\nPotential characters mentioned in Grand Saga (not yet in character codex):\n';
+      grandSagaExtracted.forEach(extracted => {
+        grandSagaCharactersSection += `  - ${extracted.name} (confidence: ${Math.round(extracted.confidence * 100)}%)`;
+        if (extracted.context) {
+          grandSagaCharactersSection += ` - Context: "${extracted.context.substring(0, 80)}..."`;
+        }
+        grandSagaCharactersSection += '\n';
+      });
+    }
+    
+    if (grandSagaCharacters.length === 0 && grandSagaExtracted.length === 0) {
+      grandSagaCharactersSection += 'No specific character names detected in Grand Saga. Focus on the themes and narrative direction.\n';
+    }
+    
+    grandSagaCharactersSection += '\nCRITICAL: The arc MUST feature and develop characters mentioned in the Grand Saga. ';
+    grandSagaCharactersSection += 'If characters are mentioned in the Grand Saga, they should play significant roles in this arc.\n';
+  }
 
-ARC TYPE DETECTED: ${arcType.charAt(0).toUpperCase() + arcType.slice(1)} Arc
+  // Determine Grand Saga text length (up to 800 chars, or full if shorter)
+  const grandSagaText = state.grandSaga && state.grandSaga.trim().length > 0
+    ? (state.grandSaga.length > 800 ? state.grandSaga.substring(0, 800) + '...' : state.grandSaga)
+    : 'No Grand Saga defined yet.';
+
+  const taskDescription = `[ARC PLANNING TASK]
+
+Plan the next major plot arc for "${state.title}".
+
+[ARC TYPE ANALYSIS]
+Arc Type: ${arcType.charAt(0).toUpperCase() + arcType.slice(1)} Arc
 ${arcTypeDescriptions[arcType]}
 
+${grandSagaCharactersSection}
+
+[ARC REQUIREMENTS ANALYSIS]
 ${arcNeeds}
 
-${arcContextSection ? `\n${arcContextSection}\n` : ''}
+${arcContextSection ? `\n[ARC CONTEXT & HISTORY]\n${arcContextSection}\n` : ''}
 
-The arc must:
-- Follow the Law of Causality: connect logically to recent events and previous arc outcomes with "BUT" or "THEREFORE"
-- Apply the Principle of the Delta: create meaningful value shifts that build on established character arcs
-- Include Internal Friction: characters must face difficult choices that challenge their growth
-- Advance the Grand Saga: "${state.grandSaga.substring(0, 300)}"
-- Build on Character Development: consider how characters have evolved across previous arcs
-- Resolve or Advance Plot Threads: address unresolved elements from previous arcs while introducing new challenges
-- Maintain Tension Flow: create appropriate tension transitions based on previous arc patterns
-- Follow Three-Act Structure: ensure the arc has clear beginning, middle, and end while fitting into the larger narrative
-- Maintain Genre Consistency: uphold established world rules, power systems, and genre conventions
-- Create Meaningful Stakes: introduce conflicts that matter to the characters and the overall story
-- Escalate Conflicts Appropriately: build on previous conflict escalation patterns while maintaining narrative logic
-- Continue Emotional Journey: build on the protagonist's emotional development and provide appropriate emotional moments
-- Maintain Theme Consistency: uphold recurring themes while allowing for natural evolution and variation
-- Match Arc Type Requirements: As a ${arcType} arc, ensure the arc structure and pacing align with its narrative function (e.g., ${arcType === 'opening' ? 'extensive world-building' : arcType === 'climax' ? 'peak tension and major resolution' : arcType === 'denouement' ? 'resolution and closure' : 'development and progression'})
+[ARC DESIGN REQUIREMENTS]
 
-The arc should feel like a natural, inevitable progression of the story while introducing new challenges, stakes, or developments that feel both surprising and earned.`;
+Core Narrative Principles:
+• Law of Causality: Connect logically to recent events and previous arc outcomes using "BUT" or "THEREFORE" logic
+• Principle of the Delta: Create meaningful value shifts that build on established character arcs
+• Internal Friction: Characters must face difficult choices that challenge their growth and development
 
-  const outputFormat = `Return a JSON object with this structure:
+Story Progression Requirements:
+• Advance the Grand Saga: "${grandSagaText}"
+• Feature Grand Saga Characters: The arc MUST prominently feature and develop characters mentioned in the Grand Saga (see [CHARACTERS FROM GRAND SAGA] section above)
+• Build on Character Development: Consider how characters have evolved across previous arcs and continue their growth
+• Resolve or Advance Plot Threads: Address unresolved elements from previous arcs while introducing new challenges
+
+Structural Requirements:
+• Three-Act Structure: Ensure the arc has clear beginning, middle, and end while fitting into the larger narrative
+• Tension Flow: Create appropriate tension transitions based on previous arc patterns
+• Arc Type Alignment: As a ${arcType} arc, ensure structure and pacing align with its narrative function (${arcType === 'opening' ? 'extensive world-building' : arcType === 'climax' ? 'peak tension and major resolution' : arcType === 'denouement' ? 'resolution and closure' : 'development and progression'})
+
+Quality Requirements:
+• Meaningful Stakes: Introduce conflicts that matter to the characters and the overall story
+• Conflict Escalation: Build on previous conflict escalation patterns while maintaining narrative logic
+• Emotional Journey: Continue the protagonist's emotional development with appropriate emotional moments
+• Theme Consistency: Uphold recurring themes while allowing for natural evolution and variation
+• Genre Consistency: Maintain established world rules, power systems, and genre conventions
+
+[ARC QUALITY STANDARDS]
+
+The arc should feel like a natural, inevitable progression of the story while introducing new challenges, stakes, or developments that feel both surprising and earned. The arc description must be written in clear, accessible language suitable for readers aged 10-40, using common words over rare ones and maintaining professional quality.`;
+
+  const outputFormat = `[OUTPUT FORMAT]
+
+Return a JSON object with this structure:
 {
-  "arcTitle": "string (compelling, memorable title that reflects the arc's central theme and type - ${arcType} arc)",
-  "arcDescription": "string (detailed description of 200-500 words covering: central conflict, character goals, key events, how it builds on previous arcs, tension progression, resolution direction, and how it fulfills its ${arcType} arc function)",
-  "targetChapters": number (optimal number of chapters for this ${arcType} arc, considering its complexity, scope, and goals. Suggested target: ${suggestedTargetChapters} chapters (calculated from comprehensive analysis), but you can adjust ±20% based on specific narrative needs. Range: ${arcType === 'denouement' || arcType === 'interlude' ? '5-12' : arcType === 'climax' ? '15-30' : '8-25'} chapters. Your value must be a valid integer between 5 and 35)
+  "arcTitle": "string (compelling, memorable title reflecting the arc's central theme and ${arcType} arc type)",
+  "arcDescription": "string (comprehensive description of 200-500 words covering: central conflict, character goals, key events, how it builds on previous arcs, tension progression, resolution direction, and how it fulfills its ${arcType} arc narrative function)",
+  "targetChapters": number (optimal chapter count for this ${arcType} arc, considering complexity, scope, and goals. Suggested: ${suggestedTargetChapters} chapters based on comprehensive analysis; adjust ±20% for narrative needs. Range: ${arcType === 'denouement' || arcType === 'interlude' ? '5-12' : arcType === 'climax' ? '15-30' : '8-25'} chapters. Must be an integer between 5 and 35)
 }`;
 
   const specificConstraints = [
-    'The arc title should be memorable and reflect the arc\'s central theme',
-    'The arc description should be comprehensive (200-500 words) and explicitly address:',
-    '  - How this arc builds on the most recent arc\'s outcome',
-    '  - Which unresolved elements from previous arcs it addresses',
-    '  - How characters will continue to develop based on their journey so far',
-    '  - The central conflict and stakes',
-    '  - Key events and progression',
-    '  - How tension will evolve (start level → peak → resolution)',
-    'Ensure the arc aligns with the story\'s genre and established world rules',
-    'Maintain continuity with character development patterns across previous arcs',
-    'Consider the pacing recommendations and tension evolution from previous arcs',
-    'If this is a cultivation/power progression story, ensure appropriate power scaling',
-    'Maintain conflict escalation patterns - stakes should generally increase or stay consistent across arcs',
-    'Ensure the protagonist\'s emotional journey continues to evolve and grow',
-    'Uphold established themes while allowing for natural thematic development',
-    `Determine appropriate arc length (targetChapters) based on:`,
-    `  - Complexity: How many unresolved elements, plot threads, and character arcs need attention`,
-    `  - Scope: Is this a major arc (15-30 chapters), medium arc (10-15 chapters), or focused arc (5-10 chapters)?`,
-    `  - Historical patterns: Average previous arc length is ${context.arcContext?.progressionAnalysis.pacingAnalysis.averageArcLength || 10} chapters`,
-    `  - Suggested target: ${suggestedTargetChapters} chapters (calculated from complexity analysis)`,
-    `  - Adjust as needed: Simple arcs resolving few threads may be shorter. Complex arcs with many elements may be longer.`,
-    `  - Arc goals: What does this arc need to achieve? More goals = more chapters needed.`,
+    'Arc Title Requirements: Create a memorable title that reflects the arc\'s central theme and ${arcType} arc type',
+    'Arc Description Requirements (200-500 words): The description must comprehensively address:',
+    '  • How this arc builds on the most recent arc\'s outcome and consequences',
+    '  • Which unresolved elements from previous arcs it addresses or advances',
+    '  • How characters will continue to develop based on their established journey arcs',
+    '  • The central conflict, stakes, and what characters have to lose or gain',
+    '  • Key events and narrative progression throughout the arc',
+    '  • Tension evolution: how tension will evolve from start level → peak → resolution',
+    '  • Grand Saga character integration: which characters from the Grand Saga will be featured and how they will be developed',
+    'Story Continuity: Ensure the arc aligns with the story\'s genre and established world rules',
+    'Character Development: Maintain continuity with character development patterns across previous arcs',
+    'CRITICAL - Grand Saga Integration: The arc description MUST explicitly mention which characters from the Grand Saga will be featured in this arc',
+    'CRITICAL - Character Roles: If characters are mentioned in the Grand Saga, they must play meaningful roles - do not ignore them or create unrelated characters',
+    'Grand Saga Advancement: The arc must advance the Grand Saga narrative and feature its key characters as established in the Grand Saga',
+    'Pacing Considerations: Consider the pacing recommendations and tension evolution patterns from previous arcs',
+    'Power Scaling (if applicable): If this is a cultivation/power progression story, ensure appropriate power scaling that respects established progression patterns',
+    'Conflict Escalation: Maintain conflict escalation patterns - stakes should generally increase or stay consistent across arcs',
+    'Emotional Development: Ensure the protagonist\'s emotional journey continues to evolve and grow in meaningful ways',
+    'Theme Consistency: Uphold established themes while allowing for natural thematic development and evolution',
+    `Arc Length Determination (targetChapters): Calculate appropriate length based on:`,
+    `  • Complexity: How many unresolved elements, plot threads, and character arcs need attention`,
+    `  • Scope: Major arc (15-30 chapters), medium arc (10-15 chapters), or focused arc (5-10 chapters)`,
+    `  • Historical patterns: Average previous arc length is ${context.arcContext?.progressionAnalysis.pacingAnalysis.averageArcLength || 10} chapters`,
+    `  • Suggested target: ${suggestedTargetChapters} chapters (calculated from comprehensive complexity analysis)`,
+    `  • Adjust as needed: Simple arcs resolving few threads may be shorter; complex arcs with many elements may be longer`,
+    `  • Arc goals: What does this arc need to achieve? More goals typically require more chapters`,
   ];
 
   const builtPrompt = await buildPrompt(state, {
-    role: 'You are a master plot architect specializing in Xianxia, Xuanhuan, and System epics. You design compelling arcs that maintain narrative momentum, build on established character journeys, resolve ongoing plot threads, and advance the overall story while developing characters and world. You understand three-act structure, tension curves, setup and payoff, and how to create arcs that feel both surprising and inevitable.',
+    role: 'You are a master plot architect specializing in Xianxia, Xuanhuan, and System epics. You excel at designing compelling narrative arcs that maintain momentum, build on established character journeys, resolve ongoing plot threads, and advance the overall story while developing characters and world-building. Your expertise includes three-act structure, tension curves, setup and payoff, and creating arcs that feel both surprising and inevitable.',
     taskDescription,
-    userInstruction: 'Plan a compelling arc that advances the story meaningfully while building on all previous arc context.',
+    userInstruction: 'Create a compelling arc plan that meaningfully advances the story while building on all previous arc context and character development.',
     outputFormat,
     specificConstraints,
   }, {
@@ -319,7 +388,58 @@ function determineComprehensiveArcNeeds(
   const arcType = detectArcType(state, context.arcContext);
 
   if (state.chapters.length === 0) {
-    return 'ARC NEEDS: This is the beginning of the story. Plan the opening arc that establishes the protagonist, world, initial conflict, and sets up the Grand Saga.';
+    // First arc - emphasize Grand Saga and its characters
+    const needs: string[] = [];
+    needs.push('ARC NEEDS: This is the beginning of the story. Plan the opening arc that establishes the protagonist, world, initial conflict, and sets up the Grand Saga.');
+    
+    // Extract and list Grand Saga characters
+    if (state.grandSaga && state.grandSaga.trim().length > 0) {
+      const grandSagaData = getAllGrandSagaCharacterNames(state);
+      const grandSagaChars = grandSagaData.inCodex;
+      const extractedNames = grandSagaData.notInCodex;
+      
+      needs.push('\nGRAND SAGA CONTEXT:');
+      needs.push(`Full Grand Saga: "${state.grandSaga}"`);
+      
+      if (grandSagaChars.length > 0 || extractedNames.length > 0) {
+        needs.push('\nCHARACTERS TO FEATURE FROM GRAND SAGA:');
+        needs.push('This opening arc MUST introduce and establish the characters mentioned in the Grand Saga.');
+        
+        if (grandSagaChars.length > 0) {
+          needs.push('\nCharacters from Grand Saga (already in character codex):');
+          grandSagaChars.forEach(char => {
+            needs.push(`  - ${char.name}${char.isProtagonist ? ' (Protagonist)' : ''}`);
+            if (char.personality) {
+              needs.push(`    Personality: ${char.personality.substring(0, 150)}`);
+            }
+            if (char.notes) {
+              needs.push(`    Notes: ${char.notes.substring(0, 150)}`);
+            }
+          });
+        }
+        
+        if (extractedNames.length > 0) {
+          needs.push('\nPotential characters mentioned in Grand Saga (should be introduced in this arc):');
+          extractedNames.forEach(extracted => {
+            needs.push(`  - ${extracted.name} (mentioned in: "${extracted.context.substring(0, 100)}...")`);
+          });
+          needs.push('NOTE: These characters should be introduced and established in this opening arc.');
+        }
+        
+        needs.push('\nCRITICAL REQUIREMENTS FOR OPENING ARC:');
+        needs.push('1. The arc MUST introduce and establish ALL characters mentioned in the Grand Saga');
+        needs.push('2. The arc MUST set up the Grand Saga narrative and its key themes');
+        needs.push('3. The arc MUST feature these characters prominently - do not create unrelated characters');
+        needs.push('4. The arc description MUST explicitly mention which Grand Saga characters will be featured');
+      } else {
+        needs.push('\nNOTE: No specific character names detected in Grand Saga.');
+        needs.push('Focus on establishing the protagonist, world, and initial conflict that sets up the Grand Saga narrative.');
+      }
+    } else {
+      needs.push('\nNOTE: No Grand Saga defined yet. Focus on establishing the protagonist, world, and initial conflict.');
+    }
+    
+    return needs.join('\n');
   }
 
   let needs: string[] = [];

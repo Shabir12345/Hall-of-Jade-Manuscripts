@@ -4,7 +4,7 @@
  * Similar to itemTechniqueService but for antagonists
  */
 
-import { Antagonist, AntagonistType, AntagonistStatus, ThreatLevel, AntagonistDuration } from '../types';
+import { Antagonist, AntagonistType, AntagonistStatus, ThreatLevel, AntagonistDuration, PresenceType } from '../types';
 import { findMatchingAntagonist, mergeAntagonistInfo, generateAntagonistCanonicalName } from '../utils/antagonistMatching';
 import { validateAntagonistInput } from '../utils/antagonistValidation';
 
@@ -13,6 +13,11 @@ export interface ProcessAntagonistResult {
   wasCreated: boolean;
   wasMerged: boolean;
   similarity?: number;
+  chapterAppearance?: {
+    presenceType: PresenceType;
+    significance: 'major' | 'minor' | 'foreshadowing';
+    notes?: string;
+  };
 }
 
 /**
@@ -96,11 +101,22 @@ export function processAntagonistUpdate(
 
     const merged = mergeAntagonistInfo(existingAntagonist, updates);
 
+    // Determine chapter appearance info from update
+    const presenceType = (antUpdate.presenceType || 
+      (merged.status === 'hinted' ? 'hinted' : 'direct')) as PresenceType;
+    const significance = (antUpdate.significance || 
+      (presenceType === 'direct' ? 'major' : presenceType === 'hinted' ? 'foreshadowing' : 'minor')) as 'major' | 'minor' | 'foreshadowing';
+
     return {
       antagonist: merged,
       wasCreated: false,
       wasMerged: true,
-      similarity: matchResult.similarity
+      similarity: matchResult.similarity,
+      chapterAppearance: {
+        presenceType,
+        significance,
+        notes: antUpdate.notes ? String(antUpdate.notes).trim() : undefined
+      }
     };
   }
 
@@ -146,10 +162,21 @@ export function processAntagonistUpdate(
     updatedAt: Date.now()
   };
 
+  // Determine chapter appearance info from update
+  const presenceType = (antUpdate.presenceType || 
+    (newAntagonist.status === 'hinted' ? 'hinted' : 'direct')) as PresenceType;
+  const significance = (antUpdate.significance || 
+    (presenceType === 'direct' ? 'major' : presenceType === 'hinted' ? 'foreshadowing' : 'minor')) as 'major' | 'minor' | 'foreshadowing';
+
   return {
     antagonist: newAntagonist,
     wasCreated: true,
-    wasMerged: false
+    wasMerged: false,
+    chapterAppearance: {
+      presenceType,
+      significance,
+      notes: antUpdate.notes ? String(antUpdate.notes).trim() : undefined
+    }
   };
 }
 

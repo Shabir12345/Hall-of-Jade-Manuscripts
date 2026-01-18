@@ -27,6 +27,9 @@ export interface Territory {
   name: string;
   type: 'Empire' | 'Kingdom' | 'Neutral' | 'Hidden';
   description: string;
+  // Chapter tracking for rollback
+  createdByChapterId?: string;
+  lastUpdatedByChapterId?: string;
 }
 
 // Items and Techniques System Types
@@ -65,6 +68,9 @@ export interface NovelTechnique {
   lastReferencedChapter?: number;
   createdAt: number;
   updatedAt: number;
+  // Chapter tracking for rollback
+  createdByChapterId?: string;
+  lastUpdatedByChapterId?: string;
 }
 
 export interface CharacterItemPossession {
@@ -95,11 +101,19 @@ export interface CharacterTechniqueMastery {
 export interface Character {
   id: string;
   name: string;
-  /** Explicit main character flag (single protagonist per novel) */
+  /** Explicit main character flag (supports multiple protagonists) */
   isProtagonist?: boolean;
   age: string;
   personality: string;
   currentCultivation: string;
+  /** Physical appearance description */
+  appearance?: string;
+  /** Origin story and background */
+  background?: string;
+  /** Character goals and motivations */
+  goals?: string;
+  /** Character weaknesses and flaws */
+  flaws?: string;
   /** @deprecated Use techniqueMasteries instead. Kept for backward compatibility during migration. */
   skills: string[];
   /** @deprecated Use itemPossessions instead. Kept for backward compatibility during migration. */
@@ -112,6 +126,14 @@ export interface Character {
   portraitUrl?: string;
   status: 'Alive' | 'Deceased' | 'Unknown';
   relationships: Relationship[];
+  // Chapter tracking for rollback
+  createdByChapterId?: string;
+  lastUpdatedByChapterId?: string;
+  updateHistory?: Array<{
+    chapterId: string;
+    chapterNumber: number;
+    changes: string[]; // e.g., ['age', 'cultivation', 'skills']
+  }>;
 }
 
 export interface LogicAudit {
@@ -144,6 +166,10 @@ export interface Chapter {
   logicAudit?: LogicAudit;
   scenes: Scene[];
   createdAt: number;
+  // Chapter regeneration tracking
+  needsRegeneration?: boolean;
+  regenerationReason?: string;
+  dependencyOnChapterId?: string;
 }
 
 export interface ArcChecklistItem {
@@ -177,6 +203,61 @@ export interface SystemLog {
   timestamp: number;
 }
 
+// Story Threads System Types
+export type StoryThreadType = 
+  | 'enemy'        // Antagonist/opposition threads
+  | 'technique'    // Technique-related threads
+  | 'item'         // Item-related threads
+  | 'location'     // Territory/location threads
+  | 'sect'         // Sect/organization threads
+  | 'promise'      // Character promises that need fulfillment
+  | 'mystery'      // Mysteries that need solving
+  | 'relationship' // Relationship threads between characters
+  | 'power'        // Power progression/cultivation threads
+  | 'quest'        // Quests or missions
+  | 'revelation'   // Secrets/revelations that need revealing
+  | 'conflict'     // Ongoing conflicts that need resolution
+  | 'alliance';    // Alliances/partnerships that form/break
+export type ThreadStatus = 'active' | 'paused' | 'resolved' | 'abandoned';
+export type ThreadPriority = 'critical' | 'high' | 'medium' | 'low';
+export type ThreadEventType = 'introduced' | 'progressed' | 'resolved' | 'hinted';
+
+export interface ThreadProgressionEvent {
+  id: string;
+  threadId: string;
+  chapterNumber: number;
+  chapterId: string;
+  eventType: ThreadEventType;
+  description: string;
+  significance: 'major' | 'minor' | 'foreshadowing';
+  createdAt: number;
+}
+
+export interface StoryThread {
+  id: string;
+  novelId: string;
+  title: string;
+  type: StoryThreadType;
+  status: ThreadStatus;
+  priority: ThreadPriority;
+  description: string;
+  introducedChapter: number;
+  lastUpdatedChapter: number;
+  resolvedChapter?: number;
+  relatedEntityId?: string;
+  relatedEntityType?: string;
+  progressionNotes: Array<{
+    chapterNumber: number;
+    note: string;
+    significance: 'major' | 'minor';
+  }>;
+  resolutionNotes?: string;
+  satisfactionScore?: number; // 0-100
+  chaptersInvolved: number[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface NovelState {
   id: string;
   title: string;
@@ -206,11 +287,40 @@ export interface NovelState {
   emotionalPayoffs?: EmotionalPayoffMoment[];
   /** Subtext system: Track subtext elements */
   subtextElements?: SubtextElement[];
+  /** Story threads system: Track narrative threads to prevent plot holes */
+  storyThreads?: StoryThread[];
+  /** Character systems: Track systems that help the main character (cultivation systems, game interfaces, cheat abilities, etc.) */
+  characterSystems?: CharacterSystem[];
+  /** Last calculated trust score from extraction (stored for dashboard display) */
+  lastTrustScore?: {
+    overall: number;
+    extractionQuality: number;
+    connectionQuality: number;
+    dataCompleteness: number;
+    consistencyScore: number;
+    factors: {
+      highConfidenceExtractions: number;
+      lowConfidenceExtractions: number;
+      missingRequiredFields: number;
+      inconsistencies: number;
+      warnings: number;
+    };
+  };
+  /** Recent auto-connections from extraction (stored for dashboard display) */
+  recentAutoConnections?: Array<{
+    type: string;
+    sourceId: string;
+    sourceName: string;
+    targetId: string;
+    targetName: string;
+    confidence: number;
+    reason: string;
+  }>;
   updatedAt: number;
   createdAt: number;
 }
 
-export type ViewType = 'dashboard' | 'world-bible' | 'characters' | 'chapters' | 'editor' | 'planning' | 'library' | 'world-map' | 'storyboard' | 'timeline' | 'beatsheet' | 'matrix' | 'analytics' | 'search' | 'goals' | 'antagonists' | 'structure-visualizer' | 'engagement-dashboard' | 'tension-curve' | 'theme-evolution' | 'character-psychology' | 'device-dashboard' | 'draft-comparison' | 'excellence-scorecard';
+export type ViewType = 'dashboard' | 'world-bible' | 'characters' | 'chapters' | 'editor' | 'planning' | 'library' | 'world-map' | 'storyboard' | 'timeline' | 'beatsheet' | 'matrix' | 'analytics' | 'search' | 'goals' | 'antagonists' | 'character-systems' | 'story-threads' | 'structure-visualizer' | 'engagement-dashboard' | 'tension-curve' | 'theme-evolution' | 'character-psychology' | 'device-dashboard' | 'draft-comparison' | 'excellence-scorecard' | 'improvement-history';
 
 // Style Analysis Types
 export interface WritingStyleMetrics {
@@ -309,11 +419,22 @@ export interface PromptContext {
   storyStateSummary?: string;
   continuityBridge?: string;
   activePlotThreads?: string[];
+  highPriorityPlotThreads?: string[]; // High-priority threads that MUST be addressed
+  characterPresenceWarnings?: string[]; // Warnings about missing characters who should appear
+  overduePromisesContext?: string; // Overdue promises and high-priority pending promises
   foreshadowingContext?: string;
   emotionalPayoffContext?: string;
   pacingContext?: string;
   symbolismContext?: string;
   antagonistContext?: string;
+  systemContext?: string; // Character systems that help the protagonist
+  grandSagaCharacters?: Character[]; // Characters mentioned in Grand Saga
+  grandSagaExtractedNames?: Array<{ name: string; confidence: number; context: string }>; // Extracted names not yet in codex
+  // Comprehensive context sections
+  comprehensiveThreadContext?: string; // All threads with status and progression instructions
+  comprehensiveCharacterContext?: Array<{ characterId: string; formattedContext: string }>; // Full context for characters appearing in chapter
+  openPlotPointsContext?: string; // All unresolved plot points requiring attention
+  storyProgressionAnalysis?: string; // How the story is progressing overall
 }
 
 export interface PromptBuilderConfig {
@@ -330,6 +451,14 @@ export interface BuiltPrompt {
   systemInstruction: string;
   userPrompt: string;
   contextSummary: string;
+  cacheMetadata?: {
+    cacheableContent: string;
+    dynamicContent: string;
+    cacheKey: string;
+    estimatedCacheableTokens: number;
+    canUseCaching: boolean;
+    provider?: 'claude' | 'gemini';
+  };
 }
 
 // Novelcrafter-Inspired Types
@@ -515,6 +644,9 @@ export interface Antagonist {
   arcAssociations?: AntagonistArcAssociation[];
   createdAt: number;
   updatedAt: number;
+  // Chapter tracking for rollback
+  createdByChapterId?: string;
+  lastUpdatedByChapterId?: string;
 }
 
 export interface AntagonistRelationship {
@@ -571,6 +703,72 @@ export interface AntagonistChapterAppearance {
   chapterId: string;
   presenceType: PresenceType;
   significance: 'major' | 'minor' | 'foreshadowing';
+  notes: string;
+  createdAt: number;
+}
+
+// Character System Types
+export type SystemType = 'cultivation' | 'game' | 'cheat' | 'ability' | 'interface' | 'evolution' | 'other';
+export type SystemCategory = 'core' | 'support' | 'evolution' | 'utility' | 'combat' | 'passive';
+export type SystemStatus = 'active' | 'dormant' | 'upgraded' | 'merged' | 'deactivated';
+
+export interface CharacterSystem {
+  id: string;
+  novelId: string;
+  characterId: string; // The protagonist who owns this system
+  name: string;
+  type: SystemType;
+  category: SystemCategory;
+  description: string;
+  currentLevel?: string; // Current version/level of the system
+  currentVersion?: string;
+  status: SystemStatus;
+  features: SystemFeature[]; // Array of system features/abilities
+  firstAppearedChapter?: number;
+  lastUpdatedChapter?: number;
+  history: string; // Evolution over chapters
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+  // Chapter tracking for rollback
+  createdByChapterId?: string;
+  lastUpdatedByChapterId?: string;
+}
+
+export interface SystemFeature {
+  id: string;
+  systemId: string;
+  name: string;
+  description: string;
+  category?: string; // Optional feature category
+  unlockedChapter?: number;
+  isActive: boolean;
+  level?: string; // Feature level/strength
+  strength?: number; // Numeric strength if applicable
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SystemProgression {
+  id: string;
+  systemId: string;
+  chapterNumber: number;
+  featuresAdded: string[]; // Feature names or IDs added in this chapter
+  featuresUpgraded: string[]; // Feature names or IDs upgraded in this chapter
+  levelChanges?: string; // Description of level/version changes
+  keyEvents: string[]; // Key events related to the system
+  notes: string;
+  createdAt: number;
+}
+
+export interface SystemChapterAppearance {
+  id: string;
+  systemId: string;
+  chapterId: string;
+  presenceType: 'direct' | 'mentioned' | 'hinted' | 'used';
+  significance: 'major' | 'minor' | 'foreshadowing';
+  featuresUsed?: string[]; // Which features were used in this chapter
   notes: string;
   createdAt: number;
 }
@@ -976,5 +1174,116 @@ export interface PromptEffectiveness {
   userFeedback?: number; // 1-5 rating
   effectivenessMetrics: Record<string, any>;
   createdAt: number;
+}
+
+// Authentic Chapter Quality & Originality System Types
+
+export interface ChapterOriginalityScore {
+  id: string;
+  chapterId: string;
+  novelId: string;
+  overallOriginality: number; // 0-100
+  creativeDistance: number; // 0-100 (distance from training patterns)
+  novelMetaphorScore: number; // 0-100
+  uniqueImageryScore: number; // 0-100
+  sceneConstructionOriginality: number; // 0-100
+  emotionalBeatOriginality: number; // 0-100
+  genericPatternsDetected: string[];
+  mechanicalStructuresDetected: string[];
+  derivativeContentFlags: string[];
+  clichePatterns: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface NarrativeCraftScore {
+  id: string;
+  chapterId: string;
+  novelId: string;
+  overallCraftScore: number; // 0-100
+  burstinessScore: number; // 0-100 (sentence length variation)
+  perplexityScore: number; // 0-100 (vocabulary unpredictability)
+  subtextScore: number; // 0-100
+  interiorityScore: number; // 0-100
+  sceneIntentScore: number; // 0-100
+  dialogueNaturalnessScore: number; // 0-100
+  repetitivePatterns: string[];
+  overexplanationFlags: string[];
+  neutralProseFlags: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AuthorialVoiceProfile {
+  id: string;
+  novelId: string;
+  preferredSentenceComplexity: {
+    min: number;
+    max: number;
+    average: number;
+    variance: number;
+  };
+  emotionalToneRange: {
+    primary: string;
+    secondary: string[];
+    intensityRange: [number, number]; // 0-100
+  };
+  thematicFocus: string[];
+  stylisticQuirks: string[];
+  imperfections: string[]; // Intentional stylistic imperfections
+  vocabularyPreferences: {
+    common: string[];
+    uncommon: string[];
+    formalityLevel: 'formal' | 'casual' | 'mixed';
+  };
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChapterQualityMetrics {
+  chapterId: string;
+  qualityCheck: ChapterQualityCheck;
+  originalityScore: ChapterOriginalityScore;
+  narrativeCraftScore: NarrativeCraftScore;
+  voiceConsistencyScore: number; // 0-100
+  editorialScore: {
+    readability: number; // 0-100
+    flow: number; // 0-100
+    emotionalAuthenticity: number; // 0-100
+    narrativeCoherence: number; // 0-100
+    structuralBalance: number; // 0-100
+  };
+  transitionQualityScore?: number; // 0-100, undefined for first chapter
+  shouldRegenerate: boolean;
+  regenerationReasons: string[];
+  warnings: string[];
+  createdAt: number;
+}
+
+export interface RegenerationConfig {
+  maxAttempts: number; // Default: 3
+  criticalThresholds: {
+    originality: number; // Default: 60
+    narrativeCraft: number; // Default: 65
+    voiceConsistency: number; // Default: 70
+  };
+  minorThresholds: {
+    originality: number; // Default: 75
+    narrativeCraft: number; // Default: 80
+    voiceConsistency: number; // Default: 85
+  };
+  enabled: boolean; // Default: true
+}
+
+export interface RegenerationResult {
+  success: boolean;
+  chapter: Chapter | null;
+  attempts: number;
+  finalMetrics: ChapterQualityMetrics | null;
+  regenerationHistory: Array<{
+    attempt: number;
+    metrics: ChapterQualityMetrics;
+    reasons: string[];
+  }>;
 }
 

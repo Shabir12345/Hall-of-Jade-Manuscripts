@@ -65,13 +65,14 @@ class NovelChangeTracker {
   private serializeNovel(novel: NovelState): string {
     // Serialize all important fields for accurate change detection
     // This ensures we catch all real changes, not just metadata changes
+    // NOTE: updatedAt is excluded because it changes on every save, causing infinite loops
     return JSON.stringify({
       id: novel.id,
       title: novel.title,
       genre: novel.genre,
       grandSaga: novel.grandSaga,
       currentRealmId: novel.currentRealmId,
-      updatedAt: novel.updatedAt,
+      // updatedAt excluded - it's metadata that changes on save, not actual content
       // Deep serialize important arrays/objects
       chapters: novel.chapters.map(c => ({
         id: c.id,
@@ -139,6 +140,14 @@ class NovelChangeTracker {
       }
     });
     return changedIds;
+  }
+
+  /**
+   * Remove a novel from tracking (e.g., when deleted)
+   */
+  removeNovel(novelId: string): void {
+    this.originalNovels.delete(novelId);
+    this.changedNovelIds.delete(novelId);
   }
 
   /**

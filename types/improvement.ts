@@ -17,6 +17,15 @@ export type ImprovementCategory =
   | 'market_readiness'; // Market readiness
 
 /**
+ * Chapter-level targeting options
+ */
+export interface ChapterTargetingOptions {
+  chapterIds?: string[];
+  chapterNumbers?: number[];
+  chapterRange?: { start: number; end: number };
+}
+
+/**
  * Improvement Request - User's request for improvement
  */
 export interface ImprovementRequest {
@@ -26,6 +35,7 @@ export interface ImprovementRequest {
   maxChaptersToInsert?: number;    // Limit on new chapters (default: unlimited)
   maxChaptersToEdit?: number;      // Limit on chapters to edit (default: all needed)
   scope?: 'focused' | 'comprehensive'; // Focus on one area or all related areas
+  chapterSelection?: ChapterTargetingOptions; // Optional chapter targeting
 }
 
 /**
@@ -192,6 +202,8 @@ export interface ImprovementActionResult {
   changesApplied: boolean;
   newContentLength?: number;
   oldContentLength?: number;
+  newContent?: string;               // The actual new content (for diff viewing)
+  oldContent?: string;               // Original content (for diff viewing)
   insertedChapters?: Array<{
     id: string;
     number: number;
@@ -199,6 +211,20 @@ export interface ImprovementActionResult {
   }>;
   validationScore?: number;          // Re-analysis score after improvement
   error?: string;
+  // Change tracking metadata
+  changeMetadata?: {
+    wordsBefore: number;
+    wordsAfter: number;
+    wordChange: number;
+    explanation?: string;            // Why this change was made
+    confidence?: 'high' | 'medium' | 'low';
+  };
+  // Approval dialog context
+  problemDescription?: string;      // Clear description of what problem is being fixed
+  sectionAffected?: 'beginning' | 'middle' | 'end' | 'throughout'; // Which part of chapter
+  contextBefore?: string;            // Text before the change (for better understanding)
+  contextAfter?: string;             // Text after the change (for better understanding)
+  chapterTitle?: string;              // Chapter title for display
 }
 
 /**
@@ -302,6 +328,7 @@ export interface ImprovementHistory {
   result: ImprovementExecutionResult;
   rolledBack: boolean;
   rollbackTimestamp?: number;
+  originalState?: NovelState; // Store original state for undo functionality
 }
 
 /**
@@ -322,10 +349,228 @@ export interface ImprovementGuidance {
  * Improvement Dialog State - State for improvement dialog
  */
 export interface ImprovementDialogState {
-  phase: 'strategy_preview' | 'executing' | 'results';
+  phase: 'chapter_selection' | 'strategy_preview' | 'executing' | 'approval' | 'results';
   strategy: ImprovementStrategy | null;
   progress: number;
   progressMessage: string;
   result: ImprovementExecutionResult | null;
   error: string | null;
+}
+
+/**
+ * Improvement execution mode
+ */
+export type ImprovementMode = 'manual' | 'automatic';
+
+// =====================================================
+// IMPROVEMENT HISTORY PAGE TYPES
+// =====================================================
+
+/**
+ * Evaluation Status - User's assessment of an improvement
+ */
+export type EvaluationStatus = 'pending' | 'approved' | 'rejected';
+
+/**
+ * Improvement History Record - Extended record for the History page
+ * Includes full state snapshots and evaluation data
+ */
+export interface ImprovementHistoryRecord extends ImprovementHistory {
+  // User who made the improvement
+  userId?: string;
+  
+  // Full state snapshots for diff visualization and rollback
+  fullBeforeState?: NovelState;
+  fullAfterState?: NovelState;
+  
+  // Pre-computed diff for fast rendering
+  diffSnapshot?: NovelDiff;
+  
+  // User evaluation of the improvement
+  evaluation: EvaluationStatus;
+  evaluationNotes?: string;
+  evaluationTimestamp?: number;
+  
+  // Additional metadata
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+/**
+ * NovelDiff - Diff structure for tracking changes
+ * (Imported from changeTracker, defined here for type completeness)
+ */
+export interface NovelDiff {
+  novelId: string;
+  novelTitle: string;
+  timestamp: number;
+  category: string;
+  chapterDiffs: ChapterDiffSummary[];
+  summary: {
+    chaptersChanged: number;
+    chaptersUnchanged: number;
+    totalAdditions: number;
+    totalDeletions: number;
+    totalModifications: number;
+    netWordChange: number;
+    overallChangePercentage: number;
+  };
+  beforeState: {
+    totalWords: number;
+    totalChapters: number;
+  };
+  afterState: {
+    totalWords: number;
+    totalChapters: number;
+  };
+}
+
+/**
+ * Chapter Diff Summary - Summary of changes in a single chapter
+ */
+export interface ChapterDiffSummary {
+  chapterId: string;
+  chapterNumber: number;
+  chapterTitle: string;
+  hasChanges: boolean;
+  summary: {
+    totalAdditions: number;
+    totalDeletions: number;
+    totalModifications: number;
+    netWordChange: number;
+    changePercentage: number;
+  };
+  beforeContent?: string;
+  afterContent?: string;
+}
+
+/**
+ * History Filters - Filters for querying improvement history
+ */
+export interface HistoryFilters {
+  // Filter by category
+  categories?: ImprovementCategory[];
+  
+  // Filter by date range
+  startDate?: number;
+  endDate?: number;
+  
+  // Filter by evaluation status
+  evaluationStatus?: EvaluationStatus[];
+  
+  // Filter by rollback status
+  includeRolledBack?: boolean;
+  
+  // Filter by score improvement
+  minScoreImprovement?: number;
+  maxScoreImprovement?: number;
+  
+  // Search in summary text
+  searchQuery?: string;
+  
+  // Pagination
+  limit?: number;
+  offset?: number;
+  
+  // Sorting
+  sortBy?: 'timestamp' | 'scoreImprovement' | 'category' | 'evaluation';
+  sortOrder?: 'asc' | 'desc';
+}
+
+/**
+ * Improvement Statistics - Aggregated stats for a novel
+ */
+export interface ImprovementStats {
+  // Counts
+  totalImprovements: number;
+  activeImprovements: number;
+  rolledBackCount: number;
+  
+  // Evaluation counts
+  approvedCount: number;
+  rejectedCount: number;
+  pendingCount: number;
+  
+  // Score metrics
+  avgScoreImprovement: number;
+  maxScoreImprovement: number;
+  totalScoreImprovement: number;
+  
+  // Action counts
+  totalChaptersEdited: number;
+  totalChaptersInserted: number;
+  totalActionsExecuted: number;
+  
+  // Category breakdown
+  categoryBreakdown: Record<ImprovementCategory, {
+    count: number;
+    avgImprovement: number;
+    totalImprovement: number;
+  }>;
+  
+  // Timeline
+  firstImprovement?: number;
+  lastImprovement?: number;
+  
+  // Success rate
+  successRate: number;
+}
+
+/**
+ * Score Data Point - For score progression charts
+ */
+export interface ScoreDataPoint {
+  timestamp: number;
+  category: ImprovementCategory;
+  scoreBefore: number;
+  scoreAfter: number;
+  scoreImprovement: number;
+  cumulativeImprovement: number;
+  improvementId: string;
+}
+
+/**
+ * Exported History - Format for exporting improvement history
+ */
+export interface ExportedHistory {
+  exportedAt: number;
+  novelId: string;
+  novelTitle: string;
+  totalRecords: number;
+  records: ImprovementHistoryRecord[];
+  statistics: ImprovementStats;
+  metadata: {
+    exportVersion: string;
+    appVersion: string;
+  };
+}
+
+/**
+ * Evaluation Data - Data for evaluating an improvement
+ */
+export interface EvaluationData {
+  status: EvaluationStatus;
+  notes?: string;
+}
+
+/**
+ * History Page State - State for the Improvement History page
+ */
+export interface HistoryPageState {
+  // Data
+  records: ImprovementHistoryRecord[];
+  statistics: ImprovementStats | null;
+  scoreProgression: ScoreDataPoint[];
+  
+  // UI state
+  isLoading: boolean;
+  error: string | null;
+  selectedRecordId: string | null;
+  expandedRecordIds: Set<string>;
+  
+  // Filters
+  filters: HistoryFilters;
+  
+  // View mode
+  viewMode: 'timeline' | 'list' | 'grid';
 }

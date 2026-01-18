@@ -30,7 +30,7 @@ function getDeepSeekApiKey(): string {
   const key = env.deepseek.apiKey;
   if (!key) {
     throw new Error(
-      'DEEPSEEK_API_KEY is not set. Select Gemini or set DEEPSEEK_API_KEY in your .env.local and restart.'
+      'DEEPSEEK_API_KEY is not set. Please set DEEPSEEK_API_KEY in your .env.local and restart.'
     );
   }
   return key;

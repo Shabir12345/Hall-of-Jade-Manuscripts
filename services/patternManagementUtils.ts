@@ -136,7 +136,10 @@ export const PatternManagementUtils = {
 // Expose to window for console access (development only)
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).PatternManagement = PatternManagementUtils;
-  console.log('🔧 Pattern Management Utils available at: window.PatternManagement');
-  console.log('   Try: await PatternManagement.printStatistics()');
-  console.log('   Or: await PatternManagement.printActivePatterns()');
+  // Only log in development mode
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔧 Pattern Management Utils available at: window.PatternManagement');
+    console.log('   Try: await PatternManagement.printStatistics()');
+    console.log('   Or: await PatternManagement.printActivePatterns()');
+  }
 }

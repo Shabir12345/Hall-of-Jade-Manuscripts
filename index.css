@@ -2,6 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Root font size normalization - 16px base for proper scaling */
+html {
+  font-size: 16px;
+}
+
+/* CSS Custom Properties for spacing system (4px base unit) */
+:root {
+  --spacing-unit: 4px;
+  --spacing-xs: calc(var(--spacing-unit) * 1);   /* 4px */
+  --spacing-sm: calc(var(--spacing-unit) * 2);   /* 8px */
+  --spacing-md: calc(var(--spacing-unit) * 4);   /* 16px */
+  --spacing-lg: calc(var(--spacing-unit) * 6);   /* 24px */
+  --spacing-xl: calc(var(--spacing-unit) * 8);   /* 32px */
+  --spacing-2xl: calc(var(--spacing-unit) * 12); /* 48px */
+  --spacing-3xl: calc(var(--spacing-unit) * 16); /* 64px */
+}
+
 /* Custom scrollbar styles */
 ::-webkit-scrollbar {
   width: 8px;
@@ -82,14 +99,16 @@ h1, h2, h3, h4, h5, h6, p {
   margin-top: 2rem;
 }
 
-/* Better button spacing */
+/* Better button spacing - normalized sizing */
 button {
-  min-height: 2.5rem;
+  min-height: 2.25rem; /* Reduced from 2.5rem (36px) */
+  font-size: 0.875rem; /* 14px base */
 }
 
-/* Improve form element spacing */
+/* Improve form element spacing - normalized sizing */
 input, textarea, select {
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 0.75rem; /* Reduced from 0.75rem 1rem */
+  font-size: 0.875rem; /* 14px base */
 }
 
 /* Better focus states */
@@ -108,6 +127,7 @@ img {
 /* Better line height for readability */
 body {
   line-height: 1.6;
+  font-size: 1rem; /* Explicit rem-based sizing */
 }
 
 /* Improve card spacing */
@@ -198,7 +218,7 @@ a:hover {
 
 @media (min-width: 768px) {
   .bg-zinc-900, .bg-zinc-800 {
-    padding: 2rem;
+    padding: 1.25rem; /* Reduced from 2rem */
   }
 }
 

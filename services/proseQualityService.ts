@@ -407,7 +407,7 @@ function detectCadencePattern(content: string): string {
 /**
  * Detects clichés
  */
-function detectCliches(content: string): string[] {
+export function detectCliches(content: string): string[] {
   const cliches = [
     'in the blink of an eye',
     'time stood still',
@@ -461,7 +461,7 @@ function detectCliches(content: string): string[] {
 /**
  * Detects tropes (common patterns)
  */
-function detectTropes(content: string): string[] {
+export function detectTropes(content: string): string[] {
   const tropes = [
     'chosen one',
     'hero\'s journey',

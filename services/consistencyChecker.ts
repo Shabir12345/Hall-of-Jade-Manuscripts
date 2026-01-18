@@ -12,6 +12,9 @@
 import { NovelState, Character, Chapter, Arc } from '../types';
 import { textContainsCharacterName } from '../utils/characterNameMatching';
 import { normalize } from '../utils/textProcessor';
+import { getKnowledgeGraphService } from './knowledgeGraphService';
+import { getPowerLevelSystem } from './powerLevelSystem';
+import { getEntityStateTracker } from './entityStateTracker';
 
 export interface ConsistencyIssue {
   type: ConsistencyIssueType;
@@ -86,7 +89,7 @@ function checkPowerLevelConsistency(
   if (powerMentions.length >= 2) {
     // Simple check: if character's current cultivation is lower than mentioned earlier
     const sortedMentions = powerMentions.sort((a, b) => a.chapterNumber - b.chapterNumber);
-    const currentLevel = character.currentCultivation.toLowerCase();
+    const currentLevel = (character.currentCultivation || '').toLowerCase();
     
     // Check if earlier chapters mention higher levels
     for (let i = 0; i < sortedMentions.length - 1; i++) {
@@ -226,23 +229,24 @@ function checkMissingCharacters(
   chapters: Chapter[]
 ): ConsistencyIssue[] {
   const issues: ConsistencyIssue[] = [];
-  const protagonist = state.characterCodex.find(c => c.isProtagonist);
+  const protagonists = state.characterCodex.filter(c => c.isProtagonist);
   
-  if (!protagonist) return issues;
+  if (protagonists.length === 0) return issues;
 
-  // Check if protagonist appears in all chapters
+  // Check if at least one protagonist appears in each chapter
   chapters.forEach(chapter => {
     const chapterText = (chapter.content || chapter.summary || '').toLowerCase();
-    const protagonistPresent = textContainsCharacterName(chapterText, protagonist.name);
+    const protagonistPresent = protagonists.some(p => textContainsCharacterName(chapterText, p.name));
     
     if (!protagonistPresent && chapter.number > 0) {
+      const protagonistNames = protagonists.map(p => p.name).join(', ');
       issues.push({
         type: 'missing-character',
         severity: 'warning',
         chapterNumber: chapter.number,
-        characterName: protagonist.name,
-        message: `Protagonist "${protagonist.name}" does not appear in Chapter ${chapter.number}.`,
-        suggestion: `Consider if this is intentional (POV shift) or if the protagonist should be present.`,
+        characterName: protagonistNames,
+        message: `No protagonist${protagonists.length > 1 ? 's' : ''} (${protagonistNames}) appear${protagonists.length > 1 ? '' : 's'} in Chapter ${chapter.number}.`,
+        suggestion: `Consider if this is intentional (POV shift) or if at least one protagonist should be present.`,
         confidence: 0.8
       });
     }
@@ -287,14 +291,56 @@ function checkRelationshipConsistency(
 
 /**
  * Comprehensive consistency check
+ * Enhanced with knowledge graph-based validation
  */
 export function checkConsistency(state: NovelState): ConsistencyReport {
   const issues: ConsistencyIssue[] = [];
+  const graphService = getKnowledgeGraphService();
+  const powerSystem = getPowerLevelSystem();
+  const stateTracker = getEntityStateTracker();
 
-  // 1. Check power level consistency for each character
+  // Initialize graph if needed
+  if (!graphService.getGraph()) {
+    graphService.initializeGraph(state);
+  }
+
+  // 1. Check power level consistency for each character (enhanced with graph)
   state.characterCodex.forEach(character => {
     issues.push(...checkPowerLevelConsistency(character, state.chapters));
     issues.push(...checkStatusConsistency(character, state.chapters));
+    
+    // Enhanced: Check power progression using graph
+    const progression = graphService.getPowerProgression(character.id);
+    if (progression && progression.progression.length > 1) {
+      const lastProg = progression.progression[progression.progression.length - 1];
+      const prevProg = progression.progression[progression.progression.length - 2];
+      const chaptersBetween = lastProg.chapterNumber - prevProg.chapterNumber;
+      
+      const validation = powerSystem.validateProgression(
+        prevProg.powerLevel,
+        lastProg.powerLevel,
+        chaptersBetween,
+        !!lastProg.eventDescription
+      );
+
+      if (!validation.valid) {
+        validation.issues.forEach(issue => {
+          issues.push({
+            type: 'power-regression',
+            severity: 'critical',
+            chapterNumber: lastProg.chapterNumber,
+            characterName: character.name,
+            message: issue,
+            suggestion: 'Review power level progression and ensure it follows established rules.',
+            confidence: 0.9,
+            evidence: [
+              `Previous: ${prevProg.powerLevel} (Ch ${prevProg.chapterNumber})`,
+              `Current: ${lastProg.powerLevel} (Ch ${lastProg.chapterNumber})`,
+            ],
+          });
+        });
+      }
+    }
   });
 
   // 2. Check timeline continuity
@@ -303,8 +349,11 @@ export function checkConsistency(state: NovelState): ConsistencyReport {
   // 3. Check for missing characters
   issues.push(...checkMissingCharacters(state, state.chapters));
 
-  // 4. Check relationship consistency
+  // 4. Check relationship consistency (enhanced with graph)
   issues.push(...checkRelationshipConsistency(state.characterCodex));
+  
+  // Enhanced: Cross-chapter state validation
+  issues.push(...checkCrossChapterStateConsistency(state, graphService, stateTracker));
 
   // Calculate summary
   const critical = issues.filter(i => i.severity === 'critical').length;
@@ -471,6 +520,34 @@ export function checkChapterConsistency(
       confidence: 0.7
     });
   }
+
+  return issues;
+}
+
+/**
+ * Check cross-chapter state consistency using knowledge graph
+ */
+function checkCrossChapterStateConsistency(
+  state: NovelState,
+  graphService: ReturnType<typeof getKnowledgeGraphService>,
+  stateTracker: ReturnType<typeof getEntityStateTracker>
+): ConsistencyIssue[] {
+  const issues: ConsistencyIssue[] = [];
+
+  // Check if entity states are tracked
+  state.characterCodex.forEach(character => {
+    const currentState = stateTracker.getCurrentState('character', character.id);
+    if (!currentState) {
+      issues.push({
+        type: 'character-state-mismatch',
+        severity: 'info',
+        characterName: character.name,
+        message: `Character "${character.name}" has no tracked state history.`,
+        suggestion: 'State tracking will help maintain consistency across chapters.',
+        confidence: 0.5,
+      });
+    }
+  });
 
   return issues;
 }

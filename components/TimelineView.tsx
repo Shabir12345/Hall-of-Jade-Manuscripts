@@ -59,16 +59,16 @@ const TimelineView: React.FC<TimelineViewProps> = ({ novelState }) => {
   }, [novelState.chapters]);
 
   return (
-    <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-16 md:pt-20">
-      <div className="mb-8 border-b border-zinc-700 pb-6">
-        <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Timeline</h2>
+    <div className="p-4 md:p-5 lg:p-6 max-w-4xl mx-auto pt-12 md:pt-16">
+      <div className="mb-6 border-b border-zinc-700 pb-4">
+        <h2 className="text-xl md:text-2xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Timeline</h2>
         <p className="text-sm text-zinc-400 mt-2">Chronological view of story events</p>
       </div>
 
       {timelineItems.length === 0 ? (
-        <div className="py-16 px-8 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
-          <div className="text-6xl mb-4">⏱️</div>
-          <h3 className="text-xl font-fantasy font-bold text-zinc-300 mb-2">No Timeline Data</h3>
+        <div className="py-12 px-6 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
+          <div className="text-4xl mb-3">⏱️</div>
+          <h3 className="text-lg font-fantasy font-bold text-zinc-300 mb-2">No Timeline Data</h3>
           <p className="text-sm text-zinc-500">Chapters and scenes will appear here chronologically.</p>
         </div>
       ) : (

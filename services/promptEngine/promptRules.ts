@@ -79,6 +79,7 @@ export function getPromptRules(state: NovelState): PromptRules {
       'World-building elements must align with established rules',
       'Dialogue should sound natural and reveal character',
       'Pacing should match the story\'s current tension level',
+      'ACCESSIBILITY FOR AGES 10-40: Use clear, everyday language when writing. Prefer common words over rare ones. If you must use a complex word, provide context that makes its meaning clear. Keep sentences clear and direct. Make the text accessible to readers of all ages within this range.',
     ],
   };
 }

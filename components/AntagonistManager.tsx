@@ -1,9 +1,11 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Antagonist, NovelState, AntagonistType, AntagonistStatus } from '../types';
 import { createAntagonist, updateAntagonist, deleteAntagonist } from '../services/antagonistService';
 import { useToast } from '../contexts/ToastContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import AntagonistView from './AntagonistView';
+import ConfirmDialog from './ConfirmDialog';
+import { analyzeAntagonistProgression, analyzeAntagonistGaps } from '../services/antagonistAnalyzer';
 
 interface AntagonistManagerProps {
   novel: NovelState;
@@ -18,8 +20,36 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
   const [filterType, setFilterType] = useState<AntagonistType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<AntagonistStatus | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean; antagonistId: string | null }>({ 
+    isOpen: false, 
+    antagonistId: null 
+  });
+  const [progressionSummaries, setProgressionSummaries] = useState<any[]>([]);
+  const [gaps, setGaps] = useState<any[]>([]);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
   const antagonists = novel.antagonists || [];
+
+  // Load progression analytics
+  useEffect(() => {
+    const loadAnalytics = async () => {
+      if (antagonists.length === 0) return;
+      setLoadingAnalytics(true);
+      try {
+        const [summaries, gapAnalysis] = await Promise.all([
+          analyzeAntagonistProgression(novel.id, antagonists, novel.chapters),
+          analyzeAntagonistGaps(novel.id, novel.chapters, novel.plotLedger)
+        ]);
+        setProgressionSummaries(summaries);
+        setGaps(gapAnalysis);
+      } catch (error) {
+        console.error('Error loading antagonist analytics:', error);
+      } finally {
+        setLoadingAnalytics(false);
+      }
+    };
+    loadAnalytics();
+  }, [novel.id, antagonists.length, novel.chapters.length, novel.plotLedger.length]);
 
   const filteredAntagonists = useMemo(() => {
     return antagonists.filter(ant => {
@@ -77,8 +107,14 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
     }
   }, [novel, antagonists, onUpdate, showSuccess, showError]);
 
-  const handleDelete = useCallback(async (antagonistId: string) => {
-    if (!confirm('Are you sure you want to delete this antagonist?')) return;
+  const handleDeleteClick = useCallback((antagonistId: string) => {
+    setConfirmDelete({ isOpen: true, antagonistId });
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!confirmDelete.antagonistId) return;
+    const antagonistId = confirmDelete.antagonistId;
+    setConfirmDelete({ isOpen: false, antagonistId: null });
     try {
       await deleteAntagonist(antagonistId);
       const updatedNovel = {
@@ -93,10 +129,20 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
     } catch (error: any) {
       showError(error.message || 'Failed to delete antagonist');
     }
-  }, [novel, antagonists, selectedAntagonist, onUpdate, showSuccess, showError]);
+  }, [confirmDelete.antagonistId, novel, antagonists, selectedAntagonist, onUpdate, showSuccess, showError]);
 
   const activeCount = antagonists.filter(a => a.status === 'active').length;
   const hintedCount = antagonists.filter(a => a.status === 'hinted').length;
+  const defeatedCount = antagonists.filter(a => a.status === 'defeated').length;
+  const dormantCount = antagonists.filter(a => a.status === 'dormant').length;
+  
+  // Calculate progression trends
+  const escalatingCount = progressionSummaries.filter(s => s.progressionTrend === 'escalating').length;
+  const resolvedCount = progressionSummaries.filter(s => s.progressionTrend === 'resolved').length;
+  
+  // Get critical gaps
+  const criticalGaps = gaps.filter(g => g.severity === 'critical').length;
+  const warningGaps = gaps.filter(g => g.severity === 'warning').length;
 
   if (selectedAntagonist) {
     return (
@@ -104,7 +150,7 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
         antagonist={selectedAntagonist}
         novel={novel}
         onUpdate={handleUpdate}
-        onDelete={handleDelete}
+        onDelete={handleDeleteClick}
         onBack={() => setSelectedAntagonist(null)}
       />
     );
@@ -129,20 +175,48 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 md:gap-4">
         <div className="bg-zinc-900/60 border border-zinc-700 p-4 md:p-6 rounded-xl">
-          <div className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">Total Opposition</div>
+          <div className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">Total</div>
           <div className="text-2xl md:text-3xl font-bold text-zinc-200">{antagonists.length}</div>
         </div>
         <div className="bg-red-950/20 border border-red-900/40 p-4 md:p-6 rounded-xl">
-          <div className="text-xs text-red-400 uppercase tracking-wider font-semibold mb-2">Active Threats</div>
+          <div className="text-xs text-red-400 uppercase tracking-wider font-semibold mb-2">Active</div>
           <div className="text-2xl md:text-3xl font-bold text-red-500">{activeCount}</div>
         </div>
         <div className="bg-yellow-950/20 border border-yellow-900/40 p-4 md:p-6 rounded-xl">
-          <div className="text-xs text-yellow-400 uppercase tracking-wider font-semibold mb-2">Foreshadowed</div>
+          <div className="text-xs text-yellow-400 uppercase tracking-wider font-semibold mb-2">Hinted</div>
           <div className="text-2xl md:text-3xl font-bold text-yellow-500">{hintedCount}</div>
         </div>
+        <div className="bg-zinc-800/40 border border-zinc-700 p-4 md:p-6 rounded-xl">
+          <div className="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-2">Defeated</div>
+          <div className="text-2xl md:text-3xl font-bold text-zinc-300">{defeatedCount}</div>
+        </div>
+        <div className="bg-blue-950/20 border border-blue-900/40 p-4 md:p-6 rounded-xl">
+          <div className="text-xs text-blue-400 uppercase tracking-wider font-semibold mb-2">Escalating</div>
+          <div className="text-2xl md:text-3xl font-bold text-blue-500">{escalatingCount}</div>
+        </div>
+        <div className="bg-orange-950/20 border border-orange-900/40 p-4 md:p-6 rounded-xl">
+          <div className="text-xs text-orange-400 uppercase tracking-wider font-semibold mb-2">Gaps</div>
+          <div className="text-2xl md:text-3xl font-bold text-orange-500">
+            {criticalGaps > 0 ? (
+              <span className="text-red-500">{criticalGaps}</span>
+            ) : (
+              warningGaps
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* Gap Warnings */}
+      {criticalGaps > 0 && (
+        <div className="bg-red-950/40 border border-red-900/60 rounded-xl p-4 md:p-6">
+          <div className="font-fantasy font-bold text-red-400 mb-2 text-lg">⚠️ Critical Gaps Detected</div>
+          <div className="text-red-300 text-sm">
+            {criticalGaps} chapter{criticalGaps !== 1 ? 's' : ''} lack active antagonists. This may weaken narrative tension.
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-zinc-900/60 border border-zinc-700 p-4 md:p-6 rounded-xl space-y-4">
@@ -190,7 +264,7 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
       <div className="space-y-3">
         {filteredAntagonists.length === 0 ? (
           <div className="bg-zinc-900/60 border-2 border-dashed border-zinc-700 p-12 rounded-2xl text-center">
-            <div className="text-5xl mb-4">⚔️</div>
+            <div className="text-4xl mb-3">⚔️</div>
             <h3 className="text-lg font-fantasy font-bold text-zinc-300 mb-2">No Opposition Recorded</h3>
             <p className="text-sm text-zinc-500">
               {antagonists.length === 0 
@@ -249,7 +323,7 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
                       <span className="font-semibold text-zinc-400">Motivation:</span> {antagonist.motivation}
                     </p>
                   )}
-                  <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500">
+                  <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500 flex-wrap">
                     <span>Scope: <span className="text-zinc-400 font-semibold">{antagonist.durationScope}</span></span>
                     {antagonist.firstAppearedChapter && (
                       <span>First: <span className="text-zinc-400 font-semibold">Ch {antagonist.firstAppearedChapter}</span></span>
@@ -260,6 +334,25 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
                     {antagonist.powerLevel && (
                       <span>Power: <span className="text-zinc-400 font-semibold">{antagonist.powerLevel}</span></span>
                     )}
+                    {(() => {
+                      const summary = progressionSummaries.find(s => s.antagonistId === antagonist.id);
+                      if (summary) {
+                        const trendColors = {
+                          escalating: 'text-red-400',
+                          declining: 'text-blue-400',
+                          stable: 'text-zinc-400',
+                          resolved: 'text-green-400'
+                        };
+                        return (
+                          <span>
+                            Trend: <span className={`font-semibold ${trendColors[summary.progressionTrend] || 'text-zinc-400'}`}>
+                              {summary.progressionTrend}
+                            </span>
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
               </div>
@@ -267,6 +360,16 @@ const AntagonistManager: React.FC<AntagonistManagerProps> = ({ novel, onUpdate }
           ))
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmDelete.isOpen}
+        title="Delete Antagonist"
+        message="Are you sure you want to delete this antagonist?"
+        variant="danger"
+        confirmText="Delete"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setConfirmDelete({ isOpen: false, antagonistId: null })}
+      />
     </div>
   );
 };

@@ -324,3 +324,87 @@ export interface UpdateHighlightInput {
   color?: string;
   note?: string;
 }
+
+/**
+ * Editorial Quality & Originality Integration Types
+ */
+
+/**
+ * Editorial Signal Category
+ * Categories for organizing editorial feedback
+ */
+export type EditorialSignalCategory = 
+  | 'narrative_authenticity' 
+  | 'voice_consistency' 
+  | 'structural_balance' 
+  | 'dialogue_naturalness' 
+  | 'originality_craft' 
+  | 'emotional_credibility';
+
+/**
+ * Editorial Signal Severity
+ * Severity levels for editorial signals
+ */
+export type EditorialSignalSeverity = 'info' | 'suggestion' | 'concern' | 'issue';
+
+/**
+ * Editorial Signal
+ * Represents a single editorial quality signal/observation
+ */
+export interface EditorialSignal {
+  id: string;
+  category: EditorialSignalCategory;
+  severity: EditorialSignalSeverity;
+  title: string;
+  description: string;
+  location?: TextRange;
+  chapterId?: string;
+  chapterNumber?: number;
+  suggestion?: string;
+  score?: number; // 0-100
+  threshold?: number; // Threshold for this metric
+  context?: string;
+}
+
+/**
+ * Editorial Review
+ * Complete review result for a chapter or arc
+ */
+export interface EditorialReview {
+  chapterId?: string;
+  arcId?: string;
+  signals: EditorialSignal[];
+  overallScore: number; // Weighted average (0-100)
+  summary: string;
+  strengths: string[];
+  recommendations: string[];
+  reviewedAt: number;
+  reviewedBy: 'system' | 'user';
+}
+
+/**
+ * Arc Editorial Review
+ * Extended review for an entire arc with cross-chapter analysis
+ */
+export interface ArcEditorialReview extends EditorialReview {
+  arcId: string;
+  chapterReviews: Map<string, EditorialReview>;
+  crossChapterIssues: EditorialSignal[];
+  arcLevelMetrics: {
+    voiceConsistency: number; // 0-100
+    emotionalVariation: number; // 0-100
+    sceneVariety: number; // 0-100
+    characterDevelopmentConsistency: number; // 0-100
+    pacingBalance: number; // 0-100
+  };
+}
+
+/**
+ * Editorial Review Options
+ * Options for running editorial reviews
+ */
+export interface EditorialReviewOptions {
+  onProgress?: (phase: string, progress?: number) => void;
+  includeCache?: boolean; // Whether to use cached results
+  previousMetrics?: any; // Previous metrics for comparison
+}

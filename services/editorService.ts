@@ -307,7 +307,7 @@ export async function triggerEditorReview(
     let updatedChapters: Chapter[] = [];
     
     if (autoFixable.length > 0) {
-      const result = applyAutoFixes(chaptersAnalyzed, autoFixable);
+      const result = await applyAutoFixes(chaptersAnalyzed, autoFixable);
       updatedChapters = result.updatedChapters;
       appliedAutoFixes = result.appliedFixes;
       failedAutoFixes = result.failedFixes;
@@ -464,11 +464,11 @@ export async function triggerEditorReview(
 /**
  * Applies approved fixes to chapters
  */
-export function applyApprovedFixes(
+export async function applyApprovedFixes(
   chapters: Chapter[],
   approvedFixes: EditorFix[]
-): { updatedChapters: Chapter[]; appliedFixes: EditorFix[]; failedFixes: EditorFix[] } {
-  return applyAutoFixes(chapters, approvedFixes);
+): Promise<{ updatedChapters: Chapter[]; appliedFixes: EditorFix[]; failedFixes: EditorFix[] }> {
+  return await applyAutoFixes(chapters, approvedFixes);
 }
 
 /**

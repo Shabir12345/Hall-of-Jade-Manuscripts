@@ -62,6 +62,8 @@ function determineArcTier(arcIndex: number, totalCompletedArcs: number): 'recent
  */
 // Cache for logged warnings to prevent spam
 const arcWarningCache = new WeakMap<Arc, boolean>();
+// Cache for arc chapter logging to prevent excessive logs
+const arcChapterLogCache = new WeakMap<Arc, { chapters: number[]; timestamp: number }>();
 
 export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]): Chapter[] {
   if (allChapters.length === 0) {
@@ -105,8 +107,8 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
       startChapter = 1;
     }
     
-    // Only log once per arc to avoid spam
-    if (!arcWarningCache.get(arc)) {
+    // Only log once per arc to avoid spam (and only in development)
+    if (!arcWarningCache.get(arc) && process.env.NODE_ENV === 'development') {
       console.warn(`Arc "${arc.title}" has no startedAtChapter. Inferred start as chapter ${startChapter}.`);
       arcWarningCache.set(arc, true);
     }
@@ -230,12 +232,22 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
       return ch.number >= actualStart;
     });
     
-    // Debug logging for troubleshooting
+    // Debug logging for troubleshooting (throttled to prevent spam)
     if (process.env.NODE_ENV === 'development') {
-      if (filtered.length === 0 && sortedChapters.length > 0) {
-        console.warn(`Arc "${arc.title}" (start: ${startChapter}, actualStart: ${actualStart}, actualEnd: ${actualEnd}) returned no chapters. Available chapters: ${sortedChapters.map(ch => ch.number).join(', ')}`);
-      } else if (filtered.length > 0) {
-        console.log(`Arc "${arc.title}" found ${filtered.length} chapters: ${filtered.map(ch => ch.number).join(', ')} (start: ${startChapter}, actualStart: ${actualStart}, actualEnd: ${actualEnd})`);
+      const chapterNumbers = filtered.map(ch => ch.number);
+      const cached = arcChapterLogCache.get(arc);
+      const now = Date.now();
+      const shouldLog = !cached || 
+                       JSON.stringify(cached.chapters) !== JSON.stringify(chapterNumbers) ||
+                       (now - cached.timestamp) > 5000; // Log at most once every 5 seconds
+      
+      if (shouldLog) {
+        if (filtered.length === 0 && sortedChapters.length > 0) {
+          console.warn(`Arc "${arc.title}" (start: ${startChapter}, actualStart: ${actualStart}, actualEnd: ${actualEnd}) returned no chapters. Available chapters: ${sortedChapters.map(ch => ch.number).join(', ')}`);
+        } else if (filtered.length > 0) {
+          console.log(`Arc "${arc.title}" found ${filtered.length} chapters: ${chapterNumbers.join(', ')} (start: ${startChapter}, actualStart: ${actualStart}, actualEnd: ${actualEnd})`);
+        }
+        arcChapterLogCache.set(arc, { chapters: chapterNumbers, timestamp: now });
       }
     }
     

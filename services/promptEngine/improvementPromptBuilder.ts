@@ -155,6 +155,10 @@ Your task is to improve the chapter while:
 3. Keeping character consistency
 4. Addressing the specific improvement goals
 5. Maintaining high literary quality
+6. Using clear, accessible language for readers aged 10-40 (prefer common words over rare ones, explain complex concepts simply, keep sentences clear and direct)
+
+ACCESSIBILITY FOR AGES 10-40:
+When improving the chapter, use clear, everyday language. Prefer common words over rare or complex ones. If you must use a complex word, provide context that makes its meaning clear. Keep sentences clear and direct. Make the improved text understandable to readers of all ages within this range while maintaining professional quality.
 
 Apply improvements thoughtfully and naturally - they should feel like they were always part of the chapter, not added on.`;
 }

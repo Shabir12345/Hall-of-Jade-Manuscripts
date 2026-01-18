@@ -8,6 +8,11 @@ export interface Toast {
   type: ToastType;
   duration?: number;
   timestamp: number;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
+  details?: string;
 }
 
 interface ToastContextType {
@@ -74,10 +79,10 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   }, []);
 
   const showToast = useCallback(
-    (message: string, type: ToastType = 'info', duration: number = 5000) => {
+    (message: string, type: ToastType = 'info', duration: number = 5000, action?: Toast['action'], details?: string) => {
       const id = crypto.randomUUID();
       const timestamp = Date.now();
-      const toast: Toast = { id, message, type, duration, timestamp };
+      const toast: Toast = { id, message, type, duration, timestamp, action, details };
 
       // Add to temporary toasts (for immediate display if needed)
       setToasts((prev) => [...prev, toast]);
@@ -96,22 +101,22 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   );
 
   const showSuccess = useCallback(
-    (message: string, duration?: number) => showToast(message, 'success', duration),
+    (message: string, duration?: number, action?: Toast['action']) => showToast(message, 'success', duration, action),
     [showToast]
   );
 
   const showError = useCallback(
-    (message: string, duration?: number) => showToast(message, 'error', duration || 7000),
+    (message: string, duration?: number, action?: Toast['action'], details?: string) => showToast(message, 'error', duration || 7000, action, details),
     [showToast]
   );
 
   const showWarning = useCallback(
-    (message: string, duration?: number) => showToast(message, 'warning', duration),
+    (message: string, duration?: number, action?: Toast['action']) => showToast(message, 'warning', duration, action),
     [showToast]
   );
 
   const showInfo = useCallback(
-    (message: string, duration?: number) => showToast(message, 'info', duration),
+    (message: string, duration?: number, action?: Toast['action']) => showToast(message, 'info', duration, action),
     [showToast]
   );
 

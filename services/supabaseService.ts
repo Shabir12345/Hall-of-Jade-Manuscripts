@@ -1,11 +1,14 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { NovelState, Character, Scene, NovelItem, NovelTechnique, CharacterItemPossession, CharacterTechniqueMastery, Antagonist, ForeshadowingElement, SymbolicElement, EmotionalPayoffMoment, SubtextElement } from '../types';
+import { NovelState, Character, Scene, NovelItem, NovelTechnique, CharacterItemPossession, CharacterTechniqueMastery, Antagonist, ForeshadowingElement, SymbolicElement, EmotionalPayoffMoment, SubtextElement, StoryThread } from '../types';
 import { EditorReport, EditorFix, RecurringIssuePattern, PatternOccurrence } from '../types/editor';
-import { SUPABASE_CONFIG } from '../config/supabase';
+import { SUPABASE_CONFIG, AUTHENTICATION_ENABLED } from '../config/supabase';
 import { withRetry, isRetryableError, AppError } from '../utils/errorHandling';
 import { fetchAntagonists } from './antagonistService';
+import { fetchSystems } from './systemService';
+import { fetchStoryThreads } from './threadService';
 import { logger } from './loggingService';
 import { queryCache } from './queryCache';
+import { isJsonChapterContent, extractChapterContent, extractChapterMetadata } from '../utils/chapterContentRepair';
 
 // Singleton pattern to prevent multiple GoTrueClient instances
 let supabaseInstance: SupabaseClient | null = null;
@@ -287,6 +290,28 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
           // Continue without antagonists if fetch fails
         }
 
+        // Fetch character systems - wrap in try-catch in case tables don't exist yet
+        let characterSystems: CharacterSystem[] = [];
+        try {
+          characterSystems = await fetchSystems(novelId);
+        } catch (error) {
+          logger.warn('Failed to fetch character systems (tables may not exist yet)', 'supabase', {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          // Continue without systems if fetch fails
+        }
+
+        // Fetch story threads - wrap in try-catch in case tables don't exist yet
+        let storyThreads: StoryThread[] = [];
+        try {
+          storyThreads = await fetchStoryThreads(novelId);
+        } catch (error) {
+          logger.warn('Failed to fetch story threads (tables may not exist yet)', 'supabase', {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          // Continue without threads if fetch fails
+        }
+
         // Fetch narrative elements - wrap in try-catch in case tables don't exist yet
         let foreshadowingElements: ForeshadowingElement[] = [];
         let symbolicElements: SymbolicElement[] = [];
@@ -549,16 +574,36 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
             updatedAt: timestampToNumber(nt.updated_at || nt.created_at),
           })),
           characterCodex: Array.from(characterMap.values()),
-          chapters: chaptersRows.map((c) => ({
-            id: c.id,
-            number: c.number,
-            title: c.title,
-            content: c.content,
-            summary: c.summary || '',
-            logicAudit: (c.logic_audit as NovelState['chapters'][0]['logicAudit']) || undefined,
-            scenes: scenesByChapter.get(c.id) || [],
-            createdAt: timestampToNumber(c.created_at),
-          })),
+          chapters: chaptersRows.map((c) => {
+            // Auto-repair JSON chapter content on load (bug fix)
+            let content = c.content;
+            let title = c.title;
+            let summary = c.summary || '';
+            let logicAudit = (c.logic_audit as NovelState['chapters'][0]['logicAudit']) || undefined;
+            
+            if (isJsonChapterContent(content)) {
+              const actualContent = extractChapterContent(content);
+              const metadata = extractChapterMetadata(content);
+              if (actualContent) {
+                logger.warn(`Auto-repairing Chapter ${c.number} with JSON content on load`, 'supabase');
+                content = actualContent;
+                title = title || metadata?.title || title;
+                summary = summary || metadata?.summary || summary;
+                logicAudit = logicAudit || metadata?.logicAudit;
+              }
+            }
+            
+            return {
+              id: c.id,
+              number: c.number,
+              title,
+              content,
+              summary,
+              logicAudit,
+              scenes: scenesByChapter.get(c.id) || [],
+              createdAt: timestampToNumber(c.created_at),
+            };
+          }),
           plotLedger: arcsRows.map((a) => ({
             id: a.id,
             title: a.title,
@@ -594,6 +639,8 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
             updatedAt: timestampToNumber(g.updated_at),
           })),
           antagonists: antagonists,
+          characterSystems: characterSystems,
+          storyThreads: storyThreads,
           foreshadowingElements: foreshadowingElements,
           symbolicElements: symbolicElements,
           emotionalPayoffs: emotionalPayoffs,
@@ -665,6 +712,37 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         ? novel.currentRealmId
         : null;
     
+    // Auto-repair chapters with JSON content (bug fix: extract chapterContent from malformed saves)
+    const chaptersWithJsonContent = novel.chapters.filter(c => isJsonChapterContent(c.content));
+    if (chaptersWithJsonContent.length > 0) {
+      logger.warn('Detected chapters with JSON content, auto-repairing', 'supabase', {
+        chapterNumbers: chaptersWithJsonContent.map(c => c.number),
+      });
+      
+      // Auto-repair the chapters
+      novel = {
+        ...novel,
+        chapters: novel.chapters.map(chapter => {
+          if (isJsonChapterContent(chapter.content)) {
+            const actualContent = extractChapterContent(chapter.content);
+            const metadata = extractChapterMetadata(chapter.content);
+            
+            if (actualContent) {
+              logger.info(`Auto-repaired Chapter ${chapter.number}: extracted ${actualContent.length} chars from JSON`, 'supabase');
+              return {
+                ...chapter,
+                content: actualContent,
+                title: chapter.title || metadata?.title || chapter.title,
+                summary: chapter.summary || metadata?.summary || chapter.summary,
+                logicAudit: chapter.logicAudit || metadata?.logicAudit,
+              };
+            }
+          }
+          return chapter;
+        }),
+      };
+    }
+    
     // Validate chapters have positive numbers
     const invalidChapters = novel.chapters.filter(c => c.number <= 0);
     if (invalidChapters.length > 0) {
@@ -727,6 +805,14 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
       supabase.from('antagonists').select('id').eq('novel_id', novelId),
       (async () => {
         try {
+          const res = await supabase.from('story_threads').select('id').eq('novel_id', novelId);
+          return res;
+        } catch {
+          return { data: [], error: null };
+        }
+      })(),
+      (async () => {
+        try {
           const res = await supabase.from('foreshadowing_elements').select('id').eq('novel_id', novelId);
           return res;
         } catch {
@@ -771,10 +857,11 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     const existingTags = results[8].status === 'fulfilled' && results[8].value.data ? results[8].value.data : [];
     const existingWritingGoals = results[9].status === 'fulfilled' && results[9].value.data ? results[9].value.data : [];
     const existingAntagonists = results[10].status === 'fulfilled' && results[10].value.data ? results[10].value.data : [];
-    const existingForeshadowing = results[11].status === 'fulfilled' && results[11].value.data ? results[11].value.data : [];
-    const existingSymbolic = results[12].status === 'fulfilled' && results[12].value.data ? results[12].value.data : [];
-    const existingEmotionalPayoffs = results[13].status === 'fulfilled' && results[13].value.data ? results[13].value.data : [];
-    const existingSubtext = results[14].status === 'fulfilled' && results[14].value.data ? results[14].value.data : [];
+    const existingStoryThreads = results[11].status === 'fulfilled' && results[11].value.data ? results[11].value.data : [];
+    const existingForeshadowing = results[12].status === 'fulfilled' && results[12].value.data ? results[12].value.data : [];
+    const existingSymbolic = results[13].status === 'fulfilled' && results[13].value.data ? results[13].value.data : [];
+    const existingEmotionalPayoffs = results[14].status === 'fulfilled' && results[14].value.data ? results[14].value.data : [];
+    const existingSubtext = results[15].status === 'fulfilled' && results[15].value.data ? results[15].value.data : [];
 
     // For realms: need to handle unique constraint on (novel_id, name)
     // The database has a unique constraint: realms_novel_name_unique on (novel_id, name)
@@ -803,6 +890,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     const currentTagIds = new Set(novel.tags.map(t => t.id));
     const currentWritingGoalIds = new Set(novel.writingGoals.map(g => g.id));
     const currentAntagonistIds = new Set((novel.antagonists || []).map((a: Antagonist) => a.id));
+    const currentStoryThreadIds = new Set((novel.storyThreads || []).map((t: StoryThread) => t.id));
     const currentForeshadowingIds = new Set((novel.foreshadowingElements || []).map(f => f.id));
     const currentSymbolicIds = new Set((novel.symbolicElements || []).map(s => s.id));
     const currentEmotionalPayoffIds = new Set((novel.emotionalPayoffs || []).map(e => e.id));
@@ -863,6 +951,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     const tagIdsToDelete = (existingTags || []).map((t: any) => t.id).filter((id: string) => !currentTagIds.has(id));
     const writingGoalIdsToDelete = (existingWritingGoals || []).map((g: any) => g.id).filter((id: string) => !currentWritingGoalIds.has(id));
     const antagonistIdsToDelete = (existingAntagonists || []).map((a: any) => a.id).filter((id: string) => !currentAntagonistIds.has(id));
+    const storyThreadIdsToDelete = (existingStoryThreads || []).map((t: any) => t.id).filter((id: string) => !currentStoryThreadIds.has(id));
     const foreshadowingIdsToDelete = (existingForeshadowing || []).map((f: any) => f.id).filter((id: string) => !currentForeshadowingIds.has(id));
     const symbolicIdsToDelete = (existingSymbolic || []).map((s: any) => s.id).filter((id: string) => !currentSymbolicIds.has(id));
     const emotionalPayoffIdsToDelete = (existingEmotionalPayoffs || []).map((e: any) => e.id).filter((id: string) => !currentEmotionalPayoffIds.has(id));
@@ -1044,15 +1133,36 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     }
 
     // Helper function to normalize character status to match database constraint
+    // Handles complex status strings like "Alive (injured)", "Deceased or Captured", etc.
     const normalizeCharacterStatus = (status: string | undefined | null): 'Alive' | 'Deceased' | 'Unknown' => {
       if (!status) return 'Unknown';
       const normalized = status.trim();
       // Case-insensitive matching
       const lower = normalized.toLowerCase();
+      
+      // Exact matches first
       if (lower === 'alive') return 'Alive';
       if (lower === 'deceased' || lower === 'dead') return 'Deceased';
       if (lower === 'unknown') return 'Unknown';
-      // Default to 'Unknown' if value doesn't match
+      
+      // Handle complex status strings with parenthetical details
+      // e.g., "Alive (freed from veil)", "Alive (injured, embedded in jade)", etc.
+      if (lower.startsWith('alive')) return 'Alive';
+      
+      // Handle deceased variations
+      if (lower.startsWith('deceased') || lower.startsWith('dead')) return 'Deceased';
+      
+      // Handle "Captured" as a special case - treat as Unknown since fate is uncertain
+      if (lower === 'captured' || lower.includes('captured')) return 'Unknown';
+      
+      // Handle "Missing" or similar uncertain statuses
+      if (lower === 'missing' || lower.includes('missing')) return 'Unknown';
+      
+      // Handle compound statuses like "Deceased or Captured"
+      if (lower.includes('deceased') || lower.includes('dead')) return 'Deceased';
+      if (lower.includes('alive')) return 'Alive';
+      
+      // Default to 'Unknown' if value doesn't match any pattern
       logger.warn('Invalid character status, defaulting to Unknown', 'supabase', {
         invalidStatus: status
       });
@@ -1206,8 +1316,20 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         }
         // Use upsert for tables with unique constraints to avoid 409 conflicts
         if (possessionsInserts.length > 0) {
-          await supabase.from('character_item_possessions')
-            .upsert(possessionsInserts, { onConflict: 'character_id,item_id' });
+          try {
+            const { error } = await supabase.from('character_item_possessions')
+              .upsert(possessionsInserts, { onConflict: 'character_id,item_id' });
+            if (error && error.code !== '23505') { // 23505 is unique_violation, which upsert should handle
+              console.warn('Error upserting character_item_possessions:', error.message);
+            }
+          } catch (error) {
+            // Handle 409 conflicts gracefully - they're expected in race conditions
+            if (error instanceof Error && error.message.includes('409')) {
+              console.warn('Conflict when upserting character_item_possessions (expected in race conditions)');
+            } else {
+              console.error('Unexpected error upserting character_item_possessions:', error);
+            }
+          }
         }
         if (masteriesInserts.length > 0) {
           try {
@@ -1348,7 +1470,42 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
           })), { onConflict: 'id' });
 
         if (antagonistsError) throw new Error(`Failed to save antagonists: ${antagonistsError.message}`);
+      }
+    }
 
+    // Upsert Story Threads
+    if (novel.storyThreads && novel.storyThreads.length > 0) {
+      const validThreads = novel.storyThreads.filter(t => t.title && t.title.trim() !== '');
+      if (validThreads.length > 0) {
+        const { error: threadsError } = await supabase
+          .from('story_threads')
+          .upsert(validThreads.map(t => ({
+            id: t.id,
+            novel_id: novelId,
+            title: t.title.trim(),
+            type: t.type,
+            status: t.status,
+            priority: t.priority,
+            description: t.description || '',
+            introduced_chapter: t.introducedChapter,
+            last_updated_chapter: t.lastUpdatedChapter,
+            resolved_chapter: t.resolvedChapter || null,
+            related_entity_id: t.relatedEntityId || null,
+            related_entity_type: t.relatedEntityType || null,
+            progression_notes: t.progressionNotes || [],
+            resolution_notes: t.resolutionNotes || null,
+            satisfaction_score: t.satisfactionScore || null,
+            chapters_involved: t.chaptersInvolved || [],
+          })), { onConflict: 'id' });
+
+        if (threadsError) throw new Error(`Failed to save story threads: ${threadsError.message}`);
+      }
+    }
+
+    // Upsert Antagonists (continued)
+    if (novel.antagonists && novel.antagonists.length > 0) {
+      const validAntagonists = novel.antagonists.filter(a => a.name && a.name.trim() !== '');
+      if (validAntagonists.length > 0) {
         // Handle antagonist relationships, arc associations, and group members
         const antagonistIds = validAntagonists.map(a => a.id);
         
@@ -1419,6 +1576,69 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         });
         if (groupMemberInserts.length > 0) {
           await supabase.from('antagonist_groups').insert(groupMemberInserts);
+        }
+      }
+    }
+
+    // Upsert Character Systems
+    if (novel.characterSystems && novel.characterSystems.length > 0) {
+      const validSystems = novel.characterSystems.filter(s => s.name && s.name.trim() !== '');
+      if (validSystems.length > 0) {
+        const systemIds = validSystems.map(s => s.id);
+        
+        // Delete existing features for these systems (will re-insert)
+        await supabase.from('system_features').delete().in('system_id', systemIds);
+
+        // Upsert systems
+        const { error: systemsError } = await supabase
+          .from('character_systems')
+          .upsert(validSystems.map(s => ({
+            id: s.id,
+            novel_id: novelId,
+            character_id: s.characterId,
+            name: s.name.trim(),
+            type: s.type,
+            category: s.category,
+            description: s.description || '',
+            current_level: s.currentLevel || null,
+            current_version: s.currentVersion || null,
+            status: s.status,
+            first_appeared_chapter: s.firstAppearedChapter || null,
+            last_updated_chapter: s.lastUpdatedChapter || null,
+            history: s.history || '',
+            notes: s.notes || '',
+          })), { onConflict: 'id' });
+
+        if (systemsError) throw new Error(`Failed to save character systems: ${systemsError.message}`);
+
+        // Insert features
+        const featureInserts: any[] = [];
+        validSystems.forEach(system => {
+          if (system.features && system.features.length > 0) {
+            system.features.forEach(feature => {
+              featureInserts.push({
+                id: feature.id,
+                system_id: system.id,
+                name: feature.name,
+                description: feature.description || '',
+                category: feature.category || null,
+                unlocked_chapter: feature.unlockedChapter || null,
+                is_active: feature.isActive,
+                level: feature.level || null,
+                strength: feature.strength || null,
+                notes: feature.notes || '',
+              });
+            });
+          }
+        });
+        if (featureInserts.length > 0) {
+          const { error: featuresError } = await supabase
+            .from('system_features')
+            .upsert(featureInserts, { onConflict: 'id' });
+          if (featuresError) {
+            logger.warn('Failed to save system features', 'supabase', featuresError);
+            // Don't throw - features are important but not critical
+          }
         }
       }
     }
@@ -1566,6 +1786,12 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         supabase.from('antagonist_progression').delete().in('antagonist_id', antagonistIdsToDelete)
       );
     }
+    if (storyThreadIdsToDelete.length > 0) {
+      // Progression events will be deleted via CASCADE
+      deletePromises.push(
+        supabase.from('story_threads').delete().in('id', storyThreadIdsToDelete).then(() => null, () => null)
+      );
+    }
     if (foreshadowingIdsToDelete.length > 0) {
       deletePromises.push(
         supabase.from('foreshadowing_elements').delete().in('id', foreshadowingIdsToDelete).then(() => null, () => null)
@@ -1624,7 +1850,6 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     await Promise.all(deletePromises);
 
     // Invalidate cache after successful save
-    const userId = await getCurrentUserId();
     queryCache.invalidate(`novels:${userId || 'anonymous'}`);
     queryCache.invalidate(`novel:${novel.id}:`);
   }, {
@@ -1633,17 +1858,134 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
   });
 };
 
-// Delete a novel
+// Delete a novel and all related data
+// Note: Most tables have ON DELETE CASCADE, so deleting the novel should cascade to all related data
 export const deleteNovel = async (novelId: string): Promise<void> => {
-  const { error } = await supabase
-    .from('novels')
-    .delete()
-    .eq('id', novelId);
+  return withRetry(async () => {
+    // Get current authenticated user ID (returns null if authentication is disabled)
+    const userId = await getCurrentUserId();
+    
+    // Verify novel exists and belongs to user (if auth enabled)
+    if (AUTHENTICATION_ENABLED && userId) {
+      const { data: novel, error: fetchError } = await supabase
+        .from('novels')
+        .select('id, user_id')
+        .eq('id', novelId)
+        .single();
+      
+      if (fetchError) {
+        logger.error('Error fetching novel for deletion', 'supabase', fetchError);
+        throw new AppError('Novel not found', 'NOT_FOUND', 404, false);
+      }
+      
+      if (novel.user_id !== userId) {
+        throw new AppError('Unauthorized to delete this novel', 'AUTH_ERROR', 403, false);
+      }
+    }
+    
+    // Delete the novel - CASCADE will handle all related data
+    const { error } = await supabase
+      .from('novels')
+      .delete()
+      .eq('id', novelId);
+    
+    if (error) {
+      logger.error('Error deleting novel', 'supabase', error);
+      throw new AppError(`Failed to delete novel: ${error.message}`, 'DELETE_ERROR', 500, false);
+    }
+    
+    // Verify novel is deleted using comprehensive verification
+    const verification = await verifyNovelDeletion(novelId);
+    
+    if (verification.novelExists) {
+      logger.error('Novel still exists after deletion attempt', 'supabase', { novelId });
+      throw new AppError('Failed to delete novel - verification failed', 'DELETE_ERROR', 500, false);
+    }
+    
+    // Log if any related data still exists (shouldn't happen with CASCADE, but useful for debugging)
+    const hasRelatedData = Object.values(verification.relatedDataExists).some(count => count > 0);
+    if (hasRelatedData) {
+      logger.warn('Related data still exists after novel deletion (may be expected)', 'supabase', {
+        novelId,
+        relatedData: verification.relatedDataExists
+      });
+    }
+    
+    // Invalidate cache
+    queryCache.invalidate(`novels:${userId || 'anonymous'}`);
+    queryCache.invalidate(`novel:${novelId}:`);
+    
+    logger.info('Novel deleted successfully (CASCADE handled related data)', 'supabase', {
+      novelId,
+      allDeleted: verification.allDeleted
+    });
+  }, {
+    maxRetries: 2,
+    retryable: isRetryableError,
+  });
+};
 
-  if (error) {
-    logger.error('Error deleting novel', 'supabase', error);
-    throw error;
-  }
+/**
+ * Verify that all data related to a novel has been deleted
+ * Useful for testing and debugging deletion issues
+ */
+export const verifyNovelDeletion = async (novelId: string): Promise<{
+  novelExists: boolean;
+  relatedDataExists: {
+    chapters: number;
+    characters: number;
+    realms: number;
+    arcs: number;
+    tags: number;
+    antagonists: number;
+    novelItems: number;
+    novelTechniques: number;
+    improvementHistory: number;
+    foreshadowing: number;
+    symbolic: number;
+    emotionalPayoffs: number;
+  };
+  allDeleted: boolean;
+}> => {
+  const checks = await Promise.all([
+    supabase.from('novels').select('id').eq('id', novelId).single(),
+    supabase.from('chapters').select('id').eq('novel_id', novelId),
+    supabase.from('characters').select('id').eq('novel_id', novelId),
+    supabase.from('realms').select('id').eq('novel_id', novelId),
+    supabase.from('arcs').select('id').eq('novel_id', novelId),
+    supabase.from('tags').select('id').eq('novel_id', novelId),
+    supabase.from('antagonists').select('id').eq('novel_id', novelId),
+    supabase.from('novel_items').select('id').eq('novel_id', novelId),
+    supabase.from('novel_techniques').select('id').eq('novel_id', novelId),
+    supabase.from('improvement_history').select('id').eq('novel_id', novelId),
+    supabase.from('foreshadowing_elements').select('id').eq('novel_id', novelId),
+    supabase.from('symbolic_elements').select('id').eq('novel_id', novelId),
+    supabase.from('emotional_payoffs').select('id').eq('novel_id', novelId),
+  ]);
+  
+  const novelExists = checks[0].data !== null;
+  const relatedDataExists = {
+    chapters: checks[1].data?.length || 0,
+    characters: checks[2].data?.length || 0,
+    realms: checks[3].data?.length || 0,
+    arcs: checks[4].data?.length || 0,
+    tags: checks[5].data?.length || 0,
+    antagonists: checks[6].data?.length || 0,
+    novelItems: checks[7].data?.length || 0,
+    novelTechniques: checks[8].data?.length || 0,
+    improvementHistory: checks[9].data?.length || 0,
+    foreshadowing: checks[10].data?.length || 0,
+    symbolic: checks[11].data?.length || 0,
+    emotionalPayoffs: checks[12].data?.length || 0,
+  };
+  
+  const allDeleted = !novelExists && Object.values(relatedDataExists).every(count => count === 0);
+  
+  return {
+    novelExists,
+    relatedDataExists,
+    allDeleted,
+  };
 };
 
 // Delete a chapter
@@ -1941,11 +2283,15 @@ export const saveRecurringPattern = async (pattern: RecurringIssuePattern): Prom
       .select('id')
       .eq('issue_type', pattern.issueType)
       .eq('location', pattern.location)
-      .single();
+      .maybeSingle();
 
-    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 = not found
-      logger.error('Error checking existing pattern', 'supabase', fetchError);
-      throw new Error(`Failed to check existing pattern: ${fetchError.message}`);
+    if (fetchError) {
+      // Only throw if it's not a "not found" error
+      if (fetchError.code !== 'PGRST116') {
+        logger.error('Error checking existing pattern', 'supabase', fetchError);
+        throw new Error(`Failed to check existing pattern: ${fetchError.message}`);
+      }
+      // PGRST116 means not found, which is fine - we'll create/update the pattern
     }
 
     if (existing) {
@@ -2128,16 +2474,21 @@ export const getOrCreatePattern = async (
 ): Promise<RecurringIssuePattern> => {
   return withRetry(async () => {
     // Try to find existing pattern
+    // Use maybeSingle() instead of single() to handle cases where no pattern exists
     const { data: existing, error: fetchError } = await supabase
       .from('recurring_issue_patterns')
       .select('*')
       .eq('issue_type', issueType)
       .eq('location', location)
-      .single();
+      .maybeSingle();
 
-    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 = not found
-      logger.error('Error fetching pattern', 'supabase', fetchError);
-      throw new Error(`Failed to fetch pattern: ${fetchError.message}`);
+    if (fetchError) {
+      // Only throw if it's not a "not found" error
+      if (fetchError.code !== 'PGRST116') {
+        logger.error('Error fetching pattern', 'supabase', fetchError);
+        throw new Error(`Failed to fetch pattern: ${fetchError.message}`);
+      }
+      // PGRST116 means not found, which is fine - we'll create a new pattern
     }
 
     if (existing) {
@@ -2226,11 +2577,15 @@ export const incrementPatternCount = async (patternId: string): Promise<void> =>
         .from('recurring_issue_patterns')
         .select('occurrence_count')
         .eq('id', patternId)
-        .single();
+        .maybeSingle();
 
       if (fetchError) {
         logger.error('Error fetching pattern for increment', 'supabase', fetchError);
         throw new Error(`Failed to increment pattern count: ${fetchError.message}`);
+      }
+      
+      if (!pattern) {
+        throw new Error(`Pattern with id ${patternId} not found`);
       }
 
       const { error: updateError } = await supabase

@@ -1,9 +1,66 @@
 import React, { memo, useMemo, lazy, Suspense, useState } from 'react';
 import { NovelState } from '../types';
 import { calculateWordCounts, calculatePacingMetrics, calculateWritingVelocity, calculateNarrativeQualityMetrics } from '../services/analyticsService';
-const EditorReportsView = lazy(() => import('./EditorReportsView'));
+import { PromptCacheDashboard } from './PromptCacheDashboard';
 
-const AntagonistTracker = lazy(() => import('./AntagonistTracker'));
+// Helper to safely convert any value to a string
+function safeToString(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  
+  if (value instanceof Error) {
+    return value.message || 'Error (no message)';
+  }
+  
+  // For objects, try JSON.stringify with circular reference handling
+  try {
+    const seen = new WeakSet();
+    return JSON.stringify(value, (key, val) => {
+      if (typeof val === 'object' && val !== null) {
+        if (seen.has(val)) return '[Circular]';
+        seen.add(val);
+      }
+      return val;
+    });
+  } catch {
+    // If JSON.stringify fails, try basic toString
+    try {
+      return String(value);
+    } catch {
+      return '[Unable to convert to string]';
+    }
+  }
+}
+
+// Helper to safely wrap lazy imports with error handling
+function safeLazyImport<T extends React.ComponentType<any>>(
+  importFn: () => Promise<{ default: T }>
+) {
+  return lazy(() => {
+    return importFn().catch((error) => {
+      // DO NOT call console.error here - React's lazy loader will try to log it
+      // and if we pass an object that can't be converted, it will crash
+      // Instead, silently return a fallback component
+      
+      // Return a fallback component
+      const FallbackComponent: React.FC = () => (
+        <div className="p-6 bg-red-950/40 border border-red-900/60 rounded-xl">
+          <h2 className="text-xl font-bold text-red-400 mb-2">Component Failed to Load</h2>
+          <p className="text-red-300">Please refresh the page to try again.</p>
+        </div>
+      );
+      
+      return {
+        default: FallbackComponent as T
+      };
+    });
+  });
+}
+
+const EditorReportsView = safeLazyImport(() => import('./EditorReportsView'));
+const AntagonistTracker = safeLazyImport(() => import('./AntagonistTracker'));
 
 interface ProgressDashboardProps {
   novelState: NovelState;
@@ -20,10 +77,15 @@ const ProgressDashboard: React.FC<ProgressDashboardProps> = ({ novelState }) => 
   const qualityMetrics = useMemo(() => calculateNarrativeQualityMetrics(novelState), [novelState]);
 
   return (
-    <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto pt-16 md:pt-20">
-      <div className="mb-8 border-b border-zinc-700 pb-6">
-        <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Progress Dashboard</h2>
+    <div className="p-4 md:p-5 lg:p-6 max-w-6xl mx-auto pt-12 md:pt-16">
+      <div className="mb-6 border-b border-zinc-700 pb-4">
+        <h2 className="text-xl md:text-2xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Progress Dashboard</h2>
         <p className="text-sm text-zinc-400 mt-2">Comprehensive analytics and progress tracking</p>
+      </div>
+
+      {/* Prompt Cache Performance */}
+      <div className="mb-8">
+        <PromptCacheDashboard />
       </div>
 
       <div className={`grid grid-cols-1 md:grid-cols-2 ${novelState.antagonists && novelState.antagonists.length > 0 ? 'lg:grid-cols-6' : 'lg:grid-cols-4'} gap-6 mb-8`}>

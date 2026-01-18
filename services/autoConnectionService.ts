@@ -185,18 +185,19 @@ export function connectTechniquesToArc(
 
 /**
  * Auto-detect relationships when characters appear together in chapters
+ * Enhanced with relationship type inference from context
  */
 export function detectCharacterRelationships(
   characters: Character[],
   chapters: Chapter[],
-  recentChapterCount: number = 5
+  recentChapterCount: number = 10
 ): Connection[] {
   const connections: Connection[] = [];
 
-  // Get recent chapters
+  // Get recent chapters (or all if fewer than recentChapterCount)
   const recentChapters = chapters
     .sort((a, b) => b.number - a.number)
-    .slice(0, recentChapterCount);
+    .slice(0, Math.max(recentChapterCount, chapters.length));
 
   // Check for character pairs appearing together
   for (let i = 0; i < characters.length; i++) {
@@ -204,12 +205,14 @@ export function detectCharacterRelationships(
       const char1 = characters[i];
       const char2 = characters[j];
 
-      // Skip if relationship already exists
-      const existingRel = char1.relationships?.find(r => r.targetName === char2.name);
+      // Skip if relationship already exists (check by characterId)
+      const existingRel = char1.relationships?.find(r => r.characterId === char2.id);
       if (existingRel) continue;
 
       let coAppearanceCount = 0;
+      const relationshipContext: Array<{ type: string; confidence: number; chapterNumber: number }> = [];
 
+      // Analyze chapters for relationship context
       for (const chapter of recentChapters) {
         const chapterText = (chapter.content || chapter.summary || '').toLowerCase();
         const char1Present = textContainsCharacterName(chapterText, char1.name);
@@ -217,12 +220,42 @@ export function detectCharacterRelationships(
 
         if (char1Present && char2Present) {
           coAppearanceCount++;
+          
+          // Analyze relationship type from context
+          const context = analyzeRelationshipContext(chapterText, char1.name, char2.name);
+          if (context.type) {
+            relationshipContext.push({
+              type: context.type,
+              confidence: context.confidence,
+              chapterNumber: chapter.number,
+            });
+          }
         }
       }
 
-      // If characters appear together in multiple chapters, suggest relationship
+      // If characters appear together, suggest relationship
       if (coAppearanceCount >= 2) {
-        const confidence = Math.min(0.8, 0.5 + (coAppearanceCount * 0.1));
+        // Determine most likely relationship type
+        const typeScores = new Map<string, number>();
+        relationshipContext.forEach(ctx => {
+          const currentScore = typeScores.get(ctx.type) || 0;
+          typeScores.set(ctx.type, currentScore + ctx.confidence);
+        });
+
+        // Get most likely type (or default to "Acquaintance")
+        let suggestedType = 'Acquaintance';
+        let maxScore = 0;
+        typeScores.forEach((score, type) => {
+          if (score > maxScore) {
+            maxScore = score;
+            suggestedType = type;
+          }
+        });
+
+        // Calculate confidence based on co-appearances and context quality
+        const baseConfidence = Math.min(0.9, 0.5 + (coAppearanceCount * 0.05));
+        const contextBonus = maxScore > 0 ? Math.min(0.2, maxScore / 5) : 0;
+        const confidence = Math.min(0.95, baseConfidence + contextBonus);
 
         connections.push({
           type: 'relationship',
@@ -231,13 +264,123 @@ export function detectCharacterRelationships(
           sourceName: char1.name,
           targetName: char2.name,
           confidence,
-          reason: `Characters appear together in ${coAppearanceCount} recent chapters`
+          reason: `Characters appear together in ${coAppearanceCount} chapter(s). Suggested type: "${suggestedType}" based on context analysis.`
         });
       }
     }
   }
 
   return connections;
+}
+
+/**
+ * Analyze relationship context from text
+ * Detects relationship type based on keywords and proximity
+ */
+function analyzeRelationshipContext(
+  text: string,
+  char1Name: string,
+  char2Name: string
+): { type: string | null; confidence: number } {
+  const textLower = text.toLowerCase();
+  const char1Lower = normalize(char1Name.toLowerCase());
+  const char2Lower = normalize(char2Name.toLowerCase());
+
+  // Relationship type keywords and their patterns
+  const relationshipPatterns: Array<{ type: string; patterns: RegExp[]; weight: number }> = [
+    {
+      type: 'Enemy',
+      patterns: [
+        /\b(enemy|foe|rival|opponent|nemesis|adversary|hated|despise|loathe|attack|fight|battle|conflict|kill|murder|betray|betrayal)\b/gi,
+        /\b(against|versus|vs|defeat|crush|destroy|eliminate)\b/gi,
+      ],
+      weight: 0.8,
+    },
+    {
+      type: 'Ally',
+      patterns: [
+        /\b(ally|friend|companion|partner|together|cooperate|help|assist|support|side by side|united|alliance)\b/gi,
+      ],
+      weight: 0.7,
+    },
+    {
+      type: 'Mentor',
+      patterns: [
+        /\b(teacher|master|mentor|guide|instructor|teach|taught|learn from|learned from|training|train)\b/gi,
+      ],
+      weight: 0.75,
+    },
+    {
+      type: 'Student',
+      patterns: [
+        /\b(student|disciple|apprentice|pupil|learn|learning|studying|studied under|trained by)\b/gi,
+      ],
+      weight: 0.75,
+    },
+    {
+      type: 'Friend',
+      patterns: [
+        /\b(friend|buddy|companion|close|trust|trusted|loyal|loyalty|bond|friendship)\b/gi,
+      ],
+      weight: 0.6,
+    },
+    {
+      type: 'Lover',
+      patterns: [
+        /\b(love|loved|lover|beloved|romance|romantic|kiss|kissed|marry|married|spouse|husband|wife|heart)\b/gi,
+      ],
+      weight: 0.85,
+    },
+    {
+      type: 'Family',
+      patterns: [
+        /\b(father|mother|parent|son|daughter|child|brother|sister|sibling|uncle|aunt|cousin|family|blood|clan)\b/gi,
+      ],
+      weight: 0.8,
+    },
+    {
+      type: 'Rival',
+      patterns: [
+        /\b(rival|competitor|competition|compete|challenge|challenger|match|equal|contender)\b/gi,
+      ],
+      weight: 0.7,
+    },
+  ];
+
+  // Find sentences where both characters appear
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 10);
+  let maxConfidence = 0;
+  let bestType: string | null = null;
+
+  for (const sentence of sentences) {
+    const sentenceLower = sentence.toLowerCase();
+    const hasChar1 = textContainsCharacterName(sentenceLower, char1Name);
+    const hasChar2 = textContainsCharacterName(sentenceLower, char2Name);
+
+    if (hasChar1 && hasChar2) {
+      // Check for relationship patterns in this sentence
+      for (const patternGroup of relationshipPatterns) {
+        let matches = 0;
+        for (const pattern of patternGroup.patterns) {
+          const patternMatches = (sentenceLower.match(pattern) || []).length;
+          matches += patternMatches;
+        }
+
+        if (matches > 0) {
+          const confidence = Math.min(1, patternGroup.weight * (1 + matches * 0.1));
+          if (confidence > maxConfidence) {
+            maxConfidence = confidence;
+            bestType = patternGroup.type;
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    type: bestType,
+    confidence: maxConfidence,
+  };
 }
 
 /**

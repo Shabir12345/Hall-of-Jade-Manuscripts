@@ -117,8 +117,13 @@ export function createErrorHandler<T extends (...args: any[]) => Promise<any>>(
         getLogger().then(logger => {
           logger.error(`Error in ${context}`, 'errorHandling', error instanceof Error ? error : new Error(String(error)));
         }).catch(() => {
-          // Fallback to console if logger unavailable
-          console.error(`Error in ${context}:`, error);
+          // Fallback to console if logger unavailable - use safe logging
+          try {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`Error in ${context}:`, errorMessage);
+          } catch (e) {
+            console.error(`Error in ${context} (details unavailable)`);
+          }
         });
       }
       throw error;
@@ -127,9 +132,22 @@ export function createErrorHandler<T extends (...args: any[]) => Promise<any>>(
 }
 
 /**
- * Formats error messages for user display
+ * Formats error messages for user display with actionable guidance
  */
+export interface FormattedError {
+  message: string;
+  action?: string;
+  actionLabel?: string;
+  details?: string;
+  retryable?: boolean;
+}
+
 export function formatErrorMessage(error: unknown): string {
+  const formatted = formatErrorWithActions(error);
+  return formatted.message;
+}
+
+export function formatErrorWithActions(error: unknown): FormattedError {
   // Handle Supabase-specific errors
   if (error && typeof error === 'object') {
     const supabaseError = error as Record<string, unknown>;
@@ -138,18 +156,41 @@ export function formatErrorMessage(error: unknown): string {
     if (supabaseError.code) {
       // Common Supabase error codes
       if (supabaseError.code === 'PGRST116' || supabaseError.message?.includes('JWT')) {
-        return 'Supabase authentication failed. Check your VITE_SUPABASE_ANON_KEY in .env.local';
+        return {
+          message: 'Authentication failed. Your Supabase API key may be missing or invalid.',
+          action: 'Check your .env.local file for VITE_SUPABASE_ANON_KEY',
+          actionLabel: 'View Setup Guide',
+          details: 'Ensure VITE_SUPABASE_ANON_KEY is set correctly in your .env.local file.',
+          retryable: false,
+        };
       }
       if (supabaseError.code === '22P02' || supabaseError.message?.includes('invalid input')) {
-        return 'Database validation error. Check your data format.';
+        return {
+          message: 'Invalid data format. Please check your input and try again.',
+          action: 'Review the data you entered',
+          actionLabel: 'Review Data',
+          details: 'The data format doesn\'t match what the database expects.',
+          retryable: true,
+        };
       }
       if (supabaseError.code === '23503' || supabaseError.message?.includes('foreign key')) {
-        return 'Database relationship error. Some referenced data may be missing.';
+        return {
+          message: 'Cannot complete this action. Some required data is missing.',
+          action: 'Check that all referenced items exist',
+          actionLabel: 'Check References',
+          details: 'This item references another item that doesn\'t exist. Please create the referenced item first.',
+          retryable: false,
+        };
       }
       if (supabaseError.message) {
-        return supabaseError.message.length < 200 
+        const message = supabaseError.message.length < 200 
           ? `${supabaseError.message} (Code: ${supabaseError.code})`
           : `Database error (Code: ${supabaseError.code})`;
+        return {
+          message,
+          details: `Error code: ${supabaseError.code}`,
+          retryable: true,
+        };
       }
     }
     
@@ -158,12 +199,24 @@ export function formatErrorMessage(error: unknown): string {
       if (supabaseError.message.includes('Failed to fetch') || 
           supabaseError.message.includes('NetworkError') ||
           supabaseError.message.includes('fetch')) {
-        return 'Cannot connect to Supabase. Check your VITE_SUPABASE_URL and internet connection.';
+        return {
+          message: 'Cannot connect to the server. Please check your internet connection.',
+          action: 'Check your connection and try again',
+          actionLabel: 'Retry',
+          details: 'Verify VITE_SUPABASE_URL is correct and your internet connection is working.',
+          retryable: true,
+        };
       }
       if (supabaseError.message.includes('API key') || 
           supabaseError.message.includes('JWT') ||
           supabaseError.message.includes('Invalid API key')) {
-        return 'Supabase API key is missing or invalid. Check your .env.local file.';
+        return {
+          message: 'API key is missing or invalid. Please check your configuration.',
+          action: 'Check your .env.local file',
+          actionLabel: 'View Setup',
+          details: 'Ensure VITE_SUPABASE_ANON_KEY is set correctly.',
+          retryable: false,
+        };
       }
     }
   }
@@ -171,23 +224,56 @@ export function formatErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     // User-friendly messages for common errors
     if (error.message.includes('API key') || error.message.includes('JWT')) {
-      return 'API key is missing or invalid. Please check your environment variables.';
+      return {
+        message: 'API key is missing or invalid. Please check your environment variables.',
+        action: 'Check your .env.local file',
+        actionLabel: 'View Setup',
+        details: 'Ensure all required environment variables are set correctly.',
+        retryable: false,
+      };
     }
     if (error.message.includes('network') || error.message.includes('fetch')) {
-      return 'Network error. Please check your internet connection and try again.';
+      return {
+        message: 'Network error. Please check your internet connection.',
+        action: 'Check your connection and try again',
+        actionLabel: 'Retry',
+        details: 'Unable to reach the server. Check your internet connection.',
+        retryable: true,
+      };
     }
     if (error.message.includes('429') || error.message.includes('rate limit')) {
-      return 'Rate limit exceeded. Please wait a moment and try again.';
+      return {
+        message: 'Rate limit exceeded. Please wait a moment before trying again.',
+        action: 'Wait a few seconds and try again',
+        actionLabel: 'Retry',
+        details: 'Too many requests. Please wait before retrying.',
+        retryable: true,
+      };
     }
     if (error.message.includes('timeout')) {
-      return 'Request timed out. Please try again.';
+      return {
+        message: 'Request timed out. The server may be slow or unavailable.',
+        action: 'Try again',
+        actionLabel: 'Retry',
+        details: 'The request took too long to complete.',
+        retryable: true,
+      };
     }
     // Return the error message if it's user-friendly
     if (error.message.length < 200) {
-      return error.message;
+      return {
+        message: error.message,
+        retryable: isRetryableError(error),
+      };
     }
   }
-  return 'An unexpected error occurred. Please try again. Check browser console (F12) for details.';
+  return {
+    message: 'An unexpected error occurred. Please try again.',
+    action: 'Check browser console (F12) for details',
+    actionLabel: 'View Details',
+    details: 'If this problem persists, please check the browser console for more information.',
+    retryable: true,
+  };
 }
 
 /**

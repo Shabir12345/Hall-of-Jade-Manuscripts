@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useCallback, useMemo } from 'react';
 import { ViewType } from '../types';
-import { useNovel } from './NovelContext';
+import { useNovelData } from './NovelDataContext';
+import { useNovelActions } from './NovelActionsContext';
 
 export type NavigationTarget = 
   | { type: 'view'; view: ViewType }
@@ -9,6 +10,7 @@ export type NavigationTarget =
   | { type: 'arc'; arcId: string; novelId?: string }
   | { type: 'world-entry'; entryId: string; novelId?: string }
   | { type: 'antagonist'; antagonistId: string; novelId?: string }
+  | { type: 'system'; systemId: string; novelId?: string }
   | { type: 'scene'; sceneId: string; chapterId: string; novelId?: string };
 
 interface NavigationContextType {
@@ -18,6 +20,7 @@ interface NavigationContextType {
   navigateToArc: (arcId: string, novelId?: string) => void;
   navigateToWorldEntry: (entryId: string, novelId?: string) => void;
   navigateToAntagonist: (antagonistId: string, novelId?: string) => void;
+  navigateToSystem: (systemId: string, novelId?: string) => void;
   navigateToScene: (sceneId: string, chapterId: string, novelId?: string) => void;
   navigateToView: (view: ViewType) => void;
   // Helper to get entity details for display
@@ -73,14 +76,9 @@ interface NavigationProviderProps {
 }
 
 export const NavigationProvider: React.FC<NavigationProviderProps> = ({ children }) => {
-  const {
-    activeNovelId,
-    setActiveNovelId,
-    setView,
-    setActiveChapterId,
-    activeNovel,
-    library,
-  } = useNovel();
+  // Use split contexts for better performance - data won't cause re-renders when actions change
+  const { activeNovelId, activeNovel, library } = useNovelData();
+  const { setActiveNovelId, setView, setActiveChapterId } = useNovelActions();
 
   const navigate = useCallback((target: NavigationTarget) => {
     // Handle novel switching if needed
@@ -144,6 +142,11 @@ export const NavigationProvider: React.FC<NavigationProviderProps> = ({ children
         setActiveChapterId(null);
         break;
 
+      case 'system':
+        setView('character-systems');
+        setActiveChapterId(null);
+        break;
+
       case 'scene': {
         // Navigate to chapter editor and highlight the scene
         const novel = target.novelId 
@@ -181,6 +184,10 @@ export const NavigationProvider: React.FC<NavigationProviderProps> = ({ children
 
   const navigateToAntagonist = useCallback((antagonistId: string, novelId?: string) => {
     navigate({ type: 'antagonist', antagonistId, novelId });
+  }, [navigate]);
+
+  const navigateToSystem = useCallback((systemId: string, novelId?: string) => {
+    navigate({ type: 'system', systemId, novelId });
   }, [navigate]);
 
   const navigateToScene = useCallback((sceneId: string, chapterId: string, novelId?: string) => {

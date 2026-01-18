@@ -1,5 +1,5 @@
 /**
- * Rate Limiter and Request Queue for Gemini API
+ * Rate Limiter and Request Queue for LLM API
  * Prevents exceeding rate limits and manages concurrent requests
  */
 

@@ -35,10 +35,38 @@ export interface StoryStructureAnalysis {
   detectedBeats: StoryBeat[];
   overallStructureScore: number; // 0-100
   recommendations: string[];
+  // Content-aware metrics
+  contentMetrics?: ContentStructureMetrics;
+}
+
+/**
+ * Content-aware structure metrics for more accurate scoring
+ */
+export interface ContentStructureMetrics {
+  totalWordCount: number;
+  act1WordCount: number;
+  act2WordCount: number;
+  act3WordCount: number;
+  act1WordPercentage: number;
+  act2WordPercentage: number;
+  act3WordPercentage: number;
+  narrativeElements: {
+    conflictDensity: number; // 0-100: how much conflict is present
+    characterMoments: number; // count of character development moments
+    tensionShifts: number; // count of tension changes
+    sceneTransitions: number; // count of scene/setting changes
+  };
+  pacing: {
+    openingPace: 'slow' | 'medium' | 'fast';
+    middlePace: 'slow' | 'medium' | 'fast';
+    endingPace: 'slow' | 'medium' | 'fast';
+    pacingVariety: number; // 0-100: how varied is the pacing
+  };
 }
 
 /**
  * Analyzes the story structure of a novel
+ * Uses content-aware metrics for accurate scoring
  */
 export function analyzeStoryStructure(state: NovelState): StoryStructureAnalysis {
   const chapters = state.chapters.sort((a, b) => a.number - b.number);
@@ -59,10 +87,13 @@ export function analyzeStoryStructure(state: NovelState): StoryStructureAnalysis
     };
   }
 
-  // Analyze three-act structure
+  // Analyze three-act structure (chapter-based boundaries)
   const threeActStructure = analyzeThreeActStructure(chapters, totalChapters);
 
-  // Detect story beats
+  // Calculate content-aware metrics (word count based)
+  const contentMetrics = analyzeContentMetrics(chapters, threeActStructure);
+
+  // Detect story beats with content analysis
   const detectedBeats = detectStoryBeats(chapters, totalChapters, state);
 
   // Populate act beats from detected beats
@@ -78,14 +109,15 @@ export function analyzeStoryStructure(state: NovelState): StoryStructureAnalysis
     beat.chapterNumber && beat.chapterNumber > threeActStructure.act3.startChapter
   );
 
-  // Calculate overall structure score
-  const overallStructureScore = calculateStructureScore(threeActStructure, detectedBeats);
+  // Calculate overall structure score with content-awareness
+  const overallStructureScore = calculateStructureScore(threeActStructure, detectedBeats, contentMetrics);
 
   // Generate recommendations
   const recommendations = generateStructureRecommendations(
     threeActStructure,
     detectedBeats,
-    overallStructureScore
+    overallStructureScore,
+    contentMetrics
   );
 
   return {
@@ -94,6 +126,159 @@ export function analyzeStoryStructure(state: NovelState): StoryStructureAnalysis
     detectedBeats,
     overallStructureScore,
     recommendations,
+    contentMetrics,
+  };
+}
+
+/**
+ * Analyzes content-based metrics for structure scoring
+ * Uses word count and content analysis instead of just chapter counts
+ */
+function analyzeContentMetrics(
+  chapters: Chapter[],
+  threeActStructure: ThreeActStructure
+): ContentStructureMetrics {
+  // Calculate word counts for each act
+  const getWordCount = (text: string) => (text || '').split(/\s+/).filter(w => w.length > 0).length;
+  
+  const act1Chapters = chapters.filter(ch => ch.number <= threeActStructure.act1.endChapter);
+  const act2Chapters = chapters.filter(ch => 
+    ch.number > threeActStructure.act1.endChapter && 
+    ch.number <= threeActStructure.act2.endChapter
+  );
+  const act3Chapters = chapters.filter(ch => ch.number > threeActStructure.act2.endChapter);
+  
+  const act1WordCount = act1Chapters.reduce((sum, ch) => sum + getWordCount(ch.content), 0);
+  const act2WordCount = act2Chapters.reduce((sum, ch) => sum + getWordCount(ch.content), 0);
+  const act3WordCount = act3Chapters.reduce((sum, ch) => sum + getWordCount(ch.content), 0);
+  const totalWordCount = act1WordCount + act2WordCount + act3WordCount;
+  
+  // Analyze narrative elements across all chapters
+  const narrativeElements = analyzeNarrativeElements(chapters);
+  
+  // Analyze pacing
+  const pacing = analyzePacing(act1Chapters, act2Chapters, act3Chapters);
+  
+  return {
+    totalWordCount,
+    act1WordCount,
+    act2WordCount,
+    act3WordCount,
+    act1WordPercentage: totalWordCount > 0 ? (act1WordCount / totalWordCount) * 100 : 0,
+    act2WordPercentage: totalWordCount > 0 ? (act2WordCount / totalWordCount) * 100 : 0,
+    act3WordPercentage: totalWordCount > 0 ? (act3WordCount / totalWordCount) * 100 : 0,
+    narrativeElements,
+    pacing,
+  };
+}
+
+/**
+ * Analyzes narrative elements in chapters
+ */
+function analyzeNarrativeElements(chapters: Chapter[]): ContentStructureMetrics['narrativeElements'] {
+  let conflictCount = 0;
+  let characterMoments = 0;
+  let tensionShifts = 0;
+  let sceneTransitions = 0;
+  
+  // Conflict indicators
+  const conflictWords = [
+    'fight', 'argue', 'conflict', 'battle', 'struggle', 'oppose', 'clash',
+    'confront', 'challenge', 'resist', 'defy', 'attack', 'defend', 'threat',
+    'danger', 'risk', 'enemy', 'rival', 'antagonist', 'obstacle', 'problem'
+  ];
+  
+  // Character development indicators
+  const characterWords = [
+    'realize', 'understand', 'feel', 'emotion', 'thought', 'decide',
+    'change', 'grow', 'learn', 'remember', 'regret', 'hope', 'fear',
+    'love', 'hate', 'trust', 'doubt', 'believe', 'question', 'reflect'
+  ];
+  
+  // Tension shift indicators
+  const tensionWords = [
+    'suddenly', 'unexpected', 'surprise', 'shock', 'twist', 'reveal',
+    'but', 'however', 'although', 'despite', 'yet', 'instead', 'until'
+  ];
+  
+  // Scene transition indicators
+  const sceneWords = [
+    'later', 'meanwhile', 'elsewhere', 'next day', 'morning', 'evening',
+    'arrived', 'left', 'entered', 'walked', 'traveled', 'returned'
+  ];
+  
+  chapters.forEach(chapter => {
+    const content = (chapter.content || '').toLowerCase();
+    
+    // Count conflict density
+    conflictCount += conflictWords.filter(word => content.includes(word)).length;
+    
+    // Count character moments
+    characterMoments += characterWords.filter(word => content.includes(word)).length;
+    
+    // Count tension shifts
+    tensionShifts += tensionWords.filter(word => content.includes(word)).length;
+    
+    // Count scene transitions
+    sceneTransitions += sceneWords.filter(word => content.includes(word)).length;
+  });
+  
+  // Normalize conflict density to 0-100
+  const totalWords = chapters.reduce((sum, ch) => sum + (ch.content || '').split(/\s+/).length, 0);
+  const conflictDensity = totalWords > 0 
+    ? Math.min(100, (conflictCount / (totalWords / 1000)) * 10) 
+    : 0;
+  
+  return {
+    conflictDensity: Math.round(conflictDensity),
+    characterMoments,
+    tensionShifts,
+    sceneTransitions,
+  };
+}
+
+/**
+ * Analyzes pacing across acts
+ */
+function analyzePacing(
+  act1Chapters: Chapter[],
+  act2Chapters: Chapter[],
+  act3Chapters: Chapter[]
+): ContentStructureMetrics['pacing'] {
+  const getPace = (chapters: Chapter[]): 'slow' | 'medium' | 'fast' => {
+    if (chapters.length === 0) return 'medium';
+    
+    // Average words per chapter
+    const avgWords = chapters.reduce((sum, ch) => sum + (ch.content || '').split(/\s+/).length, 0) / chapters.length;
+    
+    // Action word density
+    const actionWords = ['run', 'fight', 'chase', 'escape', 'rush', 'attack', 'race'];
+    const actionDensity = chapters.reduce((sum, ch) => {
+      const content = (ch.content || '').toLowerCase();
+      return sum + actionWords.filter(w => content.includes(w)).length;
+    }, 0) / chapters.length;
+    
+    // Short chapters + high action = fast pace
+    // Long chapters + low action = slow pace
+    if (avgWords < 1500 && actionDensity > 2) return 'fast';
+    if (avgWords > 3000 && actionDensity < 1) return 'slow';
+    return 'medium';
+  };
+  
+  const openingPace = getPace(act1Chapters);
+  const middlePace = getPace(act2Chapters);
+  const endingPace = getPace(act3Chapters);
+  
+  // Calculate pacing variety (how different are the paces)
+  const paces = [openingPace, middlePace, endingPace];
+  const uniquePaces = new Set(paces).size;
+  const pacingVariety = uniquePaces === 3 ? 100 : uniquePaces === 2 ? 60 : 30;
+  
+  return {
+    openingPace,
+    middlePace,
+    endingPace,
+    pacingVariety,
   };
 }
 
@@ -507,27 +692,109 @@ function calculateBeatStrengthScore(
 
 /**
  * Calculates overall structure score (0-100)
+ * Uses content-aware metrics for more accurate scoring
  */
 function calculateStructureScore(
   threeActStructure: ThreeActStructure,
-  detectedBeats: StoryBeat[]
+  detectedBeats: StoryBeat[],
+  contentMetrics?: ContentStructureMetrics
 ): number {
   let score = 0;
-
-  // Score based on act proportions (ideal: 25/50/25)
-  const act1Score = calculateActProportionScore(threeActStructure.act1.percentage, 25);
-  const act2Score = calculateActProportionScore(threeActStructure.act2.percentage, 50);
-  const act3Score = calculateActProportionScore(threeActStructure.act3.percentage, 25);
-
-  score += (act1Score + act2Score + act3Score) / 3 * 0.5; // 50% weight on act proportions
-
-  // Score based on beat detection and strength
-  if (detectedBeats.length > 0) {
-    const averageBeatStrength = detectedBeats.reduce((sum, beat) => sum + beat.strengthScore, 0) / detectedBeats.length;
-    score += (averageBeatStrength / 100) * 0.5; // 50% weight on beat strength
+  
+  // If we have content metrics, use word-count based proportions (more accurate)
+  // Otherwise fall back to chapter-count proportions
+  let act1Percent: number;
+  let act2Percent: number;
+  let act3Percent: number;
+  
+  if (contentMetrics && contentMetrics.totalWordCount > 0) {
+    // Use word count for proportions (more accurate)
+    act1Percent = contentMetrics.act1WordPercentage;
+    act2Percent = contentMetrics.act2WordPercentage;
+    act3Percent = contentMetrics.act3WordPercentage;
+  } else {
+    // Fall back to chapter count
+    act1Percent = threeActStructure.act1.percentage;
+    act2Percent = threeActStructure.act2.percentage;
+    act3Percent = threeActStructure.act3.percentage;
   }
 
-  return Math.round(score);
+  // Score based on act proportions (ideal: 25/50/25) - 25% weight
+  const act1Score = calculateActProportionScore(act1Percent, 25);
+  const act2Score = calculateActProportionScore(act2Percent, 50);
+  const act3Score = calculateActProportionScore(act3Percent, 25);
+  const actProportionScore = (act1Score + act2Score + act3Score) / 3;
+  score += actProportionScore * 0.25;
+
+  // Score based on beat detection and strength - 25% weight
+  const requiredBeats = ['inciting_incident', 'plot_point_1', 'midpoint', 'plot_point_2', 'climax'];
+  const detectedBeatTypes = detectedBeats.map(b => b.beatType);
+  const beatsFound = requiredBeats.filter(beat => detectedBeatTypes.includes(beat as any)).length;
+  const beatCoverageScore = (beatsFound / requiredBeats.length) * 100;
+  
+  let beatStrengthScore = 50; // Base score
+  if (detectedBeats.length > 0) {
+    beatStrengthScore = detectedBeats.reduce((sum, beat) => sum + beat.strengthScore, 0) / detectedBeats.length;
+  }
+  const beatScore = (beatCoverageScore * 0.6 + beatStrengthScore * 0.4);
+  score += beatScore * 0.25;
+
+  // Score based on narrative elements - 25% weight (NEW - content-aware)
+  if (contentMetrics) {
+    const { narrativeElements, pacing } = contentMetrics;
+    
+    // Conflict density score (ideal: 40-70)
+    let conflictScore = 0;
+    if (narrativeElements.conflictDensity >= 40 && narrativeElements.conflictDensity <= 70) {
+      conflictScore = 100;
+    } else if (narrativeElements.conflictDensity < 40) {
+      conflictScore = (narrativeElements.conflictDensity / 40) * 100;
+    } else {
+      conflictScore = Math.max(0, 100 - (narrativeElements.conflictDensity - 70) * 2);
+    }
+    
+    // Character moments score (more is better, up to a point)
+    const characterScore = Math.min(100, (narrativeElements.characterMoments / 50) * 100);
+    
+    // Tension shifts score (variety is good)
+    const tensionScore = Math.min(100, (narrativeElements.tensionShifts / 30) * 100);
+    
+    // Pacing variety score
+    const pacingScore = pacing.pacingVariety;
+    
+    const narrativeScore = (conflictScore + characterScore + tensionScore + pacingScore) / 4;
+    score += narrativeScore * 0.25;
+  } else {
+    // Without content metrics, use a base score
+    score += 50 * 0.25;
+  }
+
+  // Score based on chapter quality indicators - 25% weight
+  // Check for logic audits, summaries, and content length
+  if (contentMetrics) {
+    // Word count adequacy (too short or no content = lower score)
+    const avgWordsPerChapter = contentMetrics.totalWordCount / Math.max(1, 
+      (threeActStructure.act1.endChapter - 0) + 
+      (threeActStructure.act2.endChapter - threeActStructure.act1.endChapter) + 
+      (threeActStructure.act3.endChapter - threeActStructure.act2.endChapter)
+    );
+    
+    // Ideal: 1500-4000 words per chapter
+    let contentLengthScore = 50;
+    if (avgWordsPerChapter >= 1500 && avgWordsPerChapter <= 4000) {
+      contentLengthScore = 100;
+    } else if (avgWordsPerChapter < 1500) {
+      contentLengthScore = (avgWordsPerChapter / 1500) * 100;
+    } else {
+      contentLengthScore = Math.max(50, 100 - (avgWordsPerChapter - 4000) / 100);
+    }
+    
+    score += contentLengthScore * 0.25;
+  } else {
+    score += 50 * 0.25;
+  }
+
+  return Math.round(Math.min(100, Math.max(0, score)));
 }
 
 /**
@@ -543,31 +810,38 @@ function calculateActProportionScore(actualPercentage: number, idealPercentage: 
 
 /**
  * Generates structure recommendations
+ * Uses content metrics for more specific and actionable recommendations
  */
 function generateStructureRecommendations(
   threeActStructure: ThreeActStructure,
   detectedBeats: StoryBeat[],
-  overallScore: number
+  overallScore: number,
+  contentMetrics?: ContentStructureMetrics
 ): string[] {
   const recommendations: string[] = [];
 
-  // Act proportion recommendations
-  if (threeActStructure.act1.percentage < 20) {
-    recommendations.push(`Act 1 is shorter than ideal (${threeActStructure.act1.percentage.toFixed(1)}% vs 25%). Consider adding more setup.`);
-  } else if (threeActStructure.act1.percentage > 30) {
-    recommendations.push(`Act 1 is longer than ideal (${threeActStructure.act1.percentage.toFixed(1)}% vs 25%). Consider tightening the opening.`);
+  // Use word-based percentages if available (more accurate)
+  const act1Percent = contentMetrics?.act1WordPercentage ?? threeActStructure.act1.percentage;
+  const act2Percent = contentMetrics?.act2WordPercentage ?? threeActStructure.act2.percentage;
+  const act3Percent = contentMetrics?.act3WordPercentage ?? threeActStructure.act3.percentage;
+
+  // Act proportion recommendations (based on word count when available)
+  if (act1Percent < 20) {
+    recommendations.push(`Act 1 is shorter than ideal (${act1Percent.toFixed(1)}% vs 25% by word count). Consider adding more character introduction and world-building.`);
+  } else if (act1Percent > 30) {
+    recommendations.push(`Act 1 is longer than ideal (${act1Percent.toFixed(1)}% vs 25% by word count). Consider tightening the opening or moving content to Act 2.`);
   }
 
-  if (threeActStructure.act2.percentage < 45) {
-    recommendations.push(`Act 2 is shorter than ideal (${threeActStructure.act2.percentage.toFixed(1)}% vs 50%). Consider adding more development.`);
-  } else if (threeActStructure.act2.percentage > 60) {
-    recommendations.push(`Act 2 is longer than ideal (${threeActStructure.act2.percentage.toFixed(1)}% vs 50%). Consider condensing the middle section.`);
+  if (act2Percent < 45) {
+    recommendations.push(`Act 2 is shorter than ideal (${act2Percent.toFixed(1)}% vs 50% by word count). Consider adding more rising action and complications.`);
+  } else if (act2Percent > 60) {
+    recommendations.push(`Act 2 is longer than ideal (${act2Percent.toFixed(1)}% vs 50% by word count). Consider condensing the middle or removing filler.`);
   }
 
-  if (threeActStructure.act3.percentage < 20) {
-    recommendations.push(`Act 3 is shorter than ideal (${threeActStructure.act3.percentage.toFixed(1)}% vs 25%). Consider adding more resolution.`);
-  } else if (threeActStructure.act3.percentage > 30) {
-    recommendations.push(`Act 3 is longer than ideal (${threeActStructure.act3.percentage.toFixed(1)}% vs 25%). Consider tightening the ending.`);
+  if (act3Percent < 20) {
+    recommendations.push(`Act 3 is shorter than ideal (${act3Percent.toFixed(1)}% vs 25% by word count). Consider expanding the climax or resolution.`);
+  } else if (act3Percent > 30) {
+    recommendations.push(`Act 3 is longer than ideal (${act3Percent.toFixed(1)}% vs 25% by word count). Consider tightening the ending.`);
   }
 
   // Beat recommendations
@@ -580,11 +854,47 @@ function generateStructureRecommendations(
     }
   });
 
+  // Content-based recommendations
+  if (contentMetrics) {
+    const { narrativeElements, pacing } = contentMetrics;
+    
+    // Conflict density recommendations
+    if (narrativeElements.conflictDensity < 30) {
+      recommendations.push(`Low conflict density (${narrativeElements.conflictDensity}/100). Add more obstacles, challenges, or tension.`);
+    } else if (narrativeElements.conflictDensity > 80) {
+      recommendations.push(`Very high conflict density (${narrativeElements.conflictDensity}/100). Consider adding quieter moments for contrast.`);
+    }
+    
+    // Character development recommendations
+    if (narrativeElements.characterMoments < 15) {
+      recommendations.push(`Limited character development moments. Add more introspection, emotional reactions, and growth.`);
+    }
+    
+    // Pacing recommendations
+    if (pacing.pacingVariety < 50) {
+      recommendations.push(`Pacing is too uniform. Vary the pace between acts for better rhythm.`);
+    }
+    
+    if (pacing.openingPace === 'slow' && pacing.endingPace === 'slow') {
+      recommendations.push(`Both opening and ending are slow-paced. Consider energizing at least one.`);
+    }
+    
+    // Word count recommendations
+    const avgWordsPerChapter = contentMetrics.totalWordCount / Math.max(1, threeActStructure.act3.endChapter);
+    if (avgWordsPerChapter < 1000) {
+      recommendations.push(`Chapters are quite short (avg ${Math.round(avgWordsPerChapter)} words). Consider expanding key scenes.`);
+    }
+  }
+
   // Overall score recommendation
-  if (overallScore < 60) {
-    recommendations.push('Overall structure score is below 60. Review act proportions and key story beats.');
-  } else if (overallScore >= 80) {
-    recommendations.push('Excellent structure! The story follows proven structural patterns well.');
+  if (overallScore < 40) {
+    recommendations.push('Structure needs significant work. Focus on establishing clear act boundaries and key story beats.');
+  } else if (overallScore < 60) {
+    recommendations.push('Structure is developing. Review act proportions and ensure key beats are clearly defined.');
+  } else if (overallScore < 80) {
+    recommendations.push('Good structure foundation. Fine-tune proportions and strengthen weaker beats.');
+  } else {
+    recommendations.push('Strong structure! The story follows proven narrative patterns effectively.');
   }
 
   return recommendations;

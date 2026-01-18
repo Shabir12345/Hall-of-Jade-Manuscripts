@@ -4,38 +4,31 @@
  */
 
 import { BrowserTTSProvider, BrowserTTSOptions } from './ttsProviders/browserTTS';
-import { GeminiTTSProvider, GeminiTTSOptions } from './ttsProviders/geminiTTS';
-import { ttsCache } from './ttsProviders/ttsCache';
 import { normalizeText } from '../utils/textProcessor';
 
-export type TTSProvider = 'browser' | 'gemini' | 'auto';
+export type TTSProvider = 'browser' | 'auto';
 
 export interface TTSOptions {
   provider?: TTSProvider;
-  voice?: SpeechSynthesisVoice | string; // Browser voice or Gemini voice name
-  rate?: number; // Speed: 0.1 to 10 (browser) or 0.5 to 3.0 (effective)
+  voice?: SpeechSynthesisVoice;
+  rate?: number; // Speed: 0.1 to 10
   pitch?: number; // 0 to 2
   volume?: number; // 0 to 1
-  useCache?: boolean; // Default: true
   onProgress?: (progress: number) => void; // 0 to 1
-  onChunkComplete?: (chunkIndex: number, totalChunks: number) => void;
 }
 
 export interface TTSResult {
   provider: TTSProvider;
   duration?: number; // Estimated or actual duration in seconds
-  audioBuffer?: AudioBuffer; // For Gemini TTS
   utterance?: SpeechSynthesisUtterance; // For Browser TTS
 }
 
 export class TTSService {
   private browserTTS: BrowserTTSProvider;
-  private geminiTTS: GeminiTTSProvider;
   private currentProvider: TTSProvider = 'auto';
 
   constructor() {
     this.browserTTS = new BrowserTTSProvider();
-    this.geminiTTS = new GeminiTTSProvider();
   }
 
   /**
@@ -46,9 +39,6 @@ export class TTSService {
     if (this.browserTTS.isAvailable()) {
       providers.push('browser');
     }
-    if (this.geminiTTS.isAvailable()) {
-      providers.push('gemini');
-    }
     return providers;
   }
 
@@ -57,29 +47,13 @@ export class TTSService {
    */
   private selectProvider(preferred: TTSProvider): TTSProvider {
     if (preferred === 'auto') {
-      // Prefer Gemini if available, fallback to browser
-      if (this.geminiTTS.isAvailable()) {
-        return 'gemini';
-      }
       if (this.browserTTS.isAvailable()) {
         return 'browser';
       }
       throw new Error('No TTS providers available');
     }
 
-    if (preferred === 'gemini' && !this.geminiTTS.isAvailable()) {
-      if (this.browserTTS.isAvailable()) {
-        console.warn('Gemini TTS not available, falling back to browser TTS');
-        return 'browser';
-      }
-      throw new Error('Gemini TTS not available');
-    }
-
     if (preferred === 'browser' && !this.browserTTS.isAvailable()) {
-      if (this.geminiTTS.isAvailable()) {
-        console.warn('Browser TTS not available, falling back to Gemini TTS');
-        return 'gemini';
-      }
       throw new Error('Browser TTS not available');
     }
 
@@ -103,9 +77,7 @@ export class TTSService {
       rate = 1.0,
       pitch = 1.0,
       volume = 1.0,
-      useCache = true,
-      onProgress,
-      onChunkComplete
+      onProgress
     } = options;
 
     // Normalize text
@@ -115,107 +87,13 @@ export class TTSService {
     const selectedProvider = this.selectProvider(provider);
     this.currentProvider = selectedProvider;
 
-    // Check cache first (for Gemini TTS)
-    if (useCache && selectedProvider === 'gemini') {
-      const voiceName = typeof voice === 'string' ? voice : 'Kore';
-      const cached = await ttsCache.get(normalizedText, voiceName, rate, 'gemini');
-      
-      if (cached) {
-        // Convert ArrayBuffer to AudioBuffer
-        const audioContext = this.geminiTTS.getAudioContext();
-        if (audioContext) {
-          try {
-            const audioBuffer = await audioContext.decodeAudioData(cached.slice(0));
-            return {
-              provider: 'gemini',
-              audioBuffer,
-              duration: audioBuffer.length / audioBuffer.sampleRate
-            };
-          } catch (error) {
-            console.warn('Failed to decode cached audio, regenerating:', error);
-            // Continue to generate new audio
-          }
-        }
-      }
-    }
-
-    try {
-      if (selectedProvider === 'gemini') {
-        return await this.speakWithGemini(normalizedText, {
-          voiceName: typeof voice === 'string' ? voice : 'Kore',
-          rate,
-          useCache,
-          onProgress,
-          onChunkComplete
-        });
-      } else {
-        return await this.speakWithBrowser(normalizedText, {
-          voice: typeof voice === 'object' ? voice : undefined,
-          rate,
-          pitch,
-          volume,
-          onProgress
-        });
-      }
-    } catch (error) {
-      // Fallback to browser if Gemini fails
-      if (selectedProvider === 'gemini' && this.browserTTS.isAvailable()) {
-        console.warn('Gemini TTS failed, falling back to browser TTS:', error);
-        return await this.speakWithBrowser(normalizedText, {
-          voice: typeof voice === 'object' ? voice : undefined,
-          rate,
-          pitch,
-          volume,
-          onProgress
-        });
-      }
-      throw error;
-    }
-  }
-
-  private async speakWithGemini(
-    text: string,
-    options: {
-      voiceName: string;
-      rate: number;
-      useCache: boolean;
-      onProgress?: (progress: number) => void;
-      onChunkComplete?: (chunkIndex: number, totalChunks: number) => void;
-    }
-  ): Promise<TTSResult> {
-    const { voiceName, rate, useCache, onProgress, onChunkComplete } = options;
-
-    const result = await this.geminiTTS.generateAudio(text, {
-      voiceName,
-      chunkSize: 2000,
-      useCrossfade: true,
-      normalize: true
+    return await this.speakWithBrowser(normalizedText, {
+      voice: typeof voice === 'object' ? voice : undefined,
+      rate,
+      pitch,
+      volume,
+      onProgress
     });
-
-    // Cache the audio
-    if (useCache && result.audioBuffer) {
-      try {
-        // Convert AudioBuffer to ArrayBuffer for caching
-        const { audioBufferToArrayBuffer } = await import('../utils/audioUtils');
-        const audioData = audioBufferToArrayBuffer(result.audioBuffer);
-        await ttsCache.set(text, voiceName, rate, 'gemini', audioData, result.duration);
-      } catch (error) {
-        console.warn('Failed to cache audio:', error);
-        // Continue without caching
-      }
-    }
-
-    // Apply speed adjustment
-    if (rate !== 1.0 && result.audioBuffer) {
-      // Speed adjustment will be handled by AudioBufferSourceNode.playbackRate
-      // when playing the audio
-    }
-
-    return {
-      provider: 'gemini',
-      audioBuffer: result.audioBuffer,
-      duration: result.duration
-    };
   }
 
   private async speakWithBrowser(
@@ -271,7 +149,6 @@ export class TTSService {
    */
   cancel(): void {
     this.browserTTS.cancel();
-    // Note: Gemini TTS cancellation is handled by the audio source
   }
 
   /**
@@ -279,7 +156,6 @@ export class TTSService {
    */
   pause(): void {
     this.browserTTS.pause();
-    // Note: Gemini TTS pause is handled by AudioContext.suspend()
   }
 
   /**
@@ -287,7 +163,6 @@ export class TTSService {
    */
   resume(): void {
     this.browserTTS.resume();
-    // Note: Gemini TTS resume is handled by AudioContext.resume()
   }
 
   /**
@@ -295,13 +170,6 @@ export class TTSService {
    */
   getBrowserTTS(): BrowserTTSProvider {
     return this.browserTTS;
-  }
-
-  /**
-   * Get Gemini TTS provider (for direct access if needed)
-   */
-  getGeminiTTS(): GeminiTTSProvider {
-    return this.geminiTTS;
   }
 
   /**

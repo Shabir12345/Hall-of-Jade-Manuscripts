@@ -1,7 +1,7 @@
 import { NovelState } from '../types';
 
 const DB_NAME = 'HallOfJadeDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Updated to match existing database version
 const STORE_NOVELS = 'novels';
 
 export const indexedDbService = {
@@ -21,7 +21,20 @@ export const indexedDbService = {
       };
 
       request.onerror = (event) => {
-        reject((event.target as IDBOpenDBRequest).error);
+        const error = (event.target as IDBOpenDBRequest).error;
+        // Handle version mismatch - if DB is at higher version, open without specifying version
+        if (error?.name === 'VersionError' || error?.message?.includes('version')) {
+          console.warn('IndexedDB version mismatch detected, opening with existing version...');
+          const openRequest = indexedDB.open(DB_NAME);
+          openRequest.onsuccess = () => {
+            resolve(openRequest.result);
+          };
+          openRequest.onerror = () => {
+            reject(openRequest.error || error);
+          };
+        } else {
+          reject(error);
+        }
       };
     });
   },
@@ -72,5 +85,18 @@ export const indexedDbService = {
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
+  },
+
+  /**
+   * Verify that a novel has been deleted from IndexedDB
+   */
+  verifyNovelDeleted: async (id: string): Promise<boolean> => {
+    try {
+      const novel = await indexedDbService.getNovel(id);
+      return novel === undefined;
+    } catch (error) {
+      // If there's an error checking, assume it's deleted to avoid false positives
+      return true;
+    }
   }
 };

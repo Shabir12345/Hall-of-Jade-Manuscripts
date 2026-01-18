@@ -3,6 +3,10 @@ import { gatherPromptContext, getTruncatedCharacterCodex, getTruncatedWorldBible
 import { getStyleGuidelines, getStyleConstraints } from './styleAnalyzer';
 import { getPromptRules, getGenreConventions } from './promptRules';
 import { estimateTokens } from './tokenEstimator';
+import { analyzePromptForCaching } from '../promptCacheAnalyzer';
+import { createCacheMetadata } from '../promptCacheService';
+import type { CacheProvider } from '../../types/cache';
+import { getContextLimitsForModel, type ModelProvider } from '../contextWindowManager';
 
 /**
  * Prompt Builder
@@ -157,6 +161,9 @@ function compressContext(sections: string[], maxLength: number): string[] {
 
 /**
  * Builds a professional prompt for AI generation
+ * 
+ * @param modelInfo - Optional model provider information to optimize context limits
+ *                    When Grok is used, context limits are significantly increased to leverage 2M token window
  */
 export async function buildPrompt(
   state: NovelState,
@@ -167,23 +174,43 @@ export async function buildPrompt(
     outputFormat?: string;
     specificConstraints?: string[];
   },
-  config: Partial<PromptBuilderConfig> = {}
+  config: Partial<PromptBuilderConfig> = {},
+  modelInfo?: { provider: ModelProvider }
 ): Promise<BuiltPrompt> {
-  const finalConfig = { ...DEFAULT_CONFIG, ...config };
+  // Get model-specific context limits if model info is provided
+  const modelLimits = modelInfo ? getContextLimitsForModel(modelInfo.provider) : null;
+  
+  // Merge default config with model-specific limits and user config
+  const finalConfig: PromptBuilderConfig = {
+    ...DEFAULT_CONFIG,
+    // Apply model-specific limits if available, otherwise use defaults
+    maxContextLength: modelLimits?.maxContextLength ?? config.maxContextLength ?? DEFAULT_CONFIG.maxContextLength,
+    includeFullContext: modelLimits?.includeFullHistory ?? config.includeFullContext ?? DEFAULT_CONFIG.includeFullContext,
+    ...config, // User config overrides (but model limits take precedence for key fields)
+  };
 
   const truncate = (text: string | undefined | null, max: number) => {
     if (!text) return '';
     return text.length > max ? text.substring(0, max) + '…' : text;
   };
   
-  // Gather context with optimized settings
+  // Calculate maxRecentChapters based on model limits
+  const maxRecentChapters = modelLimits 
+    ? Math.min(modelLimits.maxRecentChapters, state.chapters.length)
+    : (finalConfig.prioritizeRecent ? 4 : 5);
+  
+  // Gather context with optimized settings based on model capabilities
   const context = await gatherPromptContext(state, {
     includeFullHistory: finalConfig.includeFullContext,
-    maxRecentChapters: finalConfig.prioritizeRecent ? 4 : 5, // Increased from 2 to 4 for better continuity
+    maxRecentChapters: maxRecentChapters,
     includeStyleProfile: finalConfig.includeStyleGuidelines,
     includeCharacterDevelopment: finalConfig.includeCharacterDevelopment,
     includeStoryProgression: finalConfig.includeStoryProgression,
-    includeArcHistory: finalConfig.includeArcHistory,
+    includeArcHistory: finalConfig.includeArcHistory ?? false,
+    // Model-specific options for enhanced context
+    includeFullCharacterProgression: modelLimits?.includeFullCharacterProgression ?? false,
+    includeAllActiveThreads: modelLimits?.includeAllActiveThreads ?? false,
+    includeFullChapterText: modelLimits?.includeFullChapterText ?? false,
   });
 
   // Get prompt rules
@@ -196,9 +223,33 @@ export async function buildPrompt(
   // 1. Role Definition
   promptSections.push(`ROLE: ${task.role}\n`);
 
-  // 2. CHAPTER TRANSITION - Critical Context (MUST BE EARLY AND PROMINENT)
+  // 2. CRITICAL STATE (from enhanced context) - Highest priority
+  if ((context as any).criticalState) {
+    promptSections.push((context as any).criticalState);
+    promptSections.push('');
+  }
+
+  // 3. CHAPTER TRANSITION - Critical Context (MUST BE EARLY AND PROMINENT)
   if (context.continuityBridge) {
     promptSections.push(context.continuityBridge);
+    promptSections.push('');
+  }
+
+  // 3.5. COMPREHENSIVE THREAD CONTEXT (CRITICAL - MUST BE PROMINENT)
+  if (context.comprehensiveThreadContext) {
+    promptSections.push(context.comprehensiveThreadContext);
+    promptSections.push('');
+  }
+  
+  // 4. POWER PROGRESSION (from enhanced context)
+  if ((context as any).powerProgression) {
+    promptSections.push((context as any).powerProgression);
+    promptSections.push('');
+  }
+  
+  // 5. RELATIONSHIP NETWORK (from enhanced context)
+  if ((context as any).relationshipNetwork) {
+    promptSections.push((context as any).relationshipNetwork);
     promptSections.push('');
   }
 
@@ -207,7 +258,20 @@ export async function buildPrompt(
   promptSections.push(`Novel: "${context.storyState.title}"`);
   promptSections.push(`Genre: ${context.storyState.genre}`);
   if (context.storyState.grandSaga) {
-    promptSections.push(`Grand Saga: ${context.storyState.grandSaga.substring(0, 500)}`);
+    // Show full Grand Saga (up to 800 chars for better context)
+    const grandSagaText = context.storyState.grandSaga.length > 800 
+      ? context.storyState.grandSaga.substring(0, 800) + '...'
+      : context.storyState.grandSaga;
+    promptSections.push(`Grand Saga: ${grandSagaText}`);
+    
+    // Add Grand Saga characters section if available
+    if (context.grandSagaCharacters && context.grandSagaCharacters.length > 0) {
+      promptSections.push(`\nGrand Saga Characters: ${context.grandSagaCharacters.map(c => c.name).join(', ')}`);
+      promptSections.push('NOTE: These characters from the Grand Saga should be featured prominently in the story.');
+    }
+    if (context.grandSagaExtractedNames && context.grandSagaExtractedNames.length > 0) {
+      promptSections.push(`Potential Grand Saga Characters (not yet in codex): ${context.grandSagaExtractedNames.map(e => e.name).join(', ')}`);
+    }
   }
   if (context.storyState.currentRealm) {
     promptSections.push(`Current Realm: ${context.storyState.currentRealm.name} - ${context.storyState.currentRealm.description.substring(0, 300)}`);
@@ -217,7 +281,7 @@ export async function buildPrompt(
   }
   promptSections.push('');
 
-  // 4. Narrative Context (Arc Information)
+  // 7. Narrative Context (Arc Information)
   if (context.narrativeContext.activeArc) {
     promptSections.push('[CURRENT ARC]');
     const arcDesc = context.narrativeContext.activeArc.description || '';
@@ -282,13 +346,30 @@ export async function buildPrompt(
     promptSections.push('');
   }
 
-  // ACTIVE PLOT THREADS (NEW)
-  if (context.activePlotThreads && context.activePlotThreads.length > 0) {
-    promptSections.push('[ACTIVE PLOT THREADS]');
-    context.activePlotThreads.slice(0, 5).forEach(thread => {
-      promptSections.push(`- ${truncate(thread, 200)}`);
-    });
+  // OPEN PLOT POINTS (Comprehensive tracking of unresolved storylines)
+  if (context.openPlotPointsContext) {
+    promptSections.push(context.openPlotPointsContext);
     promptSections.push('');
+  } else {
+    // Fallback to active plot threads if comprehensive context not available
+    if (context.activePlotThreads && context.activePlotThreads.length > 0) {
+      promptSections.push('[ACTIVE PLOT THREADS]');
+      context.activePlotThreads.slice(0, 8).forEach(thread => {
+        promptSections.push(`- ${truncate(thread, 200)}`);
+      });
+      promptSections.push('');
+    }
+
+    // HIGH-PRIORITY PLOT THREADS (MANDATORY)
+    if (context.highPriorityPlotThreads && context.highPriorityPlotThreads.length > 0) {
+      promptSections.push('[HIGH-PRIORITY PLOT THREADS - MANDATORY RESOLUTION]');
+      promptSections.push('CRITICAL: You MUST address or resolve at least ONE of the following high-priority plot threads in this chapter:');
+      context.highPriorityPlotThreads.slice(0, 5).forEach(thread => {
+        promptSections.push(`- ${truncate(thread, 200)}`);
+      });
+      promptSections.push('These threads represent promised meetings, character commitments, character pursuits, or unresolved checklist items that cannot be ignored.');
+      promptSections.push('');
+    }
   }
 
   // Only include older chapters summary if it's concise (limit to last 10 chapters)
@@ -300,16 +381,31 @@ export async function buildPrompt(
     promptSections.push('');
   }
 
-  // 4. Character Context (only relevant characters)
-  if (finalConfig.includeCharacterDevelopment && context.characterContext.codex.length > 0) {
+  // 4. COMPREHENSIVE CHARACTER CONTEXT (for characters appearing in chapter)
+  if (context.comprehensiveCharacterContext && context.comprehensiveCharacterContext.length > 0) {
+    // Add comprehensive character context for each character appearing
+    context.comprehensiveCharacterContext.forEach(charContext => {
+      promptSections.push(charContext.formattedContext);
+      promptSections.push('');
+    });
+  } else if (finalConfig.includeCharacterDevelopment && context.characterContext.codex.length > 0) {
+    // Fallback to truncated codex if comprehensive context not available
     promptSections.push('[CHARACTER CODEX - Relevant Characters Only]');
+    // Pass state to getTruncatedCharacterCodex so it can include Grand Saga characters
     const truncatedCodex = getTruncatedCharacterCodex(
       context.characterContext.codex,
       context.narrativeContext.recentChapters,
-      8 // Limit to 8 most relevant characters
+      8, // Limit to 8 most relevant characters
+      state // Pass state to enable Grand Saga character inclusion
     );
     // Compact JSON to reduce token overhead
     promptSections.push(JSON.stringify(truncatedCodex));
+    
+    // Add note about Grand Saga characters if applicable
+    if (context.grandSagaCharacters && context.grandSagaCharacters.length > 0 && context.narrativeContext.recentChapters.length === 0) {
+      promptSections.push('\nNOTE: Characters from the Grand Saga are prioritized above. They should be featured in this arc.');
+    }
+    
     promptSections.push('');
 
     // Add character development insights (only for main characters)
@@ -342,8 +438,12 @@ export async function buildPrompt(
     promptSections.push('');
   }
 
-  // 7. Story Progression Context
-  if (finalConfig.includeStoryProgression) {
+  // 7. STORY PROGRESSION ANALYSIS (Comprehensive)
+  if (context.storyProgressionAnalysis) {
+    promptSections.push(context.storyProgressionAnalysis);
+    promptSections.push('');
+  } else if (finalConfig.includeStoryProgression) {
+    // Fallback to basic progression metrics if comprehensive analysis not available
     const progression = context.narrativeContext.progressionMetrics;
     promptSections.push('[STORY PROGRESSION]');
     promptSections.push(`Current Tension Level: ${progression.tensionCurve.currentLevel} (${progression.tensionCurve.trend} trend)`);
@@ -380,6 +480,12 @@ export async function buildPrompt(
   // 7.6. Antagonist Context
   if (context.antagonistContext) {
     promptSections.push(context.antagonistContext);
+    promptSections.push('');
+  }
+
+  // 7.6.5. System Context
+  if (context.systemContext) {
+    promptSections.push(context.systemContext);
     promptSections.push('');
   }
 
@@ -468,8 +574,10 @@ export async function buildPrompt(
   // Apply dynamic compression if needed (using token estimation for better accuracy)
   const estimatedTokens = estimateTokens(userPrompt);
   const maxTokens = Math.floor(finalConfig.maxContextLength / 4 * 1.2); // Convert char limit to approximate token limit
+  const shouldSkipCompression = modelLimits?.skipAggressiveCompression ?? false;
   
-  if (finalConfig.maxContextLength > 0 && (userPrompt.length > finalConfig.maxContextLength || estimatedTokens > maxTokens)) {
+  // Only compress if we exceed limits AND compression is not skipped (e.g., for Grok with large context window)
+  if (!shouldSkipCompression && finalConfig.maxContextLength > 0 && (userPrompt.length > finalConfig.maxContextLength || estimatedTokens > maxTokens)) {
     const originalLength = userPrompt.length;
     const originalTokens = estimatedTokens;
     
@@ -492,15 +600,61 @@ export async function buildPrompt(
         `Prompt size: ${userPrompt.length.toLocaleString()} chars (${compressedTokens.toLocaleString()} tokens)`
       );
     }
+  } else if (shouldSkipCompression) {
+    // Log context size for large context windows (Grok)
+    console.log(
+      `Prompt size (${modelInfo?.provider ?? 'unknown'}): ${userPrompt.length.toLocaleString()} chars (${estimatedTokens.toLocaleString()} tokens) ` +
+      `[Using large context window - no compression applied]`
+    );
   }
 
   // Create context summary
   const contextSummary = `Novel: ${context.storyState.title} | Chapters: ${state.chapters.length} | Characters: ${context.characterContext.codex.length} | Realm: ${context.storyState.currentRealm?.name || 'None'}`;
 
+  // Analyze prompt for caching (try Claude first, then Gemini)
+  const finalUserPrompt = userPrompt.trim();
+  let cacheMetadata: BuiltPrompt['cacheMetadata'] = undefined;
+  
+  // Try to create cache metadata for Grok
+  try {
+    for (const provider of ['grok'] as CacheProvider[]) {
+      const cacheablePrompt = analyzePromptForCaching(
+        { systemInstruction: '', userPrompt: finalUserPrompt, contextSummary },
+        state,
+        provider
+      );
+      
+      if (cacheablePrompt && cacheablePrompt.canUseCaching) {
+        const metadata = createCacheMetadata(
+          state,
+          cacheablePrompt.cacheableContent,
+          cacheablePrompt.dynamicContent,
+          provider
+        );
+        
+        if (metadata) {
+          cacheMetadata = {
+            cacheableContent: metadata.cacheableContent,
+            dynamicContent: metadata.dynamicContent,
+            cacheKey: metadata.cacheKey,
+            estimatedCacheableTokens: metadata.estimatedCacheableTokens,
+            canUseCaching: metadata.canUseCaching,
+            provider: metadata.provider,
+          };
+          break; // Use first provider that meets requirements
+        }
+      }
+    }
+  } catch (error) {
+    // If cache analysis fails, continue without caching (non-critical)
+    console.warn('[Prompt Cache] Failed to analyze prompt for caching:', error instanceof Error ? error.message : String(error));
+  }
+
   return {
     systemInstruction: '', // Will be set by caller or use default
-    userPrompt: userPrompt.trim(),
+    userPrompt: finalUserPrompt,
     contextSummary,
+    cacheMetadata,
   };
 }
 

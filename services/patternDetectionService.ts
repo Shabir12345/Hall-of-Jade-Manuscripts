@@ -106,12 +106,14 @@ export async function detectRecurringPatterns(
     // Note: reportId is optional - pattern occurrences can be saved without it
     // This allows pattern detection to run even if the report hasn't been saved yet
     for (const issue of groupIssues) {
+      // If reportId is provided but might not exist yet, save without it to avoid FK constraint errors
+      // We'll save without report_id first, then update it later if the report gets saved
       const occurrence: PatternOccurrence = {
         id: crypto.randomUUID(),
         patternId: pattern.id,
         chapterId: issue.chapterId,
         chapterNumber: issue.chapterNumber,
-        reportId: reportId, // Will be null if report hasn't been saved yet (OK - field is nullable)
+        reportId: undefined, // Don't include report_id initially to avoid FK constraint violations
         issueId: issue.id,
         novelId: novelId,
         detectedAt: Date.now(),
@@ -122,24 +124,11 @@ export async function detectRecurringPatterns(
         await savePatternOccurrence(occurrence);
         totalOccurrences++;
       } catch (error: any) {
-        // If report_id foreign key fails (report not saved yet), retry without report_id
-        if (error.message && error.message.includes('foreign key constraint') && reportId) {
-          console.warn(`[Pattern Detection] Report ${reportId} not saved yet, saving occurrence without report_id`);
-          const occurrenceWithoutReport: PatternOccurrence = {
-            ...occurrence,
-            reportId: undefined,
-          };
-          try {
-            await savePatternOccurrence(occurrenceWithoutReport);
-            totalOccurrences++;
-          } catch (retryError) {
-            console.error('[Pattern Detection] Failed to save pattern occurrence:', retryError);
-            // Continue with other occurrences
-          }
-        } else {
+        // Log error but continue with other occurrences
+        if (process.env.NODE_ENV === 'development') {
           console.error('[Pattern Detection] Failed to save pattern occurrence:', error);
-          // Continue with other occurrences
         }
+        // Continue with other occurrences - pattern detection should not fail completely
       }
     }
 

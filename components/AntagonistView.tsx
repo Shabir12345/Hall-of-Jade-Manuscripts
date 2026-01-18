@@ -1,6 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { Antagonist, NovelState, AntagonistType, AntagonistStatus, AntagonistDuration, ThreatLevel, Character } from '../types';
 import { useToast } from '../contexts/ToastContext';
+import AntagonistProgressionTimeline from './AntagonistProgressionTimeline';
+import AntagonistChapterAppearances from './AntagonistChapterAppearances';
 
 interface AntagonistViewProps {
   antagonist: Antagonist;
@@ -41,8 +43,8 @@ const AntagonistView: React.FC<AntagonistViewProps> = ({
   const arcAssociations = antagonist.arcAssociations || [];
 
   return (
-    <div className="p-6 md:p-8 lg:p-12 space-y-6">
-      <div className="flex items-center justify-between mb-8 border-b border-zinc-700 pb-6">
+    <div className="p-4 md:p-5 lg:p-6 space-y-4">
+      <div className="flex items-center justify-between mb-6 border-b border-zinc-700 pb-4">
         <button
           onClick={onBack}
           className="px-4 py-2 text-zinc-400 hover:text-zinc-200 transition-colors"
@@ -69,13 +71,13 @@ const AntagonistView: React.FC<AntagonistViewProps> = ({
             <>
               <button
                 onClick={() => setIsEditing(true)}
-                className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 rounded-xl font-semibold shadow-lg shadow-amber-900/30 transition-all duration-200 hover:scale-105"
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl font-semibold shadow-lg shadow-amber-900/30 transition-all duration-200 hover:scale-105"
               >
                 Edit
               </button>
               <button
                 onClick={() => onDelete(antagonist.id)}
-                className="px-6 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl font-semibold shadow-lg shadow-red-900/30 transition-all duration-200 hover:scale-105"
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-xl font-semibold shadow-lg shadow-red-900/30 transition-all duration-200 hover:scale-105"
               >
                 Delete
               </button>
@@ -115,6 +117,7 @@ const AntagonistView: React.FC<AntagonistViewProps> = ({
                   value={edited.type}
                   onChange={(e) => setEdited({ ...edited, type: e.target.value as AntagonistType })}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+                  aria-label="Antagonist type"
                 >
                   <option value="individual">Individual</option>
                   <option value="group">Group</option>
@@ -136,6 +139,7 @@ const AntagonistView: React.FC<AntagonistViewProps> = ({
                   value={edited.status}
                   onChange={(e) => setEdited({ ...edited, status: e.target.value as AntagonistStatus })}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+                  aria-label="Antagonist status"
                 >
                   <option value="active">Active</option>
                   <option value="hinted">Hinted</option>
@@ -157,6 +161,7 @@ const AntagonistView: React.FC<AntagonistViewProps> = ({
                   value={edited.durationScope}
                   onChange={(e) => setEdited({ ...edited, durationScope: e.target.value as AntagonistDuration })}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+                  aria-label="Duration scope"
                 >
                   <option value="chapter">Chapter</option>
                   <option value="arc">Arc</option>
@@ -177,6 +182,7 @@ const AntagonistView: React.FC<AntagonistViewProps> = ({
                   value={edited.threatLevel}
                   onChange={(e) => setEdited({ ...edited, threatLevel: e.target.value as ThreatLevel })}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+                  aria-label="Threat level"
                 >
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
@@ -394,6 +400,23 @@ const AntagonistView: React.FC<AntagonistViewProps> = ({
             </div>
           </div>
         )}
+
+        {/* Progression Timeline */}
+        <div className="mt-6">
+          <AntagonistProgressionTimeline antagonist={antagonist} />
+        </div>
+
+        {/* Chapter Appearances */}
+        <div className="mt-6">
+          <AntagonistChapterAppearances
+            antagonist={antagonist}
+            chapters={novel.chapters}
+            onChapterClick={(chapterId) => {
+              // Navigate to chapter if navigation context is available
+              // This would require passing navigation context or callback
+            }}
+          />
+        </div>
       </div>
     </div>
   );

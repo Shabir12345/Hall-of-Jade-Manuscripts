@@ -66,7 +66,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         <div className="flex justify-end space-x-4">
           <button
             onClick={onCancel}
-            className="px-6 py-2.5 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
+            className="px-4 py-2 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
           >
             {cancelText}
           </button>

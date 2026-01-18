@@ -103,8 +103,6 @@ class LoggingService {
       'anon_key',
       'supabaseKey',
       'supabase_key',
-      'geminiApiKey',
-      'gemini_api_key',
       'deepseekApiKey',
       'deepseek_api_key',
     ];
@@ -264,3 +262,106 @@ export const logWarn = (message: string, context?: string, data?: Record<string,
   logger.warn(message, context, data);
 export const logError = (message: string, context?: string, error?: Error, data?: Record<string, unknown>) =>
   logger.error(message, context, error, data);
+
+// ============================================================================
+// Structured Logging for Chapter Generation
+// ============================================================================
+
+export interface GenerationLogEntry {
+  chapterNumber: number;
+  phase: string;
+  health?: number;
+  warnings?: number;
+  blockers?: number;
+  constraints?: string[];
+  threadSummary?: {
+    active: number;
+    stalled: number;
+    atRisk: number;
+  };
+  duration?: number;
+  error?: string;
+}
+
+/**
+ * Log chapter generation start with health summary
+ */
+export function logGenerationStart(entry: GenerationLogEntry): void {
+  const healthEmoji = (entry.health || 0) >= 80 ? '✅' : 
+                      (entry.health || 0) >= 60 ? '⚠️' : '❌';
+  
+  console.group(`📝 Chapter ${entry.chapterNumber} Generation Starting`);
+  console.log(`${healthEmoji} Story Health: ${entry.health || 'N/A'}/100`);
+  
+  if (entry.threadSummary) {
+    console.log(`📚 Threads: ${entry.threadSummary.active} active, ${entry.threadSummary.stalled} stalled, ${entry.threadSummary.atRisk} at risk`);
+  }
+  
+  if (entry.blockers && entry.blockers > 0) {
+    console.error(`🚫 ${entry.blockers} blocker(s) detected`);
+  }
+  
+  if (entry.warnings && entry.warnings > 0) {
+    console.warn(`⚠️ ${entry.warnings} warning(s)`);
+  }
+  
+  if (entry.constraints && entry.constraints.length > 0) {
+    console.log(`📋 ${entry.constraints.length} constraint(s) added to prompt`);
+  }
+  
+  console.groupEnd();
+}
+
+/**
+ * Log chapter generation phase
+ */
+export function logGenerationPhase(chapterNumber: number, phase: string, data?: Record<string, unknown>): void {
+  const phaseEmoji: Record<string, string> = {
+    'quality_check': '🔍',
+    'prompt_build_start': '🔧',
+    'prompt_build_end': '✅',
+    'queue_estimate': '⏳',
+    'queue_dequeued': '▶️',
+    'llm_request_start': '🤖',
+    'llm_request_end': '📄',
+    'quality_validation': '📊',
+    'parse_start': '📝',
+    'parse_end': '✅',
+    'regeneration_start': '🔄',
+    'regeneration_complete': '✅',
+    'regeneration_error': '❌',
+  };
+  
+  const emoji = phaseEmoji[phase] || '📌';
+  console.log(`${emoji} Chapter ${chapterNumber} - ${phase}`, data ? data : '');
+}
+
+/**
+ * Log chapter generation complete with summary
+ */
+export function logGenerationComplete(entry: GenerationLogEntry): void {
+  console.group(`✅ Chapter ${entry.chapterNumber} Generation Complete`);
+  
+  if (entry.duration) {
+    console.log(`⏱️ Duration: ${(entry.duration / 1000).toFixed(1)}s`);
+  }
+  
+  if (entry.health !== undefined) {
+    const healthEmoji = entry.health >= 80 ? '✅' : entry.health >= 60 ? '⚠️' : '❌';
+    console.log(`${healthEmoji} Final Health: ${entry.health}/100`);
+  }
+  
+  console.groupEnd();
+}
+
+/**
+ * Log chapter generation error
+ */
+export function logGenerationError(chapterNumber: number, error: string, details?: Record<string, unknown>): void {
+  console.group(`❌ Chapter ${chapterNumber} Generation Failed`);
+  console.error(`Error: ${error}`);
+  if (details) {
+    console.error('Details:', details);
+  }
+  console.groupEnd();
+}

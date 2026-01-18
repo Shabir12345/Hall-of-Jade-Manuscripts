@@ -29,9 +29,9 @@ const StoryboardView: React.FC<StoryboardViewProps> = ({ novelState }) => {
       </div>
 
       {allScenes.length === 0 ? (
-        <div className="py-16 px-8 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
-          <div className="text-6xl mb-4">📋</div>
-          <h3 className="text-xl font-fantasy font-bold text-zinc-300 mb-2">No Scenes Yet</h3>
+        <div className="py-12 px-6 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
+          <div className="text-4xl mb-3">📋</div>
+          <h3 className="text-lg font-fantasy font-bold text-zinc-300 mb-2">No Scenes Yet</h3>
           <p className="text-sm text-zinc-500">Create scenes in your chapters to see them here.</p>
         </div>
       ) : (

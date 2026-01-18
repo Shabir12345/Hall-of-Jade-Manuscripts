@@ -243,7 +243,7 @@ export function useEditorFixApplication() {
       onProgress?.(30);
 
       // Step 5: Apply fixes
-      const { updatedChapters, appliedFixes, failedFixes } = applyApprovedFixes(
+      const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(
         chaptersToUpdate,
         validatedFixes
       );

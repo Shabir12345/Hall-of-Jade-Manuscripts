@@ -4,6 +4,11 @@ import { getStyleProfile } from './styleAnalyzer';
 import { buildStoryStateSummary, formatStoryStateSummary } from './storyStateTracker';
 import { generateAntagonistContext, formatAntagonistContextForPrompt } from '../antagonistAnalyzer';
 import { analyzeForeshadowing, analyzeEmotionalPayoffs, analyzePacing, analyzeSymbolism, analyzeAllArcContexts, analyzeCharacterArcJourneys, analyzeArcProgression } from './arcContextAnalyzer';
+import { getGrandSagaCharacters, getAllGrandSagaCharacterNames } from '../grandSagaAnalyzer';
+import { detectMissingCharacters } from '../characterPresenceTracker';
+import { getOverduePromises, getHighPriorityPendingPromises } from '../promiseTracker';
+import { compileComprehensiveContext } from '../contextCompilationService';
+import { textContainsCharacterName } from '../../utils/characterNameMatching';
 
 /**
  * Context Gatherer
@@ -32,7 +37,7 @@ export function extractChapterEnding(chapter: Chapter, wordCount: number = 300):
  * Extracts character states specifically from the end of a chapter
  * Enhanced analysis of the last portion to determine character locations, emotions, and situations
  */
-function extractEndOfChapterCharacterStates(
+export function extractEndOfChapterCharacterStates(
   chapter: Chapter,
   characters: Character[],
   wordCount: number = 600
@@ -278,12 +283,45 @@ export function buildContinuityBridge(
     .map(c => c.characterName)
     .join(', ') || 'Unclear';
 
+  // Extract explicit location information from character states and ending text
+  const primaryLocations = endCharacterStates
+    .map(c => c.location)
+    .filter((loc): loc is string => !!loc && loc.length > 0);
+  
+  // Also extract location from ending text directly (as fallback)
+  const endingLower = ending.toLowerCase();
+  const locationPatterns = [
+    /\b(at|in|inside|outside|near|beside)\s+(the\s+)?([a-z]+(?:\s+[a-z]+){0,3})\s+(grounds?|hall|chamber|room|tower|peak|palace|temple|forest|mountain|city|village|sect)/gi,
+    /\b(at|in|inside)\s+(the\s+)?([a-z]+(?:\s+[a-z]+){0,2})\s+(square|courtyard|entrance|exit|library|training\s+ground|hut)/gi,
+  ];
+  
+  const endingLocations: string[] = [];
+  locationPatterns.forEach(pattern => {
+    const matches = ending.matchAll(pattern);
+    for (const match of matches) {
+      const location = (match[3] || match[2])?.trim();
+      if (location && location.length > 2 && location.length < 50) {
+        // Filter out metaphorical uses (e.g., "azure cloud")
+        if (!/\b(azure|digital|computing)\s+cloud/gi.test(match[0] || '')) {
+          endingLocations.push(location);
+        }
+      }
+    }
+  });
+  
+  // Combine unique locations
+  const allLocations = [...new Set([...primaryLocations, ...endingLocations])];
+  const primaryLocation = allLocations[0] || 'Location unclear from ending';
+
   let bridge = `[CHAPTER TRANSITION - CRITICAL CONTINUITY CONTEXT]
 === THIS IS THE MOST IMPORTANT SECTION - READ FIRST ===
 
 Previous Chapter: Chapter ${previousChapter.number} - "${previousChapter.title}"
 Previous Chapter Ending (last ~600 words):
 "${ending}"
+
+🎯 PRIMARY LOCATION AT CHAPTER END:
+${primaryLocation}${allLocations.length > 1 ? ` (also mentioned: ${allLocations.slice(1).join(', ')})` : ''}
 
 SCENE PARTICIPANTS AT CHAPTER END:
 ${sceneParticipants}
@@ -301,7 +339,24 @@ ${sceneParticipants}
       if (charState.situation) parts.push(`Situation: ${charState.situation.substring(0, 150)}`);
       bridge += `- ${parts.join(' | ')}\n`;
     });
-    bridge += `\nIMPORTANT: The next chapter MUST maintain these exact character states. Characters should be in the same locations, have the same emotional/physical states, and continue from the situations described above.\n\n`;
+    bridge += `\n⛔ CRITICAL LOCATION REQUIREMENT ⛔\n`;
+    bridge += `The next chapter MUST start at: ${primaryLocation}\n`;
+    if (endCharacterStates.some(c => c.location)) {
+      bridge += `Character locations at chapter end:\n`;
+      endCharacterStates.forEach(charState => {
+        if (charState.location) {
+          bridge += `  - ${charState.characterName} is at: ${charState.location}\n`;
+        }
+      });
+    }
+    bridge += `\nIMPORTANT: The next chapter MUST maintain these exact character states. Characters should be in the same locations, have the same emotional/physical states, and continue from the situations described above.\n`;
+    bridge += `DO NOT change locations unless explicitly transitioning within the scene.\n\n`;
+  } else {
+    // Even if no character states extracted, emphasize the primary location
+    bridge += `⛔ CRITICAL LOCATION REQUIREMENT ⛔\n`;
+    bridge += `The next chapter MUST start at the same location where Chapter ${previousChapter.number} ended.\n`;
+    bridge += `Primary location from ending: ${primaryLocation}\n`;
+    bridge += `DO NOT change locations without showing how the character moved there.\n\n`;
   }
 
   // Add immediate situation
@@ -349,9 +404,10 @@ ${sceneParticipants}
   bridge += `\n=== CONTINUITY SUMMARY ===\n`;
   bridge += `Next chapter must start with:\n`;
   bridge += `1. Same scene/setting as Chapter ${previousChapter.number} ended\n`;
-  bridge += `2. Same characters present (${sceneParticipants})\n`;
+  bridge += `2. Same LOCATION: ${primaryLocation} (this is CRITICAL - do not change without transition)\n`;
+  bridge += `3. Same characters present (${sceneParticipants})\n`;
   if (endCharacterStates.length > 0) {
-    bridge += `3. Same character states:\n`;
+    bridge += `4. Same character states:\n`;
     endCharacterStates.forEach(charState => {
       const stateParts: string[] = [];
       if (charState.location) stateParts.push(`@ ${charState.location}`);
@@ -361,16 +417,80 @@ ${sceneParticipants}
         bridge += `   - ${charState.characterName}: ${stateParts.join(', ')}\n`;
       }
     });
+  } else {
+    bridge += `4. Same character states as described above\n`;
   }
-  bridge += `4. Immediate next moment - what happens in the next few seconds/minutes\n`;
-  bridge += `5. NO time skip, NO location change without transition\n`;
-  bridge += `\nThe chapter should feel like a direct continuation, as if you're turning the page in the same scene.\n`;
+  bridge += `${endCharacterStates.length > 0 ? '5' : '5'}. Immediate next moment - what happens in the next few seconds/minutes\n`;
+  bridge += `${endCharacterStates.length > 0 ? '6' : '6'}. NO time skip, NO location change without transition\n`;
+  bridge += `\nThe chapter should feel like a direct continuation, as if you're turning the page in the same scene at the same location.\n`;
+
+  // Add explicit transition examples and warnings
+  bridge += `\n=== TRANSITION EXAMPLES AND WARNINGS ===\n\n`;
+
+  // Extract last few sentences for concrete examples
+  const endingSentences = ending.split(/[.!?]+/).filter(s => s.trim().length > 0).slice(-3);
+  const lastSentence = endingSentences[endingSentences.length - 1]?.trim() || '';
+
+  if (lastSentence) {
+    bridge += `CONCRETE EXAMPLE - HOW TO CONTINUE:\n`;
+    bridge += `Previous chapter ends with: "${lastSentence}"\n\n`;
+    bridge += `CORRECT way to start next chapter:\n`;
+    bridge += `- If character was going somewhere: Show them arriving or taking the next step\n`;
+    bridge += `- If character was reacting: Show their immediate next action or decision\n`;
+    bridge += `- If character was in conversation: Continue the dialogue or show their response\n`;
+    bridge += `- If character was thinking: Show them acting on that thought or the next moment\n`;
+    bridge += `Example opening: "[Character name] ${lastSentence.includes('toward') || lastSentence.includes('walked') || lastSentence.includes('headed') ? 'reached' : 'stepped'} [continue from where they were going]..."\n\n`;
+
+    bridge += `WRONG way to start (REJECT IF YOU SEE THIS):\n`;
+    bridge += `- "The next morning..." (time skip - FORBIDDEN)\n`;
+    bridge += `- "Back in his hut..." (location jump - FORBIDDEN)\n`;
+    bridge += `- "The morning sun climbed higher..." (weather cliché - FORBIDDEN)\n`;
+    bridge += `- Starting in a completely different location without explanation (FORBIDDEN)\n\n`;
+  }
+
+  bridge += `⛔ CRITICAL TRANSITION CHECKLIST ⛔\n`;
+  bridge += `Before finalizing the chapter opening, verify:\n`;
+  bridge += `[ ] First sentence continues directly from previous chapter's ending\n`;
+  bridge += `[ ] No time skip (no "later", "the next morning", "hours later", etc.)\n`;
+  bridge += `[ ] Same location as previous chapter ended (unless explicitly transitioning)\n`;
+  bridge += `[ ] Same characters present (unless they left the scene)\n`;
+  bridge += `[ ] Character states match (location, emotions, physical state)\n`;
+  bridge += `[ ] Opening shows immediate next moment (next few seconds/minutes)\n`;
+  bridge += `[ ] First sentence is NOT a weather/time-of-day description\n`;
+  bridge += `[ ] Opening involves character action, dialogue, or thought (not just description)\n`;
+  bridge += `[ ] References previous chapter's ending situation or continues from it\n\n`;
+
+  bridge += `⚠️ COMMON TRANSITION MISTAKES TO AVOID ⚠️\n`;
+  bridge += `1. TIME JUMPS: Never start with "Later that day...", "The next morning...", "Hours later..." unless there's an explicit reason and transition text\n`;
+  bridge += `2. LOCATION JUMPS: Never start in a new location without showing how the character got there\n`;
+  bridge += `3. WEATHER OPENINGS: Never start with weather descriptions - they're AI clichés and break flow\n`;
+  bridge += `4. DISCONNECTED OPENINGS: Never start with something completely unrelated to the previous chapter's ending\n`;
+  bridge += `5. REPETITIVE ENDINGS: Don't repeat the previous chapter's ending - continue from it\n`;
+  bridge += `6. MISSING CHARACTERS: If a character was present at chapter end, they should still be present (unless they left)\n`;
+  bridge += `7. EMOTIONAL JUMPS: Don't change character emotions without showing the transition\n\n`;
+
+  bridge += `✅ VALIDATION CRITERIA ✅\n`;
+  bridge += `Your chapter opening will be REJECTED if:\n`;
+  bridge += `✗ It starts with weather/time-of-day description\n`;
+  bridge += `✗ It skips time without explanation\n`;
+  bridge += `✗ It changes location without showing transition\n`;
+  bridge += `✗ It doesn't reference the previous chapter's ending\n`;
+  bridge += `✗ Characters are in different states without explanation\n`;
+  bridge += `✗ The opening is disconnected from the previous chapter\n\n`;
+
+  bridge += `If your opening violates ANY of these criteria, STOP and rewrite it.\n`;
+  bridge += `The transition quality is MORE IMPORTANT than perfect prose - fix the transition first.\n`;
 
   return bridge;
 }
 
 /**
  * Gathers complete context for prompt construction
+ * 
+ * Supports enhanced context gathering for models with large context windows (e.g., Grok 2M tokens):
+ * - includeFullChapterText: Include full chapter text instead of summaries for recent chapters
+ * - includeFullCharacterProgression: Track character progression across all chapters
+ * - includeAllActiveThreads: Include all active plot threads from entire novel
  */
 export async function gatherPromptContext(
   state: NovelState,
@@ -381,6 +501,10 @@ export async function gatherPromptContext(
     includeCharacterDevelopment?: boolean;
     includeStoryProgression?: boolean;
     includeArcHistory?: boolean;
+    // New options for large context windows (e.g., Grok 2M tokens)
+    includeFullChapterText?: boolean; // Include full chapter text (not summaries) for recent chapters
+    includeFullCharacterProgression?: boolean; // Track character progression across all chapters
+    includeAllActiveThreads?: boolean; // Include all active plot threads from entire novel
   } = {}
 ): Promise<PromptContext> {
   const {
@@ -390,6 +514,9 @@ export async function gatherPromptContext(
     includeCharacterDevelopment = true,
     includeStoryProgression = true,
     includeArcHistory = false,
+    includeFullChapterText = false,
+    includeFullCharacterProgression = false,
+    includeAllActiveThreads = false,
   } = options;
 
   const currentRealm = state.realms.find(r => r.id === state.currentRealmId) || null;
@@ -403,9 +530,20 @@ export async function gatherPromptContext(
     : [];
 
   // Create older chapters summary
+  // For large context windows (Grok), provide more detailed summaries including key events
   const olderChaptersSummary = olderChapters.length > 0
     ? olderChapters
-        .map(c => `Ch ${c.number}: ${c.summary || c.title}`)
+        .map(c => {
+          if (includeFullHistory && includeFullChapterText) {
+            // For Grok with large context, include more detail in summaries
+            const summary = c.summary || c.title;
+            const hasLogicAudit = c.logicAudit ? ` [Logic: ${c.logicAudit.resultingValue}]` : '';
+            return `Ch ${c.number}: ${c.title}\n  Summary: ${summary}${hasLogicAudit}`;
+          } else {
+            // Standard summary format
+            return `Ch ${c.number}: ${c.summary || c.title}`;
+          }
+        })
         .join('\n')
     : 'No previous chapters.';
 
@@ -465,9 +603,45 @@ export async function gatherPromptContext(
   const nextChapterNumber = state.chapters.length + 1;
   const continuityBridge = buildContinuityBridge(previousChapter, nextChapterNumber, state);
 
-  // Extract active plot threads
-  const activePlotThreads = storyStateSummaryData.activePlotThreads
-    .filter(t => t.status === 'active' || t.status === 'pending')
+  // Extract active plot threads with priority information
+  // When includeAllActiveThreads is true (Grok), include ALL active threads from entire novel
+  // Otherwise, use the filtered threads from storyStateSummaryData
+  let filteredThreads = storyStateSummaryData.activePlotThreads
+    .filter(t => t.status === 'active' || t.status === 'pending');
+  
+  // For large context windows, also include threads from storyThreads (if available)
+  if (includeAllActiveThreads && state.storyThreads) {
+    const allStoryThreads = state.storyThreads
+      .filter(t => t.status === 'active' || t.status === 'paused')
+      .map(t => ({
+        id: t.id,
+        description: t.description || t.title,
+        introducedInChapter: t.introducedChapter,
+        status: t.status === 'active' ? 'active' as const : 'pending' as const,
+        priority: (t.priority === 'critical' ? 'high' : t.priority === 'high' ? 'high' : 'medium') as 'high' | 'medium' | 'low',
+        threadType: t.type || 'thread',
+      }));
+    
+    // Merge and deduplicate (prioritize storyThreads data if duplicates exist)
+    const threadMap = new Map(filteredThreads.map(t => [t.id, t]));
+    allStoryThreads.forEach(t => {
+      if (!threadMap.has(t.id)) {
+        threadMap.set(t.id, t);
+      }
+    });
+    filteredThreads = Array.from(threadMap.values());
+  }
+  
+  // Format plot threads with priority indicators
+  const activePlotThreads = filteredThreads.map(t => {
+    const priorityLabel = t.priority === 'high' ? '[HIGH PRIORITY] ' : 
+                          t.priority === 'low' ? '[LOW PRIORITY] ' : '';
+    return `${priorityLabel}${t.description}`;
+  });
+  
+  // Separate high-priority threads for mandatory resolution
+  const highPriorityPlotThreads = filteredThreads
+    .filter(t => t.priority === 'high')
     .map(t => t.description);
 
   // Analyze arc context if requested
@@ -502,6 +676,44 @@ export async function gatherPromptContext(
       });
     }
     antagonistContext = undefined;
+  }
+
+  // Generate system context (character systems that help the protagonist)
+  let systemContext: string | undefined;
+  try {
+    if (state.characterSystems && state.characterSystems.length > 0) {
+      const nextChapterNumber = state.chapters.length + 1;
+      const systemSections: string[] = [];
+      systemSections.push('[CHARACTER SYSTEM CONTEXT]');
+      
+      // Get active systems
+      const activeSystems = state.characterSystems.filter(s => s.status === 'active');
+      if (activeSystems.length > 0) {
+        activeSystems.forEach(system => {
+          systemSections.push(`System: ${system.name} (${system.type}, ${system.category})`);
+          if (system.description) {
+            systemSections.push(`Description: ${system.description.substring(0, 200)}`);
+          }
+          if (system.currentLevel || system.currentVersion) {
+            systemSections.push(`Current Level/Version: ${system.currentLevel || system.currentVersion}`);
+          }
+          if (system.features && system.features.length > 0) {
+            const activeFeatures = system.features.filter(f => f.isActive);
+            if (activeFeatures.length > 0) {
+              systemSections.push(`Active Features: ${activeFeatures.map(f => f.name).join(', ')}`);
+            }
+          }
+          systemSections.push('');
+        });
+      }
+      
+      if (systemSections.length > 1) {
+        systemContext = systemSections.join('\n');
+      }
+    }
+  } catch (error) {
+    console.warn('Error generating system context:', error);
+    systemContext = undefined;
   }
 
   // Generate foreshadowing, emotional payoff, pacing, and symbolism context
@@ -653,6 +865,113 @@ export async function gatherPromptContext(
     symbolismContext = undefined;
   }
 
+  // Extract Grand Saga characters
+  let grandSagaCharacters: Character[] | undefined;
+  let grandSagaExtractedNames: Array<{ name: string; confidence: number; context: string }> | undefined;
+  try {
+    if (state.grandSaga && state.grandSaga.trim().length > 0) {
+      const grandSagaData = getAllGrandSagaCharacterNames(state);
+      grandSagaCharacters = grandSagaData.inCodex;
+      if (grandSagaData.notInCodex.length > 0) {
+        grandSagaExtractedNames = grandSagaData.notInCodex;
+      }
+    }
+  } catch (error) {
+    console.warn('Error extracting Grand Saga characters:', error);
+  }
+
+  // Compile comprehensive context (threads, characters, plot points, progression)
+  let comprehensiveThreadContext: string | undefined;
+  let comprehensiveCharacterContext: Array<{ characterId: string; formattedContext: string }> | undefined;
+  let openPlotPointsContext: string | undefined;
+  let storyProgressionAnalysis: string | undefined;
+  try {
+    const nextChapterNumber = state.chapters.length + 1;
+    
+    // Get characters that will appear (from previous chapter ending)
+    const previousChapter = state.chapters.length > 0 ? state.chapters[state.chapters.length - 1] : null;
+    const charactersToInclude = previousChapter
+      ? state.characterCodex
+          .filter(c => textContainsCharacterName(previousChapter.content.slice(-1000), c.name))
+          .map(c => c.id)
+      : state.characterCodex.filter(c => c.isProtagonist).map(c => c.id);
+
+    const comprehensiveContext = compileComprehensiveContext(
+      state,
+      nextChapterNumber,
+      charactersToInclude
+    );
+
+    comprehensiveThreadContext = comprehensiveContext.threadContext.formattedContext;
+    comprehensiveCharacterContext = comprehensiveContext.characterContexts.map(cc => ({
+      characterId: cc.character.id,
+      formattedContext: cc.formattedContext,
+    }));
+    openPlotPointsContext = comprehensiveContext.openPlotPoints.formattedContext;
+    storyProgressionAnalysis = comprehensiveContext.storyProgression.formattedContext;
+  } catch (error) {
+    console.warn('Error compiling comprehensive context:', error);
+    // Don't fail if comprehensive context compilation fails - use fallback
+  }
+
+  // Generate character presence warnings
+  let characterPresenceWarnings: string[] | undefined;
+  try {
+    const nextChapterNumber = state.chapters.length + 1;
+    const warnings = detectMissingCharacters(
+      state.chapters,
+      state.characterCodex,
+      {
+        checkLastChapters: 2,
+        maxChaptersSinceAppearance: 5,
+      }
+    );
+    // Extract only critical and warning level messages
+    characterPresenceWarnings = warnings
+      .filter(w => w.warningLevel === 'critical' || w.warningLevel === 'warning')
+      .map(w => w.message);
+    if (characterPresenceWarnings.length === 0) {
+      characterPresenceWarnings = undefined;
+    }
+  } catch (error) {
+    console.warn('Error generating character presence warnings:', error);
+    characterPresenceWarnings = undefined;
+  }
+
+  // Generate overdue promises context
+  let overduePromisesContext: string | undefined;
+  try {
+    const nextChapterNumber = state.chapters.length + 1;
+    const overduePromises = getOverduePromises(state, nextChapterNumber, { overdueThreshold: 3 });
+    const highPriorityPromises = getHighPriorityPendingPromises(state, nextChapterNumber);
+    
+    const promiseSections: string[] = [];
+    if (overduePromises.length > 0 || highPriorityPromises.length > 0) {
+      promiseSections.push('[OVERDUE PROMISES & HIGH-PRIORITY COMMITMENTS]');
+      
+      if (overduePromises.length > 0) {
+        promiseSections.push('Overdue Promises (3+ chapters):');
+        overduePromises.slice(0, 5).forEach(promise => {
+          promiseSections.push(`  - "${promise.description}" (introduced Ch ${promise.introducedInChapter}, ${promise.overdueByChapters} chapters overdue)`);
+        });
+      }
+      
+      if (highPriorityPromises.length > 0) {
+        promiseSections.push('High-Priority Pending Promises:');
+        highPriorityPromises.slice(0, 3).forEach(promise => {
+          promiseSections.push(`  - "${promise.description}" (introduced Ch ${promise.introducedInChapter}, ${promise.chaptersSinceIntroduction} chapters ago)`);
+        });
+      }
+      
+      promiseSections.push('Consider addressing at least one overdue or high-priority promise in this chapter.');
+      
+      overduePromisesContext = promiseSections.join('\n');
+    }
+  } catch (error) {
+    console.warn('Error generating overdue promises context:', error);
+    overduePromisesContext = undefined;
+  }
+
   return {
     storyState: {
       title: state.title,
@@ -682,12 +1001,22 @@ export async function gatherPromptContext(
     storyStateSummary,
     continuityBridge,
     activePlotThreads,
+    highPriorityPlotThreads: highPriorityPlotThreads.length > 0 ? highPriorityPlotThreads : undefined,
+    characterPresenceWarnings,
+    overduePromisesContext,
     foreshadowingContext,
     emotionalPayoffContext,
     pacingContext,
     symbolismContext,
     arcContext,
     antagonistContext,
+    systemContext,
+    grandSagaCharacters,
+    grandSagaExtractedNames,
+    comprehensiveThreadContext,
+    comprehensiveCharacterContext,
+    openPlotPointsContext,
+    storyProgressionAnalysis,
   };
 }
 
@@ -766,11 +1095,13 @@ function calculateCharacterRelevanceScore(
  * Gets truncated character codex for prompts (to save tokens)
  * Improved: Uses semantic relevance scoring instead of just name mentions
  * Only includes characters that are relevant (mentioned in recent chapters, related to mentioned characters, or are main characters)
+ * ENHANCED: Always includes characters from Grand Saga, especially when no chapters exist
  */
 export function getTruncatedCharacterCodex(
   characters: Character[],
   recentChapters: Chapter[] = [],
-  maxCharacters: number = 10
+  maxCharacters: number = 10,
+  state?: NovelState // Optional state to extract Grand Saga characters
 ): Array<{
   name: string;
   isProtagonist?: boolean;
@@ -787,11 +1118,34 @@ export function getTruncatedCharacterCodex(
     impact: string;
   }>;
 }> {
+  // Get Grand Saga characters if state is provided
+  const grandSagaCharacters: Character[] = state 
+    ? getGrandSagaCharacters(state)
+    : [];
+  
   // Calculate relevance scores for all characters
   const charactersWithScores = characters.map(char => ({
     character: char,
     score: calculateCharacterRelevanceScore(char, recentChapters, characters),
   }));
+  
+  // Boost score for Grand Saga characters, especially when no chapters exist
+  if (recentChapters.length === 0 && grandSagaCharacters.length > 0) {
+    const grandSagaIds = new Set(grandSagaCharacters.map(c => c.id));
+    charactersWithScores.forEach(entry => {
+      if (grandSagaIds.has(entry.character.id)) {
+        entry.score += 200; // High boost for Grand Saga characters when no chapters
+      }
+    });
+  } else if (grandSagaCharacters.length > 0) {
+    // Still boost but less when chapters exist
+    const grandSagaIds = new Set(grandSagaCharacters.map(c => c.id));
+    charactersWithScores.forEach(entry => {
+      if (grandSagaIds.has(entry.character.id)) {
+        entry.score += 50; // Moderate boost for Grand Saga characters
+      }
+    });
+  }
   
   // Sort by relevance score (highest first)
   charactersWithScores.sort((a, b) => b.score - a.score);
@@ -805,6 +1159,25 @@ export function getTruncatedCharacterCodex(
       const [protagonistEntry] = charactersWithScores.splice(protagonistIndex, 1);
       charactersWithScores.unshift(protagonistEntry);
     }
+  }
+  
+  // When no chapters exist, prioritize Grand Saga characters
+  if (recentChapters.length === 0 && grandSagaCharacters.length > 0) {
+    const grandSagaIds = new Set(grandSagaCharacters.map(c => c.id));
+    const grandSagaEntries: typeof charactersWithScores = [];
+    const otherEntries: typeof charactersWithScores = [];
+    
+    charactersWithScores.forEach(entry => {
+      if (grandSagaIds.has(entry.character.id)) {
+        grandSagaEntries.push(entry);
+      } else {
+        otherEntries.push(entry);
+      }
+    });
+    
+    // Put Grand Saga characters first, then others
+    charactersWithScores.length = 0;
+    charactersWithScores.push(...grandSagaEntries, ...otherEntries);
   }
   
   // Take top N most relevant characters

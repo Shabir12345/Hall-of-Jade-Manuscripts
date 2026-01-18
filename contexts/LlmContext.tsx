@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
-export type LlmId = 'gemini' | 'deepseek-chat' | 'deepseek-reasoner';
+export type LlmId = 'grok-4-1-fast-reasoning' | 'grok-4-1-fast-non-reasoning';
 
 const STORAGE_KEY = 'apexforge.llm';
 
 export function getStoredLlm(): LlmId {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw === 'gemini' || raw === 'deepseek-chat' || raw === 'deepseek-reasoner') return raw;
-  return 'gemini';
+  if (raw === 'grok-4-1-fast-reasoning' || raw === 'grok-4-1-fast-non-reasoning') return raw;
+  return 'grok-4-1-fast-reasoning';
 }
 
 export function setStoredLlm(llm: LlmId): void {
@@ -29,7 +29,7 @@ const LlmContext = createContext<LlmContextType | undefined>(undefined);
  * Must be used within an LlmProvider.
  * 
  * @returns {LlmContextType} The LLM context containing:
- * - llm: Currently selected LLM ('gemini' | 'deepseek-chat' | 'deepseek-reasoner')
+ * - llm: Currently selected LLM ('grok-4-1-fast-reasoning' | 'grok-4-1-fast-non-reasoning')
  * - setLlm: Change the selected LLM (persists to localStorage)
  * 
  * @throws {Error} If used outside of an LlmProvider
@@ -42,7 +42,7 @@ const LlmContext = createContext<LlmContextType | undefined>(undefined);
  * console.log('Current LLM:', llm);
  * 
  * // Change LLM
- * setLlm('deepseek-chat');
+ * setLlm('grok-4-1-fast-reasoning');
  * ```
  */
 export function useLlm(): LlmContextType {
@@ -57,7 +57,7 @@ export const LlmProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return getStoredLlm();
     } catch {
       // localStorage may be blocked; default safely.
-      return 'gemini';
+      return 'grok-4-1-fast-reasoning';
     }
   });
 

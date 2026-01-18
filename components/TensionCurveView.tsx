@@ -1,9 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { NovelState } from '../types';
-import { ImprovementRequest, ImprovementExecutionResult } from '../types/improvement';
+import { ImprovementRequest, ImprovementExecutionResult, ImprovementHistory } from '../types/improvement';
 import NovelImprovementDialog from './NovelImprovementDialog';
+import { EmptyState } from './EmptyState';
+import { useNovel } from '../contexts/NovelContext';
+import { useToast } from '../contexts/ToastContext';
+import { getImprovementHistory } from '../services/novelImprovementService';
+import { formatRelativeTime } from '../utils/timeUtils';
 import { analyzeTension } from '../services/tensionAnalyzer';
 import { analyzeConflicts } from '../services/conflictTracker';
+import { RelatedViews, RELATED_VIEWS_MAP } from './RelatedViews';
 
 interface TensionCurveViewProps {
   novelState: NovelState;
@@ -12,21 +18,129 @@ interface TensionCurveViewProps {
 const TensionCurveView: React.FC<TensionCurveViewProps> = ({ novelState }) => {
   const [improvementDialogOpen, setImprovementDialogOpen] = useState(false);
   const [improvementRequest, setImprovementRequest] = useState<ImprovementRequest | null>(null);
+  const [improvementHistory, setImprovementHistory] = useState<ImprovementHistory[]>([]);
+  const { updateActiveNovel, activeNovel } = useNovel();
+  const { showSuccess, showError, showWarning } = useToast();
+
+  // Load improvement history for this category
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!novelState.id) return;
+      try {
+        const history = await getImprovementHistory(novelState.id);
+        const categoryHistory = history.filter(h => h.category === 'tension');
+        setImprovementHistory(categoryHistory);
+      } catch (error) {
+        console.error('Failed to load improvement history', error);
+      }
+    };
+    loadHistory();
+  }, [novelState.id]);
 
   const handleImproveNovel = () => {
+    // Calculate target score: 90 or current + 30, whichever is lower
+    const currentScore = tensionAnalysis.overallTensionScore;
+    const targetScore = Math.min(90, Math.max(currentScore + 30, currentScore + 10));
+    
     setImprovementRequest({
       category: 'tension',
       scope: 'comprehensive',
+      targetScore,
     });
     setImprovementDialogOpen(true);
   };
 
-  const handleImprovementComplete = (result: ImprovementExecutionResult, improvedState: NovelState) => {
-    setImprovementDialogOpen(false);
-  };
+  const handleImprovementComplete = useCallback((
+    result: ImprovementExecutionResult,
+    improvedState: NovelState
+  ) => {
+    try {
+      // Validation: Ensure we have an active novel
+      if (!activeNovel) {
+        showError('No active novel selected. Cannot apply improvements.');
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Validation: Ensure improved state matches active novel ID
+      if (improvedState.id !== activeNovel.id) {
+        showError('Improved state does not match active novel. Cannot apply improvements.');
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Validation: Check if improvements were successful
+      if (!result.success) {
+        const errorMessage = result.failures.length > 0
+          ? `Improvements failed: ${result.failures[0].error}`
+          : 'Improvements did not complete successfully';
+        showError(errorMessage);
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Validation: Check if improved state is valid
+      if (!improvedState || !improvedState.chapters || improvedState.chapters.length === 0) {
+        showError('Improved state is invalid. Cannot apply improvements.');
+        setImprovementDialogOpen(false);
+        return;
+      }
+
+      // Apply the improved state
+      updateActiveNovel(() => improvedState);
+
+      // Generate user feedback message based on results
+      const changes = [];
+      if (result.chaptersEdited > 0) {
+        changes.push(`${result.chaptersEdited} chapter${result.chaptersEdited !== 1 ? 's' : ''} edited`);
+      }
+      if (result.chaptersInserted > 0) {
+        changes.push(`${result.chaptersInserted} chapter${result.chaptersInserted !== 1 ? 's' : ''} inserted`);
+      }
+      if (result.chaptersRegenerated > 0) {
+        changes.push(`${result.chaptersRegenerated} chapter${result.chaptersRegenerated !== 1 ? 's' : ''} regenerated`);
+      }
+
+      const changeSummary = changes.length > 0
+        ? changes.join(', ')
+        : 'No changes made';
+
+      // Show success message with details
+      const scoreChange = result.scoreImprovement;
+      const scoreMessage = scoreChange > 0
+        ? `Score improved by ${scoreChange.toFixed(1)} points (${result.scoreBefore.toFixed(1)} → ${result.scoreAfter.toFixed(1)})`
+        : scoreChange < 0
+        ? `Score changed by ${scoreChange.toFixed(1)} points (${result.scoreBefore.toFixed(1)} → ${result.scoreAfter.toFixed(1)})`
+        : `Score remained at ${result.scoreBefore.toFixed(1)}`;
+
+      showSuccess(
+        `Improvements applied successfully! ${changeSummary}. ${scoreMessage}.`,
+        6000
+      );
+
+      // Show warnings if any
+      if (result.validationResults.warnings.length > 0) {
+        result.validationResults.warnings.slice(0, 3).forEach(warning => {
+          showWarning(warning, 5000);
+        });
+      }
+
+      // Close dialog
+      setImprovementDialogOpen(false);
+    } catch (error) {
+      // Handle unexpected errors
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'An unexpected error occurred while applying improvements';
+      showError(`Failed to apply improvements: ${errorMessage}`);
+      setImprovementDialogOpen(false);
+    }
+  }, [activeNovel, updateActiveNovel, showSuccess, showError, showWarning]);
 
   const tensionAnalysis = useMemo(() => analyzeTension(novelState), [novelState]);
   const conflictAnalysis = useMemo(() => analyzeConflicts(novelState), [novelState]);
+
+  const totalChapters = novelState.chapters.length || 0;
 
   // Get tension color
   const getTensionColor = (level: number): string => {
@@ -36,17 +150,46 @@ const TensionCurveView: React.FC<TensionCurveViewProps> = ({ novelState }) => {
     return 'bg-blue-500';
   };
 
+  // Empty state - need at least 2 chapters for tension analysis
+  if (totalChapters < 2) {
+    return (
+      <div className="p-4 md:p-5 lg:p-6 max-w-6xl mx-auto pt-12 md:pt-16">
+        <div className="mb-6 border-b border-zinc-700 pb-4">
+          <h2 className="text-xl md:text-2xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">
+            Tension Curve & Conflict Map
+          </h2>
+          <p className="text-sm text-zinc-400 mt-2">Visual tension mapping and conflict hierarchy</p>
+        </div>
+        <EmptyState
+          icon="⚡"
+          title="Not Enough Chapters Yet"
+          description="Generate at least 2 chapters to enable tension analysis. Tension curves track the ebb and flow of conflict throughout your story."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto pt-16 md:pt-20">
       {/* Improvement Button */}
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex justify-end items-center gap-3">
         <button
           onClick={handleImproveNovel}
-          className="px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-lg font-semibold transition-all duration-200 flex items-center gap-2"
+          className="relative px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-lg font-semibold transition-all duration-200 flex items-center gap-2"
         >
           <span>⚡</span>
           <span>Improve Novel</span>
+          {improvementHistory.length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-amber-500 text-zinc-900 text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+              {improvementHistory.length}
+            </span>
+          )}
         </button>
+        {improvementHistory.length > 0 && improvementHistory[0] && (
+          <div className="text-xs text-zinc-400">
+            Last: {formatRelativeTime(improvementHistory[0].timestamp)}
+          </div>
+        )}
       </div>
 
       {/* Improvement Dialog */}
@@ -252,6 +395,14 @@ const TensionCurveView: React.FC<TensionCurveViewProps> = ({ novelState }) => {
           </ul>
         </div>
       )}
+
+      {/* Related Views */}
+      <div className="mt-8">
+        <RelatedViews
+          currentView="tension-curve"
+          relatedViews={RELATED_VIEWS_MAP['tension-curve']}
+        />
+      </div>
     </div>
   );
 };
