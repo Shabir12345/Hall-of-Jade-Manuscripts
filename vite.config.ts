@@ -6,7 +6,15 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
 export default defineConfig(({ mode }) => {
-    const env = loadEnv(mode, '.', '');
+    // Load from .env files (for local development)
+    const fileEnv = loadEnv(mode, '.', '');
+    
+    // Helper to get env var from either process.env (Vercel) or .env files (local)
+    // process.env takes priority as it contains Vercel's environment variables during build
+    const getEnv = (key: string): string | undefined => {
+      return process.env[key] || fileEnv[key] || undefined;
+    };
+    
     const shouldAnalyze = process.env.ANALYZE === 'true';
     
     // Conditionally import visualizer only when needed
@@ -42,12 +50,13 @@ export default defineConfig(({ mode }) => {
         visualizerPlugin,
       ].filter(Boolean),
       define: {
-        // Expose environment variables to client (only VITE_ prefixed are safe)
-        'process.env.DEEPSEEK_API_KEY': JSON.stringify(env.DEEPSEEK_API_KEY),
-        'process.env.ANTHROPIC_API_KEY': JSON.stringify(env.ANTHROPIC_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.OPENAI_API_KEY': JSON.stringify(env.OPENAI_API_KEY),
-        'process.env.XAI_API_KEY': JSON.stringify(env.XAI_API_KEY),
+        // Expose environment variables to client
+        // Uses process.env (Vercel build) with fallback to .env files (local dev)
+        'process.env.DEEPSEEK_API_KEY': JSON.stringify(getEnv('DEEPSEEK_API_KEY')),
+        'process.env.ANTHROPIC_API_KEY': JSON.stringify(getEnv('ANTHROPIC_API_KEY')),
+        'process.env.GEMINI_API_KEY': JSON.stringify(getEnv('GEMINI_API_KEY')),
+        'process.env.OPENAI_API_KEY': JSON.stringify(getEnv('OPENAI_API_KEY')),
+        'process.env.XAI_API_KEY': JSON.stringify(getEnv('XAI_API_KEY')),
       },
       // Expose VITE_ prefixed env vars to the client
       envPrefix: 'VITE_',
