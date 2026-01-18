@@ -45,8 +45,6 @@ export function validateEnv(): void {
     return value;
   };
 
-  const grokKey = getProcessEnv('XAI_API_KEY');
-
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(', ')}\n` +
@@ -57,16 +55,23 @@ export function validateEnv(): void {
     );
   }
 
-  // Validate critical API key (Grok is required for all AI functionality)
-  const missingApiKeys: string[] = [];
-  if (!grokKey || typeof grokKey !== 'string' || grokKey.trim() === '') {
-    missingApiKeys.push('XAI_API_KEY (required for all AI features)');
-  }
+  // Check if at least one AI provider API key is set
+  const anthropicKey = getProcessEnv('ANTHROPIC_API_KEY');
+  const geminiKey = getProcessEnv('GEMINI_API_KEY');
+  const openaiKey = getProcessEnv('OPENAI_API_KEY');
+  const deepseekKey = getProcessEnv('DEEPSEEK_API_KEY');
+  const grokKey = getProcessEnv('XAI_API_KEY');
 
-  if (missingApiKeys.length > 0) {
+  const hasAtLeastOneApiKey = !!(anthropicKey || geminiKey || openaiKey || deepseekKey || grokKey);
+
+  if (!hasAtLeastOneApiKey) {
     throw new Error(
-      `Missing required API keys:\n${missingApiKeys.map(k => `  - ${k}`).join('\n')}\n` +
-      `Please set these in your .env.local file.`
+      `No AI provider API keys found. Please set at least one of the following in your environment:\n` +
+      `  - ANTHROPIC_API_KEY (Claude)\n` +
+      `  - GEMINI_API_KEY (Google Gemini)\n` +
+      `  - OPENAI_API_KEY (OpenAI/GPT)\n` +
+      `  - DEEPSEEK_API_KEY (DeepSeek)\n` +
+      `  - XAI_API_KEY (Grok)`
     );
   }
 }
