@@ -714,7 +714,9 @@ function detectOverexplanation(content: string): string[] {
   
   overexplanationPatterns.forEach(pattern => {
     const matches = content.match(pattern);
-    if (matches && matches.length > 2) {
+    // Raised threshold from 2 to 8 to reduce false positives
+    // Some explanatory phrases are normal in prose, only flag excessive use
+    if (matches && matches.length > 8) {
       flags.push(`Overexplanation detected: ${matches.length} instances of explanatory phrases`);
     }
   });
@@ -722,7 +724,8 @@ function detectOverexplanation(content: string): string[] {
   // Check for "tell and show" (both telling and showing the same thing)
   const tellShowPattern = /(was|were|is|are)\s+\w+.*?(showed|demonstrated|revealed|displayed)/gi;
   const tellShowMatches = content.match(tellShowPattern);
-  if (tellShowMatches && tellShowMatches.length > 3) {
+  // Raised threshold from 3 to 6 to reduce false positives
+  if (tellShowMatches && tellShowMatches.length > 6) {
     flags.push('Tell and show pattern detected - explaining then demonstrating');
   }
 
@@ -760,10 +763,29 @@ function detectNeutralProse(content: string): string[] {
   }
 
   // Check for lack of emotional language
+  // Expanded list includes emotion-naming words, emotional descriptors, and physical emotional responses
   const emotionalWords = [
+    // Core emotions
     'anger', 'fear', 'joy', 'sadness', 'love', 'hate', 'hope', 'despair',
     'excitement', 'anxiety', 'relief', 'guilt', 'pride', 'shame',
-    'furious', 'terrified', 'ecstatic', 'devastated',
+    'furious', 'terrified', 'ecstatic', 'devastated', 'worried', 'nervous',
+    'happy', 'sad', 'angry', 'scared', 'surprised', 'disgusted',
+    // Emotional intensity descriptors
+    'burning', 'cold', 'icy', 'fiery', 'overwhelming', 'crushing', 'sharp',
+    'dull', 'bitter', 'sweet', 'warm', 'hollow', 'heavy', 'light',
+    // Physical emotional responses
+    'trembled', 'shook', 'clenched', 'gripped', 'tensed', 'relaxed',
+    'pounded', 'raced', 'sank', 'soared', 'churned', 'knotted',
+    'tightened', 'loosened', 'froze', 'flushed', 'paled', 'sweating',
+    // Emotional state descriptors
+    'determined', 'resolute', 'uncertain', 'confident', 'doubtful',
+    'desperate', 'hopeful', 'resigned', 'defiant', 'vulnerable',
+    'shocked', 'stunned', 'bewildered', 'confused', 'conflicted',
+    // Heart/soul/feeling references
+    'heart', 'soul', 'feeling', 'felt', 'emotion', 'passion',
+    // Common emotional phrases (single words from phrases)
+    'dread', 'terror', 'rage', 'fury', 'bliss', 'agony', 'misery',
+    'longing', 'yearning', 'aching', 'sorrow', 'grief', 'regret',
   ];
   
   const wordCount = content.split(/\s+/).length;
@@ -774,7 +796,9 @@ function detectNeutralProse(content: string): string[] {
   
   const emotionalDensity = wordCount > 0 ? (emotionalCount / wordCount) * 1000 : 0;
   
-  if (emotionalDensity < 2) {
+  // Lowered threshold from 2 to 1 since we now have more comprehensive detection
+  // Typical prose should have 3-10 emotional indicators per 1000 words
+  if (emotionalDensity < 1) {
     flags.push('Low emotional language density - prose may be too neutral');
   }
 

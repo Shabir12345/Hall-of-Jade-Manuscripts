@@ -2,18 +2,20 @@
  * Improvement Scorer
  * Uses LLM to validate and score improvements made to the novel.
  * Provides semantic comparison between before/after states.
+ * 
+ * Uses Gemini Flash ("The Clerk") for analysis tasks.
  */
 
 import { NovelState, Chapter } from '../types';
 import { ImprovementCategory } from '../types/improvement';
-import { grokText } from './grokService';
+import { geminiText } from './geminiService';
 
-// Helper function to call Grok with validation options
-async function callGrok(
+// Helper function to call Gemini (The Clerk) with validation options
+async function callClerk(
   prompt: string, 
   options: { maxTokens?: number; temperature?: number } = {}
 ): Promise<string> {
-  return grokText({
+  return geminiText({
     system: 'You are an expert literary analyst. Analyze the given content and respond with JSON.',
     user: prompt,
     maxTokens: options.maxTokens || 2000,
@@ -104,8 +106,8 @@ export async function validateImprovementsWithLLM(
     
     onProgress?.('Requesting LLM validation...', 50);
     
-    // Call LLM for validation
-    const response = await callGrok(comparisonPrompt, {
+    // Call LLM for validation (using The Clerk - Gemini)
+    const response = await callClerk(comparisonPrompt, {
       maxTokens: 2000,
       temperature: 0.3, // Lower temperature for consistent analysis
     });

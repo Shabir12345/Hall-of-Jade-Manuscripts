@@ -12,6 +12,7 @@ import { getForbiddenWordsPromptText, getForbiddenStructuresPromptText } from '.
 import { getGrandSagaCharacters } from '../../grandSagaAnalyzer';
 import { validateChapterGenerationQuality, checkOriginalityPreparation } from '../../chapterQualityValidator';
 import { getContextLimitsForModel, type ModelProvider } from '../../contextWindowManager';
+import { detectEconomicScene, formatMarketForPrompt } from '../../market/marketService';
 
 /**
  * Chapter Prompt Writer
@@ -673,6 +674,39 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
   let enhancedUserInstruction = userInstruction || 'Continue the epic. Apply First Principles. Ensure a clear Delta.';
   if (referenceContext.formattedContext) {
     enhancedUserInstruction = `${referenceContext.formattedContext}\n\nUSER INSTRUCTION:\n${enhancedUserInstruction}`;
+  }
+
+  // Add economic context if market data exists and scene involves transactions
+  if (state.globalMarketState && state.globalMarketState.standardItems.length > 0) {
+    // Detect if user instruction or recent chapter context suggests economic content
+    const textToCheck = [
+      userInstruction,
+      previousChapter?.content?.slice(-2000) || '',
+      previousChapter?.summary || '',
+      activeArc?.description || '',
+    ].join(' ');
+    
+    const economicDetection = detectEconomicScene(textToCheck);
+    
+    // Always include economic context if market data exists (for consistency)
+    // More detailed context for economic scenes, compact for others
+    if (economicDetection.hasEconomicContent && economicDetection.confidence > 0.3) {
+      // Full economic context for scenes involving transactions
+      const marketContext = formatMarketForPrompt(state.globalMarketState, {
+        includeAllItems: false,
+        maxItems: 15,
+        includeWealth: true,
+        includeModifiers: true,
+      });
+      enhancedUserInstruction = `${marketContext}\n\n${enhancedUserInstruction}`;
+      console.log(`[Chapter Prompt] Economic scene detected (${economicDetection.suggestedContext}, confidence: ${economicDetection.confidence.toFixed(2)}). Injecting full market context.`);
+    } else if (state.globalMarketState.standardItems.length > 0) {
+      // Compact economic reminder for non-economic scenes
+      const compactMarket = `[ECONOMIC REFERENCE: Primary currency is ${
+        state.globalMarketState.currencies.find(c => c.isPrimary)?.name || 'Spirit Stones'
+      }. If any transactions occur, reference established prices for consistency.]`;
+      enhancedUserInstruction = `${compactMarket}\n\n${enhancedUserInstruction}`;
+    }
   }
 
   // Enhanced: Add consistency constraints

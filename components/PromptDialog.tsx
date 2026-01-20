@@ -92,26 +92,37 @@ const PromptDialog: React.FC<PromptDialogProps> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center z-[70] p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-end xs:items-center justify-center z-[70] p-0 xs:p-4 animate-in fade-in duration-200"
       onClick={(e) => e.target === e.currentTarget && onCancel()}
       role="dialog"
       aria-modal="true"
       aria-labelledby="prompt-dialog-title"
       aria-describedby="prompt-dialog-message"
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)'
+      }}
     >
+      {/* Mobile: Bottom sheet style | Desktop: Centered modal */}
       <div
-        className={`bg-zinc-900 border ${variantStyles[variant]} p-6 md:p-8 rounded-2xl w-full max-w-md shadow-2xl animate-in scale-in`}
+        className={`bg-zinc-900 border-t xs:border ${variantStyles[variant]} p-4 xs:p-5 md:p-8 rounded-t-2xl xs:rounded-2xl w-full xs:max-w-md shadow-2xl animate-in slide-in-from-bottom xs:scale-in`}
         onClick={(e) => e.stopPropagation()}
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 1rem))' }}
       >
+        {/* Mobile drag indicator */}
+        <div className="xs:hidden flex justify-center mb-3">
+          <div className="w-10 h-1 rounded-full bg-zinc-600" />
+        </div>
+        
         <h3
           id="prompt-dialog-title"
-          className="text-xl md:text-2xl font-fantasy font-bold text-zinc-100 mb-2"
+          className="text-lg xs:text-xl md:text-2xl font-fantasy font-bold text-zinc-100 mb-1 xs:mb-2"
         >
           {title}
         </h3>
         <p
           id="prompt-dialog-message"
-          className="text-sm md:text-base text-zinc-300 mb-4 leading-relaxed"
+          className="text-xs xs:text-sm md:text-base text-zinc-400 mb-3 xs:mb-4 leading-relaxed"
         >
           {message}
         </p>
@@ -122,20 +133,21 @@ const PromptDialog: React.FC<PromptDialogProps> = ({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder={placeholder}
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all mb-6"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-lg xs:rounded-xl px-3 xs:px-4 py-3 xs:py-3.5 text-sm xs:text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all mb-4 xs:mb-6"
             aria-label="Input"
           />
-          <div className="flex justify-end space-x-4">
+          {/* Buttons - stacked on mobile, side by side on larger screens */}
+          <div className="flex flex-col-reverse xs:flex-row xs:justify-end gap-2 xs:gap-3">
             <button
               type="button"
               onClick={onCancel}
-              className="px-6 py-2.5 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-colors duration-200 focus-visible:outline-amber-600 focus-visible:outline-2"
+              className="w-full xs:w-auto px-4 xs:px-6 py-3 xs:py-2.5 text-zinc-400 font-semibold text-sm uppercase hover:text-zinc-200 transition-all duration-200 rounded-xl hover:bg-zinc-800 active:scale-[0.98]"
             >
               {cancelText}
             </button>
             <button
               type="submit"
-              className={`px-8 py-2.5 ${buttonStyles[variant]} text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105 shadow-lg`}
+              className={`w-full xs:w-auto px-6 xs:px-8 py-3 xs:py-2.5 ${buttonStyles[variant]} text-white rounded-xl font-semibold text-sm transition-all duration-200 hover:scale-105 active:scale-[0.98] shadow-lg`}
             >
               {confirmText}
             </button>

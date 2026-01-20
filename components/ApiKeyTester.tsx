@@ -1,9 +1,19 @@
 import React, { useState } from 'react';
-import { grokText } from '../services/grokService';
+import { deepseekText } from '../services/deepseekService';
+import { geminiText } from '../services/geminiService';
 import { env } from '../utils/env';
+
+/**
+ * API Key Tester Component
+ * 
+ * Tests the two-model architecture:
+ *   - DeepSeek-V3.2 ("The Writer") - For chapter generation and creative writing
+ *   - Gemini Flash ("The Clerk") - For state extraction and metadata processing
+ */
 
 interface TestResult {
   service: string;
+  role: string;
   status: 'testing' | 'success' | 'error' | 'skipped';
   message: string;
   duration?: number;
@@ -13,36 +23,87 @@ function ApiKeyTester() {
   const [results, setResults] = useState<TestResult[]>([]);
   const [isTesting, setIsTesting] = useState(false);
 
-  const testGrok = async (): Promise<TestResult> => {
+  const testDeepSeek = async (): Promise<TestResult> => {
     const start = Date.now();
     try {
-      if (!env.grok?.apiKey) {
-        return { service: 'Grok', status: 'skipped', message: 'XAI_API_KEY not set in .env.local' };
+      if (!env.deepseek?.apiKey) {
+        return { 
+          service: 'DeepSeek', 
+          role: 'The Writer',
+          status: 'skipped', 
+          message: 'DEEPSEEK_API_KEY not set in .env.local' 
+        };
       }
       
-      const response = await grokText({
+      const response = await deepseekText({
         user: 'Say "Hello" and nothing else.',
         maxTokens: 10,
       });
       
       const duration = Date.now() - start;
       return {
-        service: 'Grok',
+        service: 'DeepSeek',
+        role: 'The Writer',
         status: 'success',
         message: `Connected successfully. Response: "${response.trim()}"`,
         duration,
       };
     } catch (error) {
       const duration = Date.now() - start;
-      const hasApiKey = !!env.grok?.apiKey;
+      const hasApiKey = !!env.deepseek?.apiKey;
       let errorMessage = error instanceof Error ? error.message : String(error);
       
       if (!hasApiKey) {
-        errorMessage = 'API key not found. Please:\n1. Add XAI_API_KEY=your_key_here to .env.local\n2. Restart the dev server (npm run dev)';
+        errorMessage = 'API key not found. Please:\n1. Add DEEPSEEK_API_KEY=your_key_here to .env.local\n2. Restart the dev server (npm run dev)';
       }
       
       return {
-        service: 'Grok',
+        service: 'DeepSeek',
+        role: 'The Writer',
+        status: 'error',
+        message: errorMessage,
+        duration,
+      };
+    }
+  };
+
+  const testGemini = async (): Promise<TestResult> => {
+    const start = Date.now();
+    try {
+      if (!env.gemini?.apiKey) {
+        return { 
+          service: 'Gemini', 
+          role: 'The Clerk',
+          status: 'skipped', 
+          message: 'GEMINI_API_KEY not set in .env.local' 
+        };
+      }
+      
+      const response = await geminiText({
+        user: 'Say "Hello" and nothing else.',
+        maxTokens: 10,
+      });
+      
+      const duration = Date.now() - start;
+      return {
+        service: 'Gemini',
+        role: 'The Clerk',
+        status: 'success',
+        message: `Connected successfully. Response: "${response.trim()}"`,
+        duration,
+      };
+    } catch (error) {
+      const duration = Date.now() - start;
+      const hasApiKey = !!env.gemini?.apiKey;
+      let errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (!hasApiKey) {
+        errorMessage = 'API key not found. Please:\n1. Add GEMINI_API_KEY=your_key_here to .env.local\n2. Restart the dev server (npm run dev)';
+      }
+      
+      return {
+        service: 'Gemini',
+        role: 'The Clerk',
         status: 'error',
         message: errorMessage,
         duration,
@@ -56,9 +117,14 @@ function ApiKeyTester() {
 
     const testResults: TestResult[] = [];
 
-    // Test Grok
-    setResults([...testResults, { service: 'Grok', status: 'testing', message: 'Testing...' }]);
-    testResults.push(await testGrok());
+    // Test DeepSeek (The Writer)
+    setResults([{ service: 'DeepSeek', role: 'The Writer', status: 'testing', message: 'Testing...' }]);
+    testResults.push(await testDeepSeek());
+    setResults([...testResults]);
+
+    // Test Gemini (The Clerk)
+    setResults([...testResults, { service: 'Gemini', role: 'The Clerk', status: 'testing', message: 'Testing...' }]);
+    testResults.push(await testGemini());
     setResults([...testResults]);
 
     setIsTesting(false);
@@ -90,13 +156,17 @@ function ApiKeyTester() {
     }
   };
 
-  const grokResult = results.find(r => r.service === 'Grok');
-  const allRequiredPassed = grokResult?.status === 'success';
+  const deepseekResult = results.find(r => r.service === 'DeepSeek');
+  const geminiResult = results.find(r => r.service === 'Gemini');
+  const allPassed = deepseekResult?.status === 'success' && geminiResult?.status === 'success';
 
   return (
     <div className="p-6 bg-zinc-900 rounded-xl border border-zinc-700">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-zinc-100">API Key Tester</h2>
+        <div>
+          <h2 className="text-xl font-bold text-zinc-100">API Key Tester</h2>
+          <p className="text-sm text-zinc-400">Two-Model Architecture</p>
+        </div>
         <button
           onClick={runTests}
           disabled={isTesting}
@@ -112,8 +182,26 @@ function ApiKeyTester() {
           <div>✓ Supabase URL: {env.supabase.url ? 'Set' : 'Missing'}</div>
           <div>✓ Supabase Key: {env.supabase.anonKey ? 'Set' : 'Missing'}</div>
           <div>
-            {env.grok?.apiKey ? '✓' : '✗'} Grok (XAI):{' '}
-            {env.grok?.apiKey ? 'Set' : 'Missing'}
+            {env.deepseek?.apiKey ? '✓' : '✗'} DeepSeek (The Writer):{' '}
+            {env.deepseek?.apiKey ? 'Set' : 'Missing'}
+          </div>
+          <div>
+            {env.gemini?.apiKey ? '✓' : '✗'} Gemini (The Clerk):{' '}
+            {env.gemini?.apiKey ? 'Set' : 'Missing'}
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-4 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-2">Model Roles:</h3>
+        <div className="space-y-2 text-xs text-zinc-400">
+          <div>
+            <span className="text-amber-400 font-medium">DeepSeek-V3.2 "The Writer"</span>
+            <p className="ml-2">Trained on Chinese web fiction. Understands cultivation tropes natively. Used for chapter generation, arc planning, and creative tasks.</p>
+          </div>
+          <div>
+            <span className="text-blue-400 font-medium">Gemini Flash "The Clerk"</span>
+            <p className="ml-2">Fast and accurate. Used for state extraction, metadata processing, and Lore Bible updates.</p>
           </div>
         </div>
       </div>
@@ -133,11 +221,12 @@ function ApiKeyTester() {
                     <span className={`font-medium ${getStatusColor(result.status)}`}>
                       {result.service}
                     </span>
+                    <span className="text-xs text-zinc-500">({result.role})</span>
                     {result.duration && (
                       <span className="text-xs text-zinc-500">({result.duration}ms)</span>
                     )}
                   </div>
-                  <p className="text-sm text-zinc-400">{result.message}</p>
+                  <p className="text-sm text-zinc-400 whitespace-pre-wrap">{result.message}</p>
                 </div>
               </div>
             </div>
@@ -145,15 +234,23 @@ function ApiKeyTester() {
         </div>
       )}
 
-      {results.length > 0 && (
+      {results.length > 0 && !isTesting && (
         <div className="mt-4 p-3 rounded-lg border-2 bg-zinc-800/50">
-          {allRequiredPassed ? (
+          {allPassed ? (
             <div className="text-green-400 font-medium">
-              ✅ Grok API key is working! Your app is ready to use Grok for all AI features.
+              ✅ Both API keys are working! Your app is ready to use the two-model architecture.
             </div>
           ) : (
             <div className="text-red-400 font-medium">
-              ❌ Grok API key test failed! Please check your .env.local file and ensure XAI_API_KEY is set.
+              ❌ Some API keys are not working. Both are required:
+              <ul className="mt-2 text-sm font-normal">
+                {deepseekResult?.status !== 'success' && (
+                  <li>• DEEPSEEK_API_KEY - Required for chapter generation</li>
+                )}
+                {geminiResult?.status !== 'success' && (
+                  <li>• GEMINI_API_KEY - Required for state extraction</li>
+                )}
+              </ul>
             </div>
           )}
         </div>

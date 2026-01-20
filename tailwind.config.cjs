@@ -6,6 +6,20 @@ module.exports = {
     "./components/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
+    // Custom screen breakpoints for better responsive control
+    screens: {
+      'xs': '375px',    // Small phones (iPhone SE, etc.)
+      'sm': '640px',    // Large phones / small tablets
+      'md': '768px',    // Tablets
+      'lg': '1024px',   // Small laptops / landscape tablets
+      'xl': '1280px',   // Desktops
+      '2xl': '1536px',  // Large desktops
+      // Utility breakpoints
+      'touch': { 'raw': '(pointer: coarse)' },        // Touch devices
+      'mouse': { 'raw': '(pointer: fine)' },          // Mouse devices
+      'portrait': { 'raw': '(orientation: portrait)' },
+      'landscape': { 'raw': '(orientation: landscape)' },
+    },
     extend: {
       // Custom spacing scale based on 4px units
       spacing: {
@@ -79,6 +93,47 @@ module.exports = {
           '0%': { transform: 'scale(0.95)', opacity: '0' },
           '100%': { transform: 'scale(1)', opacity: '1' },
         },
+        slideInLeft: {
+          '0%': { transform: 'translateX(-100%)', opacity: '0' },
+          '100%': { transform: 'translateX(0)', opacity: '1' },
+        },
+        slideInRight: {
+          '0%': { transform: 'translateX(100%)', opacity: '0' },
+          '100%': { transform: 'translateX(0)', opacity: '1' },
+        },
+      },
+      // Responsive width utilities for sidebar
+      width: {
+        'sidebar': '16rem',      // 256px - full sidebar
+        'sidebar-sm': '4.5rem',  // 72px - collapsed sidebar
+      },
+      // Min-width for touch targets
+      minWidth: {
+        'touch': '44px',
+      },
+      minHeight: {
+        'touch': '44px',
+        'screen-safe': 'calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom))',
+      },
+      // Height utilities
+      height: {
+        'screen-safe': 'calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom))',
+        'dvh': '100dvh',
+      },
+      // Safe area padding
+      padding: {
+        'safe-top': 'env(safe-area-inset-top)',
+        'safe-bottom': 'env(safe-area-inset-bottom)',
+        'safe-left': 'env(safe-area-inset-left)',
+        'safe-right': 'env(safe-area-inset-right)',
+      },
+      // Z-index scale for layering
+      zIndex: {
+        'sidebar': '40',
+        'modal': '50',
+        'dropdown': '60',
+        'tooltip': '70',
+        'toast': '80',
       },
     },
   },

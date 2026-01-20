@@ -5,6 +5,16 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 
+/**
+ * Vite Configuration
+ * 
+ * Two-Model Architecture API Keys:
+ *   - DEEPSEEK_API_KEY: Required for "The Writer" (DeepSeek-V3.2)
+ *   - GEMINI_API_KEY: Required for "The Clerk" (Gemini Flash)
+ *   - PINECONE_API_KEY: Optional for vector database
+ *   - OPENAI_API_KEY: Optional for embeddings (required by Pinecone)
+ */
+
 export default defineConfig(({ mode }) => {
     // Load from .env files (for local development)
     const fileEnv = loadEnv(mode, '.', '');
@@ -52,11 +62,16 @@ export default defineConfig(({ mode }) => {
       define: {
         // Expose environment variables to client
         // Uses process.env (Vercel build) with fallback to .env files (local dev)
+        // 
+        // Two-Model Architecture:
+        //   - DEEPSEEK_API_KEY: "The Writer" - DeepSeek-V3.2 for chapter generation
+        //   - GEMINI_API_KEY: "The Clerk" - Gemini Flash for state extraction
+        //   - PINECONE_API_KEY: Optional - Vector database for semantic search
+        //   - OPENAI_API_KEY: Optional - Required for generating embeddings (Pinecone)
         'process.env.DEEPSEEK_API_KEY': JSON.stringify(getEnv('DEEPSEEK_API_KEY')),
-        'process.env.ANTHROPIC_API_KEY': JSON.stringify(getEnv('ANTHROPIC_API_KEY')),
         'process.env.GEMINI_API_KEY': JSON.stringify(getEnv('GEMINI_API_KEY')),
+        'process.env.PINECONE_API_KEY': JSON.stringify(getEnv('PINECONE_API_KEY')),
         'process.env.OPENAI_API_KEY': JSON.stringify(getEnv('OPENAI_API_KEY')),
-        'process.env.XAI_API_KEY': JSON.stringify(getEnv('XAI_API_KEY')),
       },
       // Expose VITE_ prefixed env vars to the client
       envPrefix: 'VITE_',

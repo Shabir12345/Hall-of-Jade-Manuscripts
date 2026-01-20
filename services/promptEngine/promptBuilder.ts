@@ -81,6 +81,10 @@ function compressContext(sections: string[], maxLength: number): string[] {
     } else if (section.includes('FORESHADOWING') || section.includes('EMOTIONAL PAYOFF') || 
                section.includes('PACING') || section.includes('SYMBOLISM')) {
       return { section, priority: 4, canTruncate: true };
+    } else if (section.includes('[FACE GRAPH') || section.includes('SOCIAL NETWORK') ||
+               section.includes('KARMA') || section.includes('BLOOD FEUD') || 
+               section.includes('FACE DEBT')) {
+      return { section, priority: 7, canTruncate: true }; // High priority - important for character interactions
     } else if (section.includes('[COMPLETED ARCS]') || section.includes('[CHAPTER SUMMARY')) {
       return { section, priority: 3, canTruncate: true }; // Can truncate more
     } else if (section.includes('[GENRE CONVENTIONS]') || section.includes('[LITERARY PRINCIPLES]')) {
@@ -510,6 +514,12 @@ export async function buildPrompt(
   // 7.10. Symbolism Context
   if (context.symbolismContext) {
     promptSections.push(context.symbolismContext);
+    promptSections.push('');
+  }
+
+  // 7.11. Face Graph Context (Social Network Memory - Karma, Feuds, Debts)
+  if (context.faceGraphContext) {
+    promptSections.push(context.faceGraphContext);
     promptSections.push('');
   }
 

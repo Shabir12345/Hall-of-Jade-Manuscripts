@@ -98,8 +98,9 @@ export async function saveContextSnapshot(
 
     // If chapter doesn't exist yet, skip saving the snapshot
     // It will be saved later when the chapter is persisted
+    // This is expected during chapter generation - use debug level to reduce noise
     if (checkError || !chapterExists) {
-      console.warn(`Chapter ${chapterId} not found in database yet. Skipping context snapshot save. It will be saved when the chapter is persisted.`);
+      console.debug(`[Context Snapshot] Chapter ${chapterId} not in database yet - snapshot will be saved when chapter is persisted.`);
       return;
     }
 

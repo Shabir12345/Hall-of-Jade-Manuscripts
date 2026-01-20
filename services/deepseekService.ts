@@ -1,6 +1,25 @@
 import { env } from '../utils/env';
 
-type DeepSeekModel = 'deepseek-chat' | 'deepseek-reasoner';
+/**
+ * DeepSeek Service - "The Writer"
+ * 
+ * DeepSeek-V3.2 is trained on a massive corpus of Chinese web fiction,
+ * making it ideal for Xianxia/Xuanhuan novel generation. It natively
+ * understands cultivation tropes like:
+ *   - Dantian (energy center)
+ *   - Tribulation Lightning
+ *   - Jade Slips
+ *   - Cultivation realms and breakthroughs
+ *   - Sect politics and martial arts
+ * 
+ * This service handles all creative/narrative tasks:
+ *   - Chapter generation
+ *   - Arc/Saga planning
+ *   - Creative expansion
+ *   - Prose editing
+ */
+
+type DeepSeekModel = 'deepseek-chat' | 'deepseek-reasoner' | 'deepseek-v3.2';
 
 type DeepSeekRole = 'system' | 'user' | 'assistant';
 
@@ -58,8 +77,17 @@ async function deepseekChat(request: DeepSeekChatCompletionRequest): Promise<str
   return content ?? '';
 }
 
+/**
+ * Generate text using DeepSeek-V3.2 ("The Writer")
+ * 
+ * Optimized for creative prose generation, especially Xianxia/Xuanhuan content.
+ * DeepSeek-V3.2 has:
+ *   - 128K token context window
+ *   - Native understanding of Chinese web fiction tropes
+ *   - Excellent narrative consistency
+ */
 export async function deepseekText(opts: {
-  model: DeepSeekModel;
+  model?: DeepSeekModel;
   system?: string;
   user: string;
   temperature?: number;
@@ -70,11 +98,14 @@ export async function deepseekText(opts: {
   if (opts.system && opts.system.trim() !== '') messages.push({ role: 'system', content: opts.system });
   messages.push({ role: 'user', content: opts.user });
 
-  // Clamp max_tokens to DeepSeek API limit (8192)
+  // Default to deepseek-chat which uses the latest V3.2 model
+  const model = opts.model || 'deepseek-chat';
+  
+  // DeepSeek-V3.2 supports up to 8192 output tokens
   const maxTokens = opts.maxTokens ? Math.min(opts.maxTokens, 8192) : undefined;
   
   return deepseekChat({
-    model: opts.model,
+    model,
     messages,
     temperature: opts.temperature,
     top_p: opts.topP,
@@ -422,8 +453,14 @@ function tryExtractPartialJson<T>(jsonString: string): Partial<T> | null {
   return null;
 }
 
+/**
+ * Generate JSON using DeepSeek-V3.2 ("The Writer")
+ * 
+ * Returns structured JSON responses, with robust error handling
+ * for truncated or malformed responses.
+ */
 export async function deepseekJson<T>(opts: {
-  model: DeepSeekModel;
+  model?: DeepSeekModel;
   system?: string;
   user: string;
   temperature?: number;
@@ -434,11 +471,14 @@ export async function deepseekJson<T>(opts: {
   if (opts.system && opts.system.trim() !== '') messages.push({ role: 'system', content: opts.system });
   messages.push({ role: 'user', content: opts.user });
 
-  // Clamp max_tokens to DeepSeek API limit (8192)
+  // Default to deepseek-chat which uses the latest V3.2 model
+  const model = opts.model || 'deepseek-chat';
+  
+  // DeepSeek-V3.2 supports up to 8192 output tokens
   const maxTokens = opts.maxTokens ? Math.min(opts.maxTokens, 8192) : 8192;
   
   const raw = await deepseekChat({
-    model: opts.model,
+    model,
     messages,
     temperature: opts.temperature,
     top_p: opts.topP,
@@ -499,4 +539,3 @@ export async function deepseekJson<T>(opts: {
     }
   }
 }
-

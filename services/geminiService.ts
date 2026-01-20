@@ -1,6 +1,24 @@
 import { env } from '../utils/env';
 import { recordCacheHit, recordCacheMiss } from './promptCacheMonitor';
 
+/**
+ * Gemini Service - "The Clerk"
+ * 
+ * Gemini Flash is fast and cost-effective, making it ideal for
+ * state extraction and metadata processing tasks:
+ *   - Post-chapter state extraction (extractPostChapterUpdates)
+ *   - Lore Bible updates
+ *   - Character/item/technique tracking
+ *   - Voice input refinement
+ * 
+ * "The Clerk's Job": Read the chapter the Writer just produced,
+ * perform state extraction, and update the JSON Lore Bible.
+ * 
+ * Example: "I noticed Han Xiao consumed a 'Heaven-Healing Pill' in this chapter.
+ * I will update the JSON Lore Bible to remove 1 pill from his inventory
+ * and increase his cultivation stage to Nascent Soul - Late."
+ */
+
 type GeminiModel = 'gemini-1.5-flash' | 'gemini-2.0-flash' | 'gemini-2.0-flash-001' | 'gemini-2.5-flash';
 
 interface GeminiContent {
@@ -97,6 +115,15 @@ async function geminiChat(
   };
 }
 
+/**
+ * Generate text using Gemini Flash ("The Clerk")
+ * 
+ * Optimized for fast, accurate extraction and processing tasks.
+ * Gemini 2.5 Flash has:
+ *   - 1M token context window
+ *   - 8,192 token output limit
+ *   - Implicit caching for repeated prefixes
+ */
 export async function geminiText(opts: {
   model?: GeminiModel;
   system?: string;
@@ -109,8 +136,8 @@ export async function geminiText(opts: {
     dynamicContent: string;
   };
 }): Promise<string> {
-  // Gemini 2.0 Flash is the default (latest stable version)
-  const model = opts.model || 'gemini-2.0-flash';
+  // Gemini 2.5 Flash is the default (latest stable version)
+  const model = opts.model || 'gemini-2.5-flash';
   
   // For implicit caching: static content first, dynamic content last
   // Gemini will automatically cache the prefix if it matches previous requests
@@ -132,7 +159,7 @@ export async function geminiText(opts: {
     },
   ];
 
-  // Gemini 2.0 Flash has 1M token input context window and 8,192 token output limit
+  // Gemini 2.5 Flash has 1M token input context window and 8,192 token output limit
   // Default to maximum output tokens to prevent truncation of large JSON responses
   const maxOutputTokens = opts.maxTokens || 8192;
   
@@ -144,7 +171,7 @@ export async function geminiText(opts: {
     generationConfig: {
       temperature: opts.temperature,
       topP: opts.topP,
-      maxOutputTokens: Math.min(maxOutputTokens, 8192), // Gemini 2.0 Flash API maximum (8,192 tokens) // Gemini 2.0 Flash API maximum
+      maxOutputTokens: Math.min(maxOutputTokens, 8192), // Gemini 2.5 Flash API maximum
     },
   };
 
@@ -155,7 +182,7 @@ export async function geminiText(opts: {
   if (result.cachedTokens && result.cachedTokens > 0) {
     // Cache hit
     recordCacheHit('gemini', `gemini:${model}:${simpleHash(userContent.substring(0, 500))}`, result.cachedTokens, totalTokens);
-    console.log(`[Gemini] Cache hit: ${result.cachedTokens} tokens served from cache`);
+    console.log(`[Gemini - The Clerk] Cache hit: ${result.cachedTokens} tokens served from cache`);
   } else if (opts.cacheMetadata) {
     // Cache miss (we tried to use cache but didn't get cached tokens)
     recordCacheMiss('gemini', `gemini:${model}:${simpleHash(userContent.substring(0, 500))}`, totalTokens);
@@ -383,6 +410,15 @@ function tryFixTruncatedJson(jsonString: string): string {
   return fixed;
 }
 
+/**
+ * Generate JSON using Gemini Flash ("The Clerk")
+ * 
+ * Optimized for structured data extraction with robust error handling.
+ * Used for:
+ *   - Post-chapter state extraction
+ *   - Lore Bible updates
+ *   - Character/item tracking
+ */
 export async function geminiJson<T>(opts: {
   model?: GeminiModel;
   system?: string;
@@ -395,7 +431,7 @@ export async function geminiJson<T>(opts: {
     dynamicContent: string;
   };
 }): Promise<T> {
-  const model = opts.model || 'gemini-2.0-flash';
+  const model = opts.model || 'gemini-2.5-flash';
   const maxOutputTokens = opts.maxTokens || 8192;
   
   // For implicit caching: static content first, dynamic content last
@@ -425,7 +461,7 @@ export async function geminiJson<T>(opts: {
     generationConfig: {
       temperature: opts.temperature,
       topP: opts.topP,
-      maxOutputTokens: Math.min(maxOutputTokens, 8192), // Gemini 2.0 Flash API maximum (8,192 tokens)
+      maxOutputTokens: Math.min(maxOutputTokens, 8192), // Gemini 2.5 Flash API maximum
     },
   };
 
@@ -437,7 +473,7 @@ export async function geminiJson<T>(opts: {
   if (result.cachedTokens && result.cachedTokens > 0) {
     // Cache hit
     recordCacheHit('gemini', `gemini:${model}:${simpleHash(userContent.substring(0, 500))}`, result.cachedTokens, totalTokens);
-    console.log(`[Gemini] Cache hit: ${result.cachedTokens} tokens served from cache`);
+    console.log(`[Gemini - The Clerk] Cache hit: ${result.cachedTokens} tokens served from cache`);
   } else if (opts.cacheMetadata) {
     // Cache miss (we tried to use cache but didn't get cached tokens)
     recordCacheMiss('gemini', `gemini:${model}:${simpleHash(userContent.substring(0, 500))}`, totalTokens);
@@ -482,7 +518,7 @@ export async function geminiJson<T>(opts: {
             const fixed = tryFixTruncatedJson(cleaned);
             const parsed = JSON.parse(fixed) as T;
             
-            console.warn('[Gemini] JSON response required fixing. Consider increasing maxTokens or reducing response size.');
+            console.warn('[Gemini - The Clerk] JSON response required fixing. Consider increasing maxTokens or reducing response size.');
             
             return parsed;
           } catch (fixError) {
@@ -493,7 +529,7 @@ export async function geminiJson<T>(opts: {
               const fixed = tryFixTruncatedJson(fixedControl);
               const parsed = JSON.parse(fixed) as T;
               
-              console.warn('[Gemini] JSON response required extensive fixing. Consider increasing maxTokens or reducing response size.');
+              console.warn('[Gemini - The Clerk] JSON response required extensive fixing. Consider increasing maxTokens or reducing response size.');
               
               return parsed;
             } catch (finalError) {
@@ -533,7 +569,7 @@ export async function geminiJson<T>(opts: {
               }
               
               throw new Error(
-                `Gemini returned invalid JSON.\n` +
+                `Gemini (The Clerk) returned invalid JSON.\n` +
                 `Parse error: ${e instanceof Error ? e.message : String(e)}\n` +
                 `Attempted fixes also failed.\n` +
                 `Response length: ${raw.length} characters\n` +

@@ -15,6 +15,10 @@ import type { Connection } from '../../services/autoConnectionService';
 import { Tooltip, HelpIcon } from '../Tooltip';
 import { ChapterGenerationHealthDashboard, MiniHealthIndicator } from '../ChapterGenerationHealthDashboard';
 import { generateChapterWarnings } from '../../services/chapterGenerationWarningService';
+import TribulationGateWidget from '../widgets/TribulationGateWidget';
+import TribulationGateSettings from '../TribulationGateSettings';
+import ConsequenceTrackerWidget from '../widgets/ConsequenceTrackerWidget';
+import { TribulationGateConfig } from '../../types/tribulationGates';
 
 interface DashboardViewProps {
   novel: NovelState;
@@ -28,6 +32,8 @@ interface DashboardViewProps {
   onViewChange: (view: string) => void;
   activeChapterId: string | null;
   onChapterSelect: (chapterId: string) => void;
+  onUpdateNovel?: (updater: (prev: NovelState) => NovelState) => void;
+  onManualTribulationGate?: () => void;
 }
 
 const DashboardViewComponent: React.FC<DashboardViewProps> = ({
@@ -42,6 +48,8 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
   onViewChange,
   activeChapterId,
   onChapterSelect,
+  onUpdateNovel,
+  onManualTribulationGate,
 }) => {
   const [showPreGenerationAnalysis, setShowPreGenerationAnalysis] = useState(false);
   const [showPostGenerationSummary, setShowPostGenerationSummary] = useState(false);
@@ -82,6 +90,17 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
 
   // State for showing full health dashboard
   const [showHealthDashboard, setShowHealthDashboard] = useState(false);
+
+  // Handler for updating Tribulation Gate config
+  const handleTribulationGateConfigChange = (config: TribulationGateConfig) => {
+    if (onUpdateNovel) {
+      onUpdateNovel((prev) => ({
+        ...prev,
+        tribulationGateConfig: config,
+        updatedAt: Date.now(),
+      }));
+    }
+  };
 
   // Get recent auto-connections from novel state (stored directly, not parsed from logs)
   const recentAutoConnections = useMemo((): Connection[] => {
@@ -172,34 +191,66 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
   }, [recentAutoConnections]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950" data-tour="dashboard">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12 space-y-8 lg:space-y-12">
+    <div className="min-h-screen min-h-dvh bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950" data-tour="dashboard">
+      {/* Add padding-top for mobile header buttons */}
+      <div 
+        className="max-w-7xl mx-auto px-3 xs:px-4 sm:px-6 lg:px-8 py-6 xs:py-8 lg:py-12 space-y-6 xs:space-y-8 lg:space-y-12"
+        style={{ paddingTop: 'max(4rem, calc(env(safe-area-inset-top, 1rem) + 3.5rem))' }}
+      >
         {/* API Key Tester - Show at top for easy access */}
         <ApiKeyTester />
 
+        {/* Tribulation Gates Section - Interactive Story Features */}
+        <section className="space-y-4 lg:space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+            {/* Tribulation Gate Widget */}
+            <TribulationGateWidget 
+              novel={novel}
+              onViewGateHistory={() => onViewChange('gate-history')}
+              onManualTrigger={onManualTribulationGate}
+            />
+            
+            {/* Consequence Tracker Widget */}
+            <ConsequenceTrackerWidget 
+              novel={novel}
+            />
+          </div>
+          
+          {/* Tribulation Gate Settings */}
+          {onUpdateNovel && (
+            <TribulationGateSettings
+              config={novel.tribulationGateConfig}
+              onConfigChange={handleTribulationGateConfigChange}
+              collapsible={true}
+              initialCollapsed={true}
+            />
+          )}
+        </section>
+
         {/* Header Section */}
-        <header className="space-y-4 pb-8 border-b border-zinc-800/50">
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-            <div className="space-y-2 flex-1">
-              <h1 className="text-2xl md:text-3xl lg:text-4xl font-fantasy font-bold text-amber-500 tracking-tight leading-tight">
+        <header className="space-y-3 xs:space-y-4 pb-6 xs:pb-8 border-b border-zinc-800/50">
+          <div className="flex flex-col gap-3 xs:gap-4">
+            <div className="space-y-2 flex-1 min-w-0">
+              <h1 className="text-xl xs:text-2xl md:text-3xl lg:text-4xl font-fantasy font-bold text-amber-500 tracking-tight leading-tight break-words">
                 {novel.title}
               </h1>
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-zinc-800/60 border border-zinc-700/50 text-zinc-300 font-medium">
+              {/* Stats - scrollable on mobile */}
+              <div className="flex flex-wrap items-center gap-2 xs:gap-3 text-xs xs:text-sm">
+                <span className="inline-flex items-center px-2 xs:px-3 py-1 xs:py-1.5 rounded-lg bg-zinc-800/60 border border-zinc-700/50 text-zinc-300 font-medium whitespace-nowrap">
                   {novel.genre}
                 </span>
-                <span className="text-zinc-600">•</span>
-                <span className="text-zinc-400">
+                <span className="text-zinc-600 hidden xs:inline">•</span>
+                <span className="text-zinc-400 whitespace-nowrap">
                   {novel.chapters.length} Chapter{novel.chapters.length !== 1 ? 's' : ''}
                 </span>
-                <span className="text-zinc-600">•</span>
-                <span className="text-zinc-400">
+                <span className="text-zinc-600 hidden xs:inline">•</span>
+                <span className="text-zinc-400 whitespace-nowrap">
                   {novel.characterCodex.length} Character{novel.characterCodex.length !== 1 ? 's' : ''}
                 </span>
                 {novel.currentRealmId && (
                   <>
-                    <span className="text-zinc-600">•</span>
-                    <span className="text-zinc-400">
+                    <span className="text-zinc-600 hidden sm:inline">•</span>
+                    <span className="text-zinc-400 whitespace-nowrap hidden sm:inline">
                       Realm: {novel.realms.find(r => r.id === novel.currentRealmId)?.name || 'Unknown'}
                     </span>
                   </>
@@ -207,12 +258,12 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               </div>
             </div>
             
-            {/* Automation Status Badges */}
-            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {/* Automation Status Badges - full width on mobile */}
+            <div className="flex flex-wrap items-center gap-2">
               {lastTrustScore && (
                 <button
                   onClick={() => onViewChange('analytics')}
-                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border font-semibold text-sm transition-all shadow-md hover:shadow-lg ${
+                  className={`inline-flex items-center gap-1.5 xs:gap-2 px-2 xs:px-3 py-1.5 rounded-lg border font-semibold text-xs xs:text-sm transition-all shadow-md hover:shadow-lg ${
                     lastTrustScore.overall >= 80
                       ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-600/30'
                       : lastTrustScore.overall >= 60
@@ -228,7 +279,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               {gapAnalysis.summary.total > 0 && (
                 <button
                   onClick={() => setShowPreGenerationAnalysis(true)}
-                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border font-semibold text-sm transition-all shadow-md hover:shadow-lg ${
+                  className={`inline-flex items-center gap-1.5 xs:gap-2 px-2 xs:px-3 py-1.5 rounded-lg border font-semibold text-xs xs:text-sm transition-all shadow-md hover:shadow-lg ${
                     gapAnalysis.summary.critical > 0
                       ? 'bg-red-600/20 text-red-400 border-red-500/40 hover:bg-red-600/30'
                       : gapAnalysis.summary.warning > 0
@@ -244,60 +295,60 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
             </div>
           </div>
           
-          {/* Recent Automation Activity Summary */}
+          {/* Recent Automation Activity Summary - horizontal scroll on mobile */}
           {recentAutomationActivity.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-800/30">
-              <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Recent Activity:</span>
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-800/30 overflow-x-auto scrollbar-hide -mx-3 xs:-mx-4 px-3 xs:px-4">
+              <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider whitespace-nowrap flex-shrink-0">Recent:</span>
               {recentAutomationActivity.slice(0, 3).map((activity, idx) => (
                 <div
                   key={idx}
-                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/40 border border-zinc-700/30 text-xs text-zinc-400"
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800/40 border border-zinc-700/30 text-xs text-zinc-400 flex-shrink-0"
                   title={activity.message}
                 >
                   <span>{activity.icon}</span>
-                  <span className="truncate max-w-[200px]">{activity.message.substring(0, 40)}...</span>
+                  <span className="truncate max-w-[120px] xs:max-w-[200px]">{activity.message.substring(0, 40)}...</span>
                 </div>
               ))}
             </div>
           )}
         </header>
 
-        {/* Key Metrics Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6">
+        {/* Key Metrics Grid - 3 columns on mobile for compact view */}
+        <section className="grid grid-cols-3 gap-2 xs:gap-3 md:gap-4 lg:gap-6">
           <button
             onClick={() => onViewChange('chapters')}
-            className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-2xl p-6 lg:p-8 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-left overflow-hidden"
+            className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-xl xs:rounded-2xl p-3 xs:p-4 md:p-6 lg:p-8 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-left overflow-hidden"
             aria-label={`View chapters, ${novel.chapters.length} total`}
           >
             <div className="absolute inset-0 bg-gradient-to-br from-amber-600/0 to-amber-600/0 group-hover:from-amber-600/5 group-hover:to-amber-600/0 transition-all duration-300" />
-            <div className="relative">
-              <div className="text-4xl mb-3" aria-hidden="true">📖</div>
-              <div className="text-3xl lg:text-4xl font-bold text-amber-500 mb-2">{novel.chapters.length}</div>
-              <div className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Chapters</div>
+            <div className="relative text-center xs:text-left">
+              <div className="text-2xl xs:text-3xl md:text-4xl mb-1 xs:mb-2 md:mb-3" aria-hidden="true">📖</div>
+              <div className="text-xl xs:text-2xl md:text-3xl lg:text-4xl font-bold text-amber-500 mb-0.5 xs:mb-1 md:mb-2">{novel.chapters.length}</div>
+              <div className="text-[10px] xs:text-xs md:text-sm font-semibold text-zinc-400 uppercase tracking-wide">Chapters</div>
             </div>
           </button>
           <button
             onClick={() => onViewChange('characters')}
-            className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-2xl p-6 lg:p-8 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-left overflow-hidden"
+            className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-xl xs:rounded-2xl p-3 xs:p-4 md:p-6 lg:p-8 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-left overflow-hidden"
             aria-label={`View characters, ${novel.characterCodex.length} total`}
           >
             <div className="absolute inset-0 bg-gradient-to-br from-amber-600/0 to-amber-600/0 group-hover:from-amber-600/5 group-hover:to-amber-600/0 transition-all duration-300" />
-            <div className="relative">
-              <div className="text-4xl mb-3" aria-hidden="true">👥</div>
-              <div className="text-3xl lg:text-4xl font-bold text-amber-500 mb-2">{novel.characterCodex.length}</div>
-              <div className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Characters</div>
+            <div className="relative text-center xs:text-left">
+              <div className="text-2xl xs:text-3xl md:text-4xl mb-1 xs:mb-2 md:mb-3" aria-hidden="true">👥</div>
+              <div className="text-xl xs:text-2xl md:text-3xl lg:text-4xl font-bold text-amber-500 mb-0.5 xs:mb-1 md:mb-2">{novel.characterCodex.length}</div>
+              <div className="text-[10px] xs:text-xs md:text-sm font-semibold text-zinc-400 uppercase tracking-wide">Characters</div>
             </div>
           </button>
           <button
             onClick={() => onViewChange('world-bible')}
-            className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-2xl p-6 lg:p-8 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-left overflow-hidden"
+            className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-xl xs:rounded-2xl p-3 xs:p-4 md:p-6 lg:p-8 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-left overflow-hidden"
             aria-label={`View world bible, ${novel.worldBible.length} entries`}
           >
             <div className="absolute inset-0 bg-gradient-to-br from-amber-600/0 to-amber-600/0 group-hover:from-amber-600/5 group-hover:to-amber-600/0 transition-all duration-300" />
-            <div className="relative">
-              <div className="text-4xl mb-3" aria-hidden="true">📚</div>
-              <div className="text-3xl lg:text-4xl font-bold text-amber-500 mb-2">{novel.worldBible.length}</div>
-              <div className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">World Entries</div>
+            <div className="relative text-center xs:text-left">
+              <div className="text-2xl xs:text-3xl md:text-4xl mb-1 xs:mb-2 md:mb-3" aria-hidden="true">📚</div>
+              <div className="text-xl xs:text-2xl md:text-3xl lg:text-4xl font-bold text-amber-500 mb-0.5 xs:mb-1 md:mb-2">{novel.worldBible.length}</div>
+              <div className="text-[10px] xs:text-xs md:text-sm font-semibold text-zinc-400 uppercase tracking-wide">World</div>
             </div>
           </button>
         </section>
@@ -571,14 +622,14 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
         )}
 
         {/* Quick Access to Core Features */}
-        <section className="space-y-4">
+        <section className="space-y-3 xs:space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-xl font-fantasy font-bold text-amber-400">Quick Access</h3>
-              <p className="text-sm text-zinc-500 mt-1">Navigate to main features</p>
+              <h3 className="text-lg xs:text-xl font-fantasy font-bold text-amber-400">Quick Access</h3>
+              <p className="text-xs xs:text-sm text-zinc-500 mt-0.5 xs:mt-1">Navigate to main features</p>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 xs:gap-3 md:gap-4">
             {[
               { id: 'planning', label: 'Saga & Arcs', icon: '🗺️', desc: 'Arc planning' },
               { id: 'characters', label: 'Characters', icon: '👥', desc: 'Character codex' },
@@ -588,14 +639,14 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               <button
                 key={tool.id}
                 onClick={() => onViewChange(tool.id as any)}
-                className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-xl p-5 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-center overflow-hidden"
+                className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-xl p-3 xs:p-4 md:p-5 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-center overflow-hidden"
                 aria-label={`Navigate to ${tool.label}`}
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-amber-600/0 to-amber-600/0 group-hover:from-amber-600/5 group-hover:to-amber-600/0 transition-all duration-300" />
                 <div className="relative">
-                  <div className="text-3xl mb-2 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">{tool.icon}</div>
-                  <div className="text-sm font-bold text-zinc-300 mb-1">{tool.label}</div>
-                  <div className="text-xs text-zinc-500">{tool.desc}</div>
+                  <div className="text-2xl xs:text-3xl mb-1 xs:mb-2 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">{tool.icon}</div>
+                  <div className="text-xs xs:text-sm font-bold text-zinc-300 mb-0.5 xs:mb-1 truncate">{tool.label}</div>
+                  <div className="text-[10px] xs:text-xs text-zinc-500 hidden xs:block">{tool.desc}</div>
                 </div>
               </button>
             ))}
@@ -603,27 +654,27 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
         </section>
 
         {/* Quick Access to World-Class Enhancements */}
-        <section className="space-y-4">
+        <section className="space-y-3 xs:space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-xl font-fantasy font-bold text-amber-400">Analysis Tools</h3>
-              <p className="text-sm text-zinc-500 mt-1">World-class writing analysis and insights</p>
+              <h3 className="text-lg xs:text-xl font-fantasy font-bold text-amber-400">Analysis Tools</h3>
+              <p className="text-xs xs:text-sm text-zinc-500 mt-0.5 xs:mt-1">World-class writing analysis and insights</p>
             </div>
           </div>
           {novel.chapters.length === 0 ? (
-            <div className="bg-zinc-900/50 border border-zinc-700/50 rounded-xl p-8 text-center">
-              <div className="text-4xl mb-3">📊</div>
-              <h4 className="text-lg font-semibold text-zinc-300 mb-2">No Analysis Data Yet</h4>
-              <p className="text-sm text-zinc-500 mb-4">Generate chapters to unlock world-class analysis tools</p>
+            <div className="bg-zinc-900/50 border border-zinc-700/50 rounded-xl p-4 xs:p-6 md:p-8 text-center">
+              <div className="text-3xl xs:text-4xl mb-2 xs:mb-3">📊</div>
+              <h4 className="text-base xs:text-lg font-semibold text-zinc-300 mb-1 xs:mb-2">No Analysis Data Yet</h4>
+              <p className="text-xs xs:text-sm text-zinc-500 mb-3 xs:mb-4">Generate chapters to unlock world-class analysis tools</p>
               <button
                 onClick={() => onGenerateChapter()}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-semibold text-sm transition-all"
+                className="inline-flex items-center gap-2 px-3 xs:px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-semibold text-xs xs:text-sm transition-all"
               >
                 Generate First Chapter
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2 xs:gap-3 md:gap-4">
               {[
                 { id: 'structure-visualizer', label: 'Structure', icon: '🏛️', desc: 'Story frameworks' },
                 { id: 'engagement-dashboard', label: 'Engagement', icon: '📊', desc: 'Reader engagement' },
@@ -638,14 +689,14 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                 <button
                   key={tool.id}
                   onClick={() => onViewChange(tool.id as any)}
-                  className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-xl p-5 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-center overflow-hidden"
+                  className="group relative bg-gradient-to-br from-zinc-900 to-zinc-900/80 border border-zinc-700/50 rounded-xl p-2 xs:p-3 md:p-5 hover:border-amber-600/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 text-center overflow-hidden"
                   aria-label={`View ${tool.label} analysis`}
                 >
                   <div className="absolute inset-0 bg-gradient-to-br from-amber-600/0 to-amber-600/0 group-hover:from-amber-600/5 group-hover:to-amber-600/0 transition-all duration-300" />
                   <div className="relative">
-                    <div className="text-3xl mb-2 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">{tool.icon}</div>
-                    <div className="text-sm font-bold text-zinc-300 mb-1">{tool.label}</div>
-                    <div className="text-xs text-zinc-500">{tool.desc}</div>
+                    <div className="text-xl xs:text-2xl md:text-3xl mb-0.5 xs:mb-1 md:mb-2 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">{tool.icon}</div>
+                    <div className="text-[10px] xs:text-xs md:text-sm font-bold text-zinc-300 mb-0.5 truncate">{tool.label}</div>
+                    <div className="text-[9px] xs:text-[10px] md:text-xs text-zinc-500 hidden sm:block truncate">{tool.desc}</div>
                   </div>
                 </button>
               ))}

@@ -13,6 +13,9 @@ import { triggerEditorReview, applyApprovedFixes } from '../../services/editorSe
 import { saveEditorReport } from '../../services/supabaseService';
 import type { EditorFix, EditorReportWithInternal } from '../../types/editor';
 import { backfillAllChapters } from '../../services/chapterBackfillService';
+import { DEFAULT_RUBRICS, STYLE_CRITERIA, getRubricById } from '../../config/styleRubrics';
+import { CRITIQUE_CORRECTION_CONFIG } from '../../constants';
+import type { StyleRubric, StyleCriterion } from '../../types/critique';
 
 const DEFAULT_ARC_TARGET_CHAPTERS = 10;
 
@@ -64,6 +67,61 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
   onSetPendingFixProposals,
 }) => {
   const [isBackfilling, setIsBackfilling] = useState(false);
+  const [isStyleRubricExpanded, setIsStyleRubricExpanded] = useState(false);
+  
+  // Get the current style configuration from novel state or use defaults
+  const novelStyleConfig = useMemo(() => {
+    const config = (novel as any).novelStyleConfig || {
+      activeRubricId: 'literary_xianxia',
+      critiqueCorrectionEnabled: CRITIQUE_CORRECTION_CONFIG.enabled,
+      minimumScoreOverride: undefined,
+      maxIterationsOverride: undefined,
+    };
+    return config;
+  }, [novel]);
+  
+  const activeRubric = useMemo(() => {
+    return getRubricById(novelStyleConfig.activeRubricId) || DEFAULT_RUBRICS[0];
+  }, [novelStyleConfig.activeRubricId]);
+  
+  // Handle style rubric changes
+  const handleRubricChange = useCallback((rubricId: string) => {
+    onUpdateNovel((prev) => ({
+      ...prev,
+      novelStyleConfig: {
+        ...((prev as any).novelStyleConfig || {}),
+        activeRubricId: rubricId,
+      },
+      updatedAt: Date.now(),
+    }));
+    onShowSuccess(`Style rubric changed to "${getRubricById(rubricId)?.name || rubricId}"`);
+  }, [onUpdateNovel, onShowSuccess]);
+  
+  const handleCritiqueCorrectionToggle = useCallback((enabled: boolean) => {
+    onUpdateNovel((prev) => ({
+      ...prev,
+      novelStyleConfig: {
+        ...((prev as any).novelStyleConfig || {}),
+        critiqueCorrectionEnabled: enabled,
+      },
+      updatedAt: Date.now(),
+    }));
+    onShowSuccess(enabled ? 'Critique-Correction Loop enabled' : 'Critique-Correction Loop disabled');
+  }, [onUpdateNovel, onShowSuccess]);
+  
+  const handleMinimumScoreChange = useCallback((score: number | undefined) => {
+    onUpdateNovel((prev) => ({
+      ...prev,
+      novelStyleConfig: {
+        ...((prev as any).novelStyleConfig || {}),
+        minimumScoreOverride: score,
+      },
+      updatedAt: Date.now(),
+    }));
+    if (score !== undefined) {
+      onShowSuccess(`Minimum quality score set to ${score}/10`);
+    }
+  }, [onUpdateNovel, onShowSuccess]);
   const handleBackfillChapters = useCallback(async () => {
     if (isBackfilling) return;
     
@@ -620,23 +678,29 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
   }, [novel, ensureArcDefaults, onEditArc, onSetActiveArc, onChapterSelect, onViewChange, handleArcEditorReview, handleApplyArcFix]);
 
   return (
-    <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto space-y-8 md:space-y-12 animate-in fade-in duration-300 pt-20 md:pt-24">
-      <div className="flex justify-between items-center mb-6 md:mb-8 border-b border-zinc-700 pb-4 md:pb-6">
-        <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Arc Ledger</h2>
+    <div 
+      className="p-3 xs:p-4 md:p-8 lg:p-12 max-w-5xl mx-auto space-y-5 xs:space-y-6 md:space-y-12 animate-in fade-in duration-300"
+      style={{ paddingTop: 'max(4rem, calc(env(safe-area-inset-top, 1rem) + 3.5rem))' }}
+    >
+      {/* Header - stacks on mobile */}
+      <div className="flex flex-col xs:flex-row justify-between xs:items-center gap-3 mb-4 xs:mb-6 md:mb-8 border-b border-zinc-700 pb-3 xs:pb-4 md:pb-6">
+        <h2 className="text-xl xs:text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Arc Ledger</h2>
         <button
           onClick={onEditorReview}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold text-sm transition-all duration-200 flex items-center gap-2"
+          className="px-3 xs:px-4 py-2 xs:py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg font-semibold text-xs xs:text-sm transition-all duration-200 flex items-center justify-center gap-2 w-full xs:w-auto"
           title="Manually trigger editor review for arcs or chapters"
           aria-label="Trigger editor review"
         >
           <span>✏️</span>
-          <span>Editor Review</span>
+          <span className="hidden xs:inline">Editor </span>Review
         </button>
       </div>
-      <section className="bg-zinc-900/60 border border-zinc-700 p-6 md:p-10 rounded-2xl shadow-xl border-t-4 border-t-amber-600">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider" data-tour="grand-saga">Grand Saga</h3>
-          <div className="flex items-center space-x-2">
+      
+      {/* Grand Saga section */}
+      <section className="bg-zinc-900/60 border border-zinc-700 p-4 xs:p-5 md:p-10 rounded-xl xs:rounded-2xl shadow-xl border-t-4 border-t-amber-600">
+        <div className="flex justify-between items-center mb-4 xs:mb-6">
+          <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider" data-tour="grand-saga">Grand Saga</h3>
+          <div className="flex items-center space-x-1 xs:space-x-2">
             <CreativeSpark 
               type="Grand Saga" 
               currentValue={novel.grandSaga} 
@@ -649,57 +713,201 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
         <textarea 
           value={novel.grandSaga} 
           onChange={(e) => onUpdateGrandSaga(e.target.value)} 
-          className="w-full bg-transparent border-none focus:ring-0 text-lg md:text-2xl font-serif-novel italic text-zinc-300 resize-none h-32 scrollbar-hide leading-relaxed"
+          className="w-full bg-transparent border-none focus:ring-0 text-base xs:text-lg md:text-2xl font-serif-novel italic text-zinc-300 resize-none h-24 xs:h-28 md:h-32 scrollbar-hide leading-relaxed"
           aria-label="Grand Saga"
           placeholder="Describe the overarching story..."
         />
       </section>
-      <section className="space-y-6" data-tour="plot-arcs">
-        <div className="flex justify-between items-center">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Plot Arcs</h3>
+      
+      {/* Style Rubric Configuration - Critique-Correction Loop */}
+      <section className="bg-zinc-900/60 border border-zinc-700 rounded-xl xs:rounded-2xl shadow-xl border-t-4 border-t-purple-600">
+        <button
+          onClick={() => setIsStyleRubricExpanded(!isStyleRubricExpanded)}
+          className="w-full p-4 xs:p-5 md:p-6 flex items-center justify-between text-left hover:bg-zinc-800/30 transition-colors rounded-t-xl"
+        >
           <div className="flex items-center gap-3">
+            <span className="text-xl xs:text-2xl">✨</span>
+            <div>
+              <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider">Style Rubric</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Auto-Critic: {novelStyleConfig.critiqueCorrectionEnabled !== false ? 'Enabled' : 'Disabled'} | 
+                Rubric: {activeRubric?.name || 'None'}
+              </p>
+            </div>
+          </div>
+          <span className={`text-zinc-400 transition-transform duration-200 ${isStyleRubricExpanded ? 'rotate-180' : ''}`}>
+            ▼
+          </span>
+        </button>
+        
+        {isStyleRubricExpanded && (
+          <div className="p-4 xs:p-5 md:p-6 pt-0 space-y-4 xs:space-y-6 border-t border-zinc-700/50">
+            {/* Enable/Disable Toggle */}
+            <div className="flex items-center justify-between p-3 bg-zinc-800/40 rounded-lg">
+              <div>
+                <h4 className="text-sm font-semibold text-zinc-200">Critique-Correction Loop</h4>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Gemini Flash critiques DeepSeek's output and iteratively refines prose quality
+                </p>
+              </div>
+              <button
+                onClick={() => handleCritiqueCorrectionToggle(novelStyleConfig.critiqueCorrectionEnabled === false)}
+                title={novelStyleConfig.critiqueCorrectionEnabled !== false ? 'Disable Critique-Correction Loop' : 'Enable Critique-Correction Loop'}
+                aria-label={novelStyleConfig.critiqueCorrectionEnabled !== false ? 'Disable Critique-Correction Loop' : 'Enable Critique-Correction Loop'}
+                className={`relative w-12 h-6 rounded-full transition-colors duration-200 ${
+                  novelStyleConfig.critiqueCorrectionEnabled !== false 
+                    ? 'bg-purple-600' 
+                    : 'bg-zinc-600'
+                }`}
+              >
+                <span 
+                  className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                    novelStyleConfig.critiqueCorrectionEnabled !== false 
+                      ? 'translate-x-6' 
+                      : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+            
+            {/* Rubric Selection */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-zinc-300">Select Style Rubric</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {DEFAULT_RUBRICS.filter(r => r.enabled).map((rubric) => (
+                  <button
+                    key={rubric.id}
+                    onClick={() => handleRubricChange(rubric.id)}
+                    className={`p-3 rounded-lg border text-left transition-all duration-200 ${
+                      activeRubric?.id === rubric.id
+                        ? 'bg-purple-600/20 border-purple-500 text-purple-200'
+                        : 'bg-zinc-800/40 border-zinc-700 text-zinc-300 hover:bg-zinc-800/60 hover:border-zinc-600'
+                    }`}
+                  >
+                    <div className="font-semibold text-sm">{rubric.name}</div>
+                    <div className="text-xs text-zinc-500 mt-1 line-clamp-2">{rubric.description}</div>
+                    <div className="text-[10px] text-zinc-600 mt-2">
+                      {rubric.criteria.length} criteria | Min: {rubric.minimumScore}/10 | Max {rubric.maxIterations} iterations
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Active Rubric Details */}
+            {activeRubric && (
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-zinc-300">Active Criteria</h4>
+                <div className="bg-zinc-800/40 rounded-lg p-3 space-y-2">
+                  {activeRubric.criteria.map((criterion) => (
+                    <div key={criterion.id} className="flex items-start gap-2 text-xs">
+                      <span className="text-purple-400 mt-0.5">•</span>
+                      <div className="flex-1">
+                        <span className="font-semibold text-zinc-200">{criterion.name}</span>
+                        <span className="text-zinc-500 ml-1">(weight: {criterion.weight}/10)</span>
+                        <p className="text-zinc-500 mt-0.5">{criterion.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Quality Threshold Override */}
+            <div className="space-y-2">
+              <h4 className="text-sm font-semibold text-zinc-300">Quality Threshold</h4>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="5"
+                  max="10"
+                  step="0.5"
+                  value={novelStyleConfig.minimumScoreOverride || activeRubric?.minimumScore || 8}
+                  onChange={(e) => handleMinimumScoreChange(parseFloat(e.target.value))}
+                  className="flex-1 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-purple-600"
+                  title="Quality threshold slider - adjust minimum score required to pass"
+                  aria-label="Quality threshold: minimum score required to pass critique"
+                />
+                <span className="text-sm font-mono text-purple-400 min-w-[3rem] text-right">
+                  {novelStyleConfig.minimumScoreOverride || activeRubric?.minimumScore || 8}/10
+                </span>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Chapters scoring below this threshold will be iteratively corrected.
+                Higher = better quality but more iterations (~$0.002 per iteration).
+              </p>
+            </div>
+            
+            {/* Cost Estimate */}
+            <div className="p-3 bg-zinc-800/40 rounded-lg">
+              <div className="flex items-center gap-2 text-xs text-zinc-400">
+                <span>💰</span>
+                <span>
+                  Estimated cost: ~$0.002-0.006 per chapter (1-3 critique iterations on average)
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+      
+      {/* Plot Arcs section */}
+      <section className="space-y-4 xs:space-y-6" data-tour="plot-arcs">
+        <div className="flex flex-col xs:flex-row justify-between xs:items-center gap-3">
+          <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider">Plot Arcs</h3>
+          {/* Action buttons - horizontal scroll on mobile */}
+          <div className="flex items-center gap-2 xs:gap-3 overflow-x-auto scrollbar-hide -mx-3 xs:mx-0 px-3 xs:px-0 pb-1 xs:pb-0">
             <button
               onClick={handleBackfillChapters}
               disabled={isBackfilling || novel.chapters.length === 0}
-              className="text-xs bg-zinc-800 hover:bg-zinc-700 px-4 py-2.5 rounded-xl font-semibold text-zinc-300 border border-zinc-700/50 hover:border-zinc-600/70 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-800"
+              className="text-[10px] xs:text-xs bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 px-3 xs:px-4 py-2 xs:py-2.5 rounded-lg xs:rounded-xl font-semibold text-zinc-300 border border-zinc-700/50 hover:border-zinc-600/70 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
               title="Extract scenes, world bible entries, territories, antagonists, and arc progress for all chapters"
               aria-label="Backfill chapters"
             >
               {isBackfilling ? (
                 <span className="flex items-center">
-                  <span className="animate-spin rounded-full h-3 w-3 border-2 border-zinc-500/30 border-t-zinc-500 mr-2"></span>
-                  Backfilling...
+                  <span className="animate-spin rounded-full h-3 w-3 border-2 border-zinc-500/30 border-t-zinc-500 mr-1.5 xs:mr-2"></span>
+                  <span className="hidden xs:inline">Backfilling...</span>
+                  <span className="xs:hidden">...</span>
                 </span>
               ) : (
-                'Backfill Chapters'
+                <>
+                  <span className="xs:hidden">Backfill</span>
+                  <span className="hidden xs:inline">Backfill Chapters</span>
+                </>
               )}
             </button>
             <button 
               disabled={isPlanning} 
               onClick={onPlanNewArc} 
-              className="text-sm bg-zinc-800 hover:bg-zinc-700 px-6 py-2.5 rounded-xl font-semibold text-amber-500 border border-amber-900/30 hover:border-amber-600/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-800"
+              className="text-[10px] xs:text-xs sm:text-sm bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 px-3 xs:px-4 sm:px-6 py-2 xs:py-2.5 rounded-lg xs:rounded-xl font-semibold text-amber-500 border border-amber-900/30 hover:border-amber-600/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
               title="AI will plan a new plot arc based on your story"
               aria-label="Plan new plot arc"
             >
               {isPlanning ? (
                 <span className="flex items-center">
-                  <span className="animate-spin rounded-full h-3 w-3 border-2 border-amber-500/30 border-t-amber-500 mr-2"></span>
-                  Planning...
+                  <span className="animate-spin rounded-full h-3 w-3 border-2 border-amber-500/30 border-t-amber-500 mr-1.5 xs:mr-2"></span>
+                  <span className="hidden xs:inline">Planning...</span>
+                  <span className="xs:hidden">...</span>
                 </span>
               ) : (
-                'Plan New Arc'
+                <>
+                  <span className="xs:hidden">+ Arc</span>
+                  <span className="hidden xs:inline sm:hidden">New Arc</span>
+                  <span className="hidden sm:inline">Plan New Arc</span>
+                </>
               )}
             </button>
           </div>
         </div>
         {novel.plotLedger.length === 0 ? (
-          <div className="py-12 px-8 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
-            <div className="text-5xl mb-4">🗺️</div>
-            <h3 className="text-lg font-fantasy font-bold text-zinc-300 mb-2">No Plot Arcs Yet</h3>
-            <p className="text-sm text-zinc-500 mb-4">Start planning your story by creating plot arcs.</p>
+          <div className="py-8 xs:py-12 px-4 xs:px-8 text-center border-2 border-dashed border-zinc-700 rounded-xl xs:rounded-2xl bg-zinc-900/30">
+            <div className="text-4xl xs:text-5xl mb-3 xs:mb-4">🗺️</div>
+            <h3 className="text-base xs:text-lg font-fantasy font-bold text-zinc-300 mb-2">No Plot Arcs Yet</h3>
+            <p className="text-xs xs:text-sm text-zinc-500 mb-4">Start planning your story by creating plot arcs.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:gap-6">
+          <div className="grid grid-cols-1 gap-3 xs:gap-4 md:gap-6">
             {novel.plotLedger.map((arc, index) => renderArc(arc, index))}
           </div>
         )}

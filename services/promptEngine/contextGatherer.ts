@@ -9,6 +9,7 @@ import { detectMissingCharacters } from '../characterPresenceTracker';
 import { getOverduePromises, getHighPriorityPendingPromises } from '../promiseTracker';
 import { compileComprehensiveContext } from '../contextCompilationService';
 import { textContainsCharacterName } from '../../utils/characterNameMatching';
+import { generateFaceGraphContext, queryConnectionToWronged } from '../faceGraph';
 
 /**
  * Context Gatherer
@@ -972,6 +973,54 @@ export async function gatherPromptContext(
     overduePromisesContext = undefined;
   }
 
+  // Generate Face Graph context (social network memory - karma, feuds, debts)
+  let faceGraphContext: string | undefined;
+  let unresolvedKarmaContext: PromptContext['unresolvedKarmaContext'];
+  let activeBloodFeudsContext: PromptContext['activeBloodFeudsContext'];
+  let pendingRipplesContext: PromptContext['pendingRipplesContext'];
+  try {
+    const nextChapterNumber = state.chapters.length + 1;
+    
+    // Get characters that will appear (from previous chapter ending)
+    const previousChapter = state.chapters.length > 0 ? state.chapters[state.chapters.length - 1] : null;
+    const charactersToInclude = previousChapter
+      ? state.characterCodex
+          .filter(c => textContainsCharacterName(previousChapter.content.slice(-2000), c.name))
+          .map(c => c.id)
+      : state.characterCodex.filter(c => c.isProtagonist).map(c => c.id);
+    
+    // Get protagonist ID for Face Graph queries
+    const protagonistId = state.characterCodex.find(c => c.isProtagonist)?.id;
+
+    // Check if Face Graph is enabled for this novel
+    if (state.faceGraphConfig?.enabled !== false) {
+      const faceContext = await generateFaceGraphContext(
+        state,
+        charactersToInclude,
+        nextChapterNumber,
+        protagonistId
+      );
+
+      if (faceContext.formattedContext) {
+        faceGraphContext = faceContext.formattedContext;
+      }
+
+      // Extract individual context arrays for fine-grained access
+      if (faceContext.unresolvedKarma.length > 0) {
+        unresolvedKarmaContext = faceContext.unresolvedKarma;
+      }
+      if (faceContext.activeBloodFeuds.length > 0) {
+        activeBloodFeudsContext = faceContext.activeBloodFeuds;
+      }
+      if (faceContext.pendingRipples.length > 0) {
+        pendingRipplesContext = faceContext.pendingRipples;
+      }
+    }
+  } catch (error) {
+    console.warn('Error generating Face Graph context:', error);
+    faceGraphContext = undefined;
+  }
+
   return {
     storyState: {
       title: state.title,
@@ -1017,6 +1066,11 @@ export async function gatherPromptContext(
     comprehensiveCharacterContext,
     openPlotPointsContext,
     storyProgressionAnalysis,
+    // Face Graph context (social network memory)
+    faceGraphContext,
+    unresolvedKarmaContext,
+    activeBloodFeudsContext,
+    pendingRipplesContext,
   };
 }
 

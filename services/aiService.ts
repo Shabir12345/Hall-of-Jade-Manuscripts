@@ -1,5 +1,8 @@
 import type { Arc, ArcChecklistItem, Character, Chapter, NovelState, LogicAudit } from '../types';
-import { SYSTEM_INSTRUCTION, QUALITY_CONFIG } from '../constants';
+import { SYSTEM_INSTRUCTION, QUALITY_CONFIG, CRITIQUE_CORRECTION_CONFIG } from '../constants';
+import { applyCritiqueCorrectionLoop, getAvailableRubrics } from './critiqueCorrectionService';
+import type { CritiqueCorrectionPhase } from '../types/critique';
+import { DEFAULT_RUBRICS } from '../config/styleRubrics';
 import { getStoredLlm, type LlmId } from '../contexts/LlmContext';
 import { getStoredChapterGenerationModel } from '../contexts/ChapterGenerationModelContext';
 import { rateLimiter } from './rateLimiter';
@@ -16,6 +19,35 @@ import { logger } from './loggingService';
 import { regenerateWithQualityCheck } from './chapterRegenerationService';
 import { isJsonChapterContent, extractChapterContent } from '../utils/chapterContentRepair';
 import { generateChapterWarnings, logChapterGenerationReport } from './chapterGenerationWarningService';
+import { gatherMemoryEnhancedContext, injectMemoryContext } from './memory';
+import { 
+  runDirectorAgent, 
+  formatBeatSheetForPrompt, 
+  shouldRunDirector,
+  recordTensionFromBeatSheet,
+  saveTensionEntry,
+} from './director';
+import { DirectorBeatSheet } from '../types/director';
+import {
+  shouldRunSimulation,
+  runWorldSimulation,
+  getLivingWorldStatus,
+  saveLivingWorldStatus,
+  addWorldEvents,
+  injectLivingWorldContext,
+  processChapterForDiscoveries,
+  hasLivingWorldContent,
+} from './livingWorld';
+import { WorldEventInjectionContext, DEFAULT_WORLD_SIMULATION_CONFIG } from '../types/livingWorld';
+import { shouldTriggerTribulationGate } from './tribulationGateDetector';
+import { generateFatePaths } from './fatePathGenerator';
+import { createGate, getGateConfig, buildGatePromptInjection, getGateById } from './tribulationGateService';
+import { TribulationGate, TribulationGateConfig, DEFAULT_TRIBULATION_GATE_CONFIG } from '../types/tribulationGates';
+import { buildConsequenceReminder, checkChapterForConsequences } from './gateConsequenceTracker';
+import { generateFaceGraphContext, extractKarmaFromChapter, getFaceGraphConfig } from './faceGraph';
+import type { FaceGraphContext } from '../types/faceGraph';
+import { generateMarketContext, validateGeneratedPrices } from './market';
+import type { MarketContextResult } from './market/marketContextGenerator';
 
 // Legacy function kept for backward compatibility but no longer used for model selection
 // Models are now selected automatically via the orchestrator based on task type
@@ -103,7 +135,23 @@ export type ChapterGenPhase =
   | 'regeneration_start'
   | 'regeneration_complete'
   | 'regeneration_error'
+  | 'living_world_check'
+  | 'living_world_simulation'
+  | 'living_world_complete'
+  | 'director_start'
+  | 'director_complete'
+  | 'tribulation_gate_check'
+  | 'tribulation_gate_triggered'
+  | 'tribulation_gate_generating'
+  | 'tribulation_gate_ready'
+  | 'face_graph_context'
+  | 'market_context'
+  | 'critique_start'
+  | 'critique_evaluation'
+  | 'critique_correction'
+  | 'critique_complete'
   | 'prompt_build_start'
+  | 'memory_context_gather'
   | 'prompt_build_end'
   | 'queue_estimate'
   | 'queue_dequeued'
@@ -222,14 +270,48 @@ export const generateCreativeExpansion = async (
  * 
  * @throws {AppError} If chapter generation fails or validation errors occur
  */
+/**
+ * Result type for chapter generation - can either be a chapter or a tribulation gate interrupt
+ */
+export type ChapterGenerationResult = {
+  // Standard chapter generation result
+  chapterTitle?: string;
+  chapterContent?: string;
+  chapterSummary?: string;
+  logicAudit?: LogicAudit;
+  wordCount?: number;
+  characterUpdates?: Array<{
+    name: string;
+    updateType: string;
+    newValue: string;
+    targetName?: string;
+  }>;
+  worldUpdates?: Array<{
+    title: string;
+    content: string;
+    category: string;
+    isNewRealm: boolean;
+  }>;
+  territoryUpdates?: Array<{
+    name: string;
+    type: string;
+    description: string;
+  }>;
+  // Tribulation Gate interrupt
+  requiresUserChoice?: boolean;
+  tribulationGate?: TribulationGate;
+};
+
 export const generateNextChapter = async (
   state: NovelState,
   userInstruction: string = '',
   opts?: {
     onPhase?: (phase: ChapterGenPhase, data?: Record<string, unknown>) => void;
     skipRegeneration?: boolean; // Set to true when called from regeneration to prevent infinite loops
+    skipTribulationGate?: boolean; // Set to true when resuming after user makes gate choice
+    resolvedGateId?: string; // If resuming from a gate, the ID of the resolved gate
   }
-) => {
+): Promise<ChapterGenerationResult | null> => {
 
   // Pre-generation quality checks
   const nextChapterNumber = state.chapters.length + 1;
@@ -286,11 +368,402 @@ export const generateNextChapter = async (
     }
   }
 
+  // NEW: Check and run Living World simulation if triggered
+  let livingWorldInjectionContext: WorldEventInjectionContext | null = null;
+  opts?.onPhase?.('living_world_check');
+  
+  try {
+    const livingWorldStatus = getLivingWorldStatus(state.id);
+    const simulationTrigger = shouldRunSimulation(
+      state,
+      nextChapterNumber,
+      DEFAULT_WORLD_SIMULATION_CONFIG,
+      livingWorldStatus.lastSimulationChapter
+    );
+    
+    if (simulationTrigger) {
+      opts?.onPhase?.('living_world_simulation', {
+        trigger: simulationTrigger.type,
+        chapter: simulationTrigger.triggerChapter,
+      });
+      
+      const simulationStart = Date.now();
+      
+      logger.info('Living World simulation triggered', 'generation', {
+        trigger: simulationTrigger.type,
+        chapter: simulationTrigger.triggerChapter,
+        lastSimulation: livingWorldStatus.lastSimulationChapter,
+      });
+      
+      const simulationResult = await runWorldSimulation(state, simulationTrigger);
+      
+      if (simulationResult.success && simulationResult.events.length > 0) {
+        // Add events to storage
+        addWorldEvents(state.id, simulationResult.events);
+        
+        // Update status
+        livingWorldStatus.lastSimulationChapter = nextChapterNumber;
+        livingWorldStatus.nextScheduledSimulation = nextChapterNumber + DEFAULT_WORLD_SIMULATION_CONFIG.chapterInterval;
+        saveLivingWorldStatus(state.id, livingWorldStatus);
+        
+        logger.info('Living World generated events', 'generation', {
+          eventCount: simulationResult.events.length,
+          trigger: simulationTrigger.type,
+          durationMs: Date.now() - simulationStart,
+        });
+      }
+      
+      opts?.onPhase?.('living_world_complete', {
+        durationMs: Date.now() - simulationStart,
+        eventCount: simulationResult.events.length,
+        success: simulationResult.success,
+      });
+    }
+  } catch (livingWorldError) {
+    logger.warn('Living World check/simulation failed, continuing without', 'generation', {
+      error: livingWorldError instanceof Error ? livingWorldError.message : String(livingWorldError),
+    });
+  }
+
+  // NEW: Run Director Agent to generate beat sheet for pacing control
+  let directorBeatSheet: DirectorBeatSheet | null = null;
+  if (shouldRunDirector(state)) {
+    opts?.onPhase?.('director_start');
+    const directorStart = Date.now();
+    
+    try {
+      const directorResult = await runDirectorAgent(state, userInstruction);
+      
+      if (directorResult.success && directorResult.beatSheet) {
+        directorBeatSheet = directorResult.beatSheet;
+        logger.info('Director generated beat sheet', 'generation', {
+          beatCount: directorBeatSheet.beats.length,
+          arcPhase: directorBeatSheet.arcPosition.arcPhase,
+          arcProgress: directorBeatSheet.arcProgressPercent.toFixed(1) + '%',
+          hasClimaxProtection: !!directorBeatSheet.climaxProtection?.isClimaxProximate,
+          pacingGuidance: directorBeatSheet.pacingGuidance.overallPace,
+          targetWordCount: directorBeatSheet.pacingGuidance.targetWordCount,
+        });
+      } else if (directorResult.error) {
+        logger.warn('Director agent failed, continuing without beat sheet', 'generation', {
+          error: directorResult.error,
+        });
+      }
+      
+      opts?.onPhase?.('director_complete', {
+        durationMs: Date.now() - directorStart,
+        beatCount: directorBeatSheet?.beats.length || 0,
+        arcPhase: directorBeatSheet?.arcPosition.arcPhase,
+      });
+    } catch (directorError) {
+      logger.warn('Director agent threw error, continuing without beat sheet', 'generation', {
+        error: directorError instanceof Error ? directorError.message : String(directorError),
+      });
+      opts?.onPhase?.('director_complete', {
+        durationMs: Date.now() - directorStart,
+        error: true,
+      });
+    }
+  }
+
+  // NEW: Check for Tribulation Gate trigger (unless skipping or resuming from a gate)
+  let resolvedGateInjection: string | null = null;
+  
+  if (!opts?.skipTribulationGate) {
+    opts?.onPhase?.('tribulation_gate_check');
+    
+    try {
+      const gateConfig = getGateConfig(state.id);
+      
+      if (gateConfig.enabled) {
+        const gateDetection = shouldTriggerTribulationGate(
+          state,
+          directorBeatSheet,
+          userInstruction,
+          gateConfig
+        );
+        
+        if (gateDetection.shouldTrigger && gateDetection.triggerType) {
+          opts?.onPhase?.('tribulation_gate_triggered', {
+            triggerType: gateDetection.triggerType,
+            situation: gateDetection.situation,
+            confidence: gateDetection.confidence,
+          });
+          
+          logger.info('Tribulation Gate triggered', 'generation', {
+            triggerType: gateDetection.triggerType,
+            confidence: gateDetection.confidence,
+            reason: gateDetection.reason,
+          });
+          
+          // Generate fate paths
+          opts?.onPhase?.('tribulation_gate_generating');
+          
+          const fatePaths = await generateFatePaths(
+            state,
+            gateDetection.triggerType,
+            gateDetection.situation,
+            gateDetection.protagonistName,
+            gateDetection.context
+          );
+          
+          // Create and persist the gate
+          const gate = createGate(
+            state.id,
+            nextChapterNumber,
+            gateDetection.triggerType,
+            gateDetection.situation,
+            gateDetection.context,
+            gateDetection.protagonistName,
+            fatePaths,
+            gateDetection.arcId,
+            gateDetection.relatedThreadIds
+          );
+          
+          opts?.onPhase?.('tribulation_gate_ready', {
+            gateId: gate.id,
+            pathCount: fatePaths.length,
+          });
+          
+          // Return early - the caller needs to show the gate UI and get user choice
+          return {
+            requiresUserChoice: true,
+            tribulationGate: gate,
+          };
+        } else {
+          logger.debug('Tribulation Gate check passed, no trigger', 'generation', {
+            reason: gateDetection.reason,
+            confidence: gateDetection.confidence,
+          });
+        }
+      }
+    } catch (gateError) {
+      logger.warn('Tribulation Gate check failed, continuing without', 'generation', {
+        error: gateError instanceof Error ? gateError.message : String(gateError),
+      });
+    }
+  } else if (opts?.resolvedGateId) {
+    // Resuming from a resolved gate - inject the chosen path into the prompt
+    try {
+      const resolvedGate = getGateById(opts.resolvedGateId);
+      if (resolvedGate && resolvedGate.status === 'resolved') {
+        resolvedGateInjection = buildGatePromptInjection(resolvedGate);
+        logger.info('Injecting resolved Tribulation Gate into prompt', 'generation', {
+          gateId: resolvedGate.id,
+          selectedPathId: resolvedGate.selectedPathId,
+          triggerType: resolvedGate.triggerType,
+        });
+      }
+    } catch (gateInjectError) {
+      logger.warn('Failed to inject resolved gate, continuing without', 'generation', {
+        error: gateInjectError instanceof Error ? gateInjectError.message : String(gateInjectError),
+      });
+    }
+  }
+
   opts?.onPhase?.('prompt_build_start');
   const promptStart = Date.now();
   // Get the selected chapter generation model from storage early to pass to prompt builder
   const selectedModel = getStoredChapterGenerationModel();
   let builtPrompt = await buildChapterPrompt(state, userInstruction, selectedModel);
+  
+  // NEW: Inject hierarchical memory context into the prompt
+  try {
+    opts?.onPhase?.('memory_context_gather');
+    const memoryContext = await gatherMemoryEnhancedContext(state, {
+      userInstruction,
+      tokenBudget: 4000, // Reserve 4000 tokens for memory context
+      compactFormat: false,
+    });
+    
+    if (memoryContext.combinedMemoryContext) {
+      builtPrompt = injectMemoryContext(builtPrompt, memoryContext);
+      
+      logger.info('Injected hierarchical memory context', 'generation', {
+        loreBibleTokens: memoryContext.tokenCounts.loreBible,
+        arcMemoryTokens: memoryContext.tokenCounts.arcMemory,
+        semanticSearchTokens: memoryContext.tokenCounts.semanticSearch,
+        totalMemoryTokens: memoryContext.tokenCounts.total,
+        vectorDbUsed: memoryContext.vectorDbUsed,
+        retrievalDuration: memoryContext.retrievalDuration,
+        searchQueries: memoryContext.searchQueries,
+      });
+    }
+  } catch (memoryError) {
+    // Log but don't fail generation if memory context fails
+    logger.warn('Failed to gather memory context, continuing without', 'generation', {
+      error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+    });
+  }
+  
+  // NEW: Inject Director beat sheet into the prompt for pacing control
+  if (directorBeatSheet) {
+    const beatSheetBlock = formatBeatSheetForPrompt(directorBeatSheet);
+    
+    // Add beat sheet to system instruction for authoritative guidance
+    builtPrompt = {
+      ...builtPrompt,
+      systemInstruction: builtPrompt.systemInstruction + '\n\n' + beatSheetBlock,
+    };
+    
+    logger.info('Injected Director beat sheet into prompt', 'generation', {
+      beatCount: directorBeatSheet.beats.length,
+      mandatoryBeats: directorBeatSheet.beats.filter(b => b.mandatory).length,
+      targetWordCount: directorBeatSheet.pacingGuidance.targetWordCount,
+      pacingGuidance: directorBeatSheet.pacingGuidance.overallPace,
+    });
+  }
+  
+  // NEW: Inject resolved Tribulation Gate choice into the prompt
+  if (resolvedGateInjection) {
+    builtPrompt = {
+      ...builtPrompt,
+      systemInstruction: builtPrompt.systemInstruction + '\n\n' + resolvedGateInjection,
+      userPrompt: resolvedGateInjection + '\n\n' + builtPrompt.userPrompt,
+    };
+    
+    logger.info('Injected Tribulation Gate choice into prompt', 'generation');
+  }
+  
+  // NEW: Inject Tribulation Gate consequence reminder into the prompt
+  try {
+    const consequenceReminder = buildConsequenceReminder(state.id);
+    if (consequenceReminder) {
+      builtPrompt = {
+        ...builtPrompt,
+        systemInstruction: builtPrompt.systemInstruction + '\n\n' + consequenceReminder,
+      };
+      
+      logger.info('Injected consequence reminder into prompt', 'generation');
+    }
+  } catch (consequenceError) {
+    logger.warn('Failed to inject consequence reminder, continuing without', 'generation', {
+      error: consequenceError instanceof Error ? consequenceError.message : String(consequenceError),
+    });
+  }
+  
+  // NEW: Inject Living World events context into the prompt
+  if (hasLivingWorldContent(state.id)) {
+    try {
+      const recentChapters = state.chapters.slice(-3);
+      const { prompt: enhancedPrompt, injectionContext } = injectLivingWorldContext(
+        builtPrompt,
+        state.id,
+        nextChapterNumber,
+        recentChapters
+      );
+      
+      if (injectionContext.formattedContext) {
+        builtPrompt = enhancedPrompt;
+        livingWorldInjectionContext = injectionContext;
+        
+        logger.info('Injected Living World context into prompt', 'generation', {
+          eventsToDiscover: injectionContext.eventsToDiscover.length,
+          pendingEvents: injectionContext.pendingEventCount,
+          urgentEvents: injectionContext.urgentEvents.length,
+        });
+      }
+    } catch (livingWorldInjectError) {
+      logger.warn('Failed to inject Living World context, continuing without', 'generation', {
+        error: livingWorldInjectError instanceof Error ? livingWorldInjectError.message : String(livingWorldInjectError),
+      });
+    }
+  }
+  
+  // NEW: Inject Face Graph (karma/reputation) context into the prompt
+  let faceGraphContext: FaceGraphContext | null = null;
+  try {
+    const faceConfig = await getFaceGraphConfig(state.id);
+    
+    if (faceConfig.enabled) {
+      // Get characters likely present in this chapter (from recent context)
+      const recentChapterCharacters = new Set<string>();
+      const recentChapters = state.chapters.slice(-3);
+      
+      // Extract character IDs from recent chapters and current arc
+      for (const chapter of recentChapters) {
+        // Check for character mentions in content
+        for (const char of state.characterCodex) {
+          if (chapter.content.toLowerCase().includes(char.name.toLowerCase())) {
+            recentChapterCharacters.add(char.id);
+          }
+        }
+      }
+      
+      // Add protagonist
+      const protagonist = state.characterCodex.find(c => c.isProtagonist);
+      if (protagonist) {
+        recentChapterCharacters.add(protagonist.id);
+      }
+      
+      // Add characters from active threads (via relatedEntityId if it's a character)
+      const activeThreads = (state.storyThreads || []).filter(t => t.status === 'active');
+      for (const thread of activeThreads) {
+        if (thread.relatedEntityId && thread.relatedEntityType === 'character') {
+          recentChapterCharacters.add(thread.relatedEntityId);
+        }
+      }
+      
+      if (recentChapterCharacters.size > 0) {
+        faceGraphContext = await generateFaceGraphContext(
+          state,
+          Array.from(recentChapterCharacters),
+          nextChapterNumber,
+          protagonist?.id
+        );
+        
+        if (faceGraphContext.formattedContext) {
+          builtPrompt = {
+            ...builtPrompt,
+            systemInstruction: builtPrompt.systemInstruction + '\n\n' + faceGraphContext.formattedContext,
+          };
+          
+          logger.info('Injected Face Graph context into prompt', 'generation', {
+            unresolvedKarma: faceGraphContext.unresolvedKarma.length,
+            activeBloodFeuds: faceGraphContext.activeBloodFeuds.length,
+            unpaidDebts: faceGraphContext.unpaidDebts.length,
+            pendingRipples: faceGraphContext.pendingRipples.length,
+          });
+        }
+      }
+    }
+  } catch (faceGraphError) {
+    logger.warn('Failed to inject Face Graph context, continuing without', 'generation', {
+      error: faceGraphError instanceof Error ? faceGraphError.message : String(faceGraphError),
+    });
+  }
+  
+  // NEW: Inject Market/Economic context into the prompt for price consistency
+  let marketContextResult: MarketContextResult | null = null;
+  try {
+    if (state.globalMarketState && state.globalMarketState.currencies.length > 0) {
+      const previousContent = state.chapters.slice(-2).map(c => c.content).join('\n');
+      
+      marketContextResult = generateMarketContext(state, {
+        userInstructions: userInstruction,
+        previousContent,
+        chapterOutline: directorBeatSheet ? 
+          directorBeatSheet.beats.map(b => b.description).join('. ') : undefined,
+      });
+      
+      if (marketContextResult.shouldInclude && marketContextResult.contextBlock) {
+        builtPrompt = {
+          ...builtPrompt,
+          systemInstruction: builtPrompt.systemInstruction + '\n\n' + marketContextResult.contextBlock,
+        };
+        
+        logger.info('Injected Market context into prompt', 'generation', {
+          sceneType: marketContextResult.sceneType,
+          relevantItems: marketContextResult.relevantItems.length,
+          priceWarnings: marketContextResult.priceWarnings.length,
+        });
+      }
+    }
+  } catch (marketError) {
+    logger.warn('Failed to inject Market context, continuing without', 'generation', {
+      error: marketError instanceof Error ? marketError.message : String(marketError),
+    });
+  }
   
   // NEW: Inject story health constraints into the prompt
   if (warningReport.promptConstraints.length > 0 || warningReport.blockers.length > 0) {
@@ -645,6 +1118,92 @@ Return ONLY the expanded text.`;
     });
   }
   
+  // NEW: Critique-Correction Loop - Auto-Critic Agent using Gemini Flash
+  // Evaluates the chapter against a Style Rubric and iteratively refines prose quality
+  if (CRITIQUE_CORRECTION_CONFIG.enabled && !opts?.skipRegeneration) {
+    try {
+      opts?.onPhase?.('critique_start', {
+        rubricId: 'literary_xianxia', // Default rubric
+        rubricName: 'Literary Xianxia',
+      });
+      
+      logger.info('Starting Critique-Correction Loop', 'critique', {
+        chapterTitle: result.chapterTitle,
+        wordCount,
+      });
+      
+      // Determine which rubric to use (default to literary_xianxia)
+      // Could be customized per-novel via state.novelStyleConfig in the future
+      const rubricId = (state as any).novelStyleConfig?.activeRubricId || 'literary_xianxia';
+      
+      const critiqueResult = await applyCritiqueCorrectionLoop(
+        result.chapterContent,
+        result.chapterTitle || 'Untitled',
+        result.chapterSummary || '',
+        rubricId,
+        {
+          onPhase: (phase, data) => {
+            // Map critique phases to our phase callbacks
+            if (phase === 'critique_evaluation') {
+              opts?.onPhase?.('critique_evaluation', data);
+            } else if (phase === 'correction_application') {
+              opts?.onPhase?.('critique_correction', data);
+            } else if (phase === 'loop_complete') {
+              opts?.onPhase?.('critique_complete', data);
+            }
+          },
+          onProgress: (message, progress) => {
+            logger.debug(message, 'critique', { progress });
+          },
+          onCritiqueResult: (critique, iteration) => {
+            logger.info('Critique iteration result', 'critique', {
+              iteration,
+              overallScore: critique.overallScore,
+              issueCount: critique.issues.length,
+              passesThreshold: critique.passesThreshold,
+            });
+          },
+        },
+        CRITIQUE_CORRECTION_CONFIG
+      );
+      
+      // Update chapter content with critique-corrected version
+      if (critiqueResult.success && critiqueResult.finalContent !== result.chapterContent) {
+        result.chapterContent = critiqueResult.finalContent;
+        
+        // Update word count after critique corrections
+        wordCount = result.chapterContent.split(/\s+/).filter((word: string) => word.length > 0).length;
+        
+        logger.info('Critique-Correction Loop completed successfully', 'critique', {
+          iterations: critiqueResult.iterations,
+          finalScore: critiqueResult.finalCritique.overallScore,
+          threshold: critiqueResult.finalCritique.threshold,
+          estimatedCost: `$${critiqueResult.estimatedCost.toFixed(4)}`,
+          totalTimeMs: critiqueResult.totalTimeMs,
+          wordCountAfter: wordCount,
+        });
+      } else {
+        logger.info('Critique-Correction Loop completed (no changes needed or disabled)', 'critique', {
+          iterations: critiqueResult.iterations,
+          finalScore: critiqueResult.finalCritique.overallScore,
+          passedOnFirstTry: critiqueResult.iterations === 1 && critiqueResult.finalCritique.passesThreshold,
+        });
+      }
+      
+      opts?.onPhase?.('critique_complete', {
+        success: critiqueResult.success,
+        iterations: critiqueResult.iterations,
+        finalScore: critiqueResult.finalCritique.overallScore,
+        estimatedCost: critiqueResult.estimatedCost,
+      });
+    } catch (critiqueError) {
+      logger.warn('Critique-Correction Loop failed, continuing without', 'critique', {
+        error: critiqueError instanceof Error ? critiqueError.message : String(critiqueError),
+      });
+      // Continue with original content if critique fails
+    }
+  }
+  
   // Post-generation quality validation with comprehensive checks
   let finalChapter: Chapter | null = null;
   try {
@@ -795,7 +1354,102 @@ Return ONLY the expanded text.`;
     });
   }
   
+  // NEW: Process Living World event discoveries from generated chapter
+  if (livingWorldInjectionContext && livingWorldInjectionContext.eventsToDiscover.length > 0) {
+    try {
+      const generatedChapter: Chapter = {
+        id: generateUUID(),
+        number: nextChapterNumber,
+        title: result.chapterTitle,
+        content: result.chapterContent,
+        summary: result.chapterSummary || '',
+        logicAudit: result.logicAudit,
+        scenes: [],
+        createdAt: Date.now(),
+      };
+      
+      const discoveryResult = processChapterForDiscoveries(
+        state.id,
+        generatedChapter,
+        livingWorldInjectionContext
+      );
+      
+      if (discoveryResult.discoveredEventIds.length > 0) {
+        logger.info('Living World events discovered in chapter', 'generation', {
+          discoveredCount: discoveryResult.discoveredEventIds.length,
+          remainingUndiscovered: discoveryResult.remainingUndiscovered,
+          chapter: nextChapterNumber,
+        });
+      }
+    } catch (discoveryError) {
+      logger.warn('Failed to process Living World event discoveries', 'generation', {
+        error: discoveryError instanceof Error ? discoveryError.message : String(discoveryError),
+      });
+    }
+  }
+  
   opts?.onPhase?.('parse_end', { parseMs: 0 });
+  
+  // Save tension tracking data from Director beat sheet
+  if (directorBeatSheet) {
+    try {
+      const tensionEntry = recordTensionFromBeatSheet(state, directorBeatSheet);
+      // The actual state update should be handled by the caller since we don't mutate state here
+      // We log the tension data for debugging purposes
+      logger.debug('Tension data recorded from beat sheet', 'director', {
+        chapterNumber: nextChapterNumber,
+        startTension: tensionEntry.startTension,
+        endTension: tensionEntry.endTension,
+        arcPhase: tensionEntry.arcPhase,
+      });
+      
+      // Return tension data in the result for the caller to save
+      (result as any).tensionData = tensionEntry;
+    } catch (tensionError) {
+      logger.warn('Failed to record tension data', 'director', {
+        error: tensionError instanceof Error ? tensionError.message : String(tensionError),
+      });
+    }
+  }
+  
+  // NEW: Extract karma events from generated chapter (Face Graph)
+  try {
+    const faceConfig = await getFaceGraphConfig(state.id);
+    
+    if (faceConfig.enabled && faceConfig.autoExtractKarma) {
+      const generatedChapterForKarma: Chapter = {
+        id: generateUUID(),
+        number: nextChapterNumber,
+        title: result.chapterTitle,
+        content: result.chapterContent,
+        summary: result.chapterSummary || '',
+        logicAudit: result.logicAudit,
+        scenes: [],
+        createdAt: Date.now(),
+      };
+      
+      // Extract karma asynchronously (don't block return)
+      extractKarmaFromChapter(state, generatedChapterForKarma, {
+        minSeverity: 'moderate', // Only extract notable events
+      }).then(karmaEvents => {
+        if (karmaEvents.length > 0) {
+          logger.info('Karma events extracted from chapter', 'faceGraph', {
+            eventCount: karmaEvents.length,
+            chapter: nextChapterNumber,
+            events: karmaEvents.map(e => `${e.actorName} ${e.actionType} ${e.targetName}`),
+          });
+        }
+      }).catch(err => {
+        logger.warn('Async karma extraction failed', 'faceGraph', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  } catch (karmaError) {
+    logger.warn('Failed to initiate karma extraction', 'faceGraph', {
+      error: karmaError instanceof Error ? karmaError.message : String(karmaError),
+    });
+  }
 
   return result;
 };

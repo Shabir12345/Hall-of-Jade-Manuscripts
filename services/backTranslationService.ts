@@ -4,9 +4,12 @@
  * Implements back-translation through multiple languages to break
  * n-gram patterns and reduce AI detection. Research shows this is
  * highly effective at reducing detectability.
+ * 
+ * Uses DeepSeek-V3.2 ("The Writer") for translation tasks as it
+ * excels at multilingual tasks and creative writing.
  */
 
-import { grokText } from "./grokService";
+import { deepseekText } from "./deepseekService";
 import { rateLimiter } from "./rateLimiter";
 
 export interface BackTranslationResult {
@@ -35,7 +38,7 @@ Text to translate:
 ${text}`;
   
   const translatedText = await rateLimiter.queueRequest('generate', async () => {
-    return await grokText({
+    return await deepseekText({
       user: translatePrompt,
       temperature: 0.7,
       topP: 0.9,
@@ -50,7 +53,7 @@ Text to translate:
 ${translatedText}`;
   
   const backTranslatedText = await rateLimiter.queueRequest('generate', async () => {
-    return await grokText({
+    return await deepseekText({
       user: backTranslatePrompt,
       temperature: 0.8, // Slightly higher for more variation
       topP: 0.9,

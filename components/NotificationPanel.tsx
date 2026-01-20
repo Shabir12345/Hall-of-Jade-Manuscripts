@@ -333,39 +333,86 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ activeLogs, isOpe
   }
 
   // Mobile view - show when isOpen is true on mobile
+  // Professional mobile slide-in panel with full-height design
   if (isOpen && !isDesktopOpen) {
     return (
       <>
-        {/* Mobile backdrop */}
+        {/* Mobile backdrop with smooth fade */}
         <div
-          className="md:hidden fixed inset-0 bg-black/95 backdrop-blur-xl z-40"
+          className="md:hidden fixed inset-0 bg-black/90 backdrop-blur-md z-40 animate-in fade-in duration-200"
           onClick={onClose}
           aria-hidden="true"
         />
-        <div className="fixed right-0 top-0 h-screen w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-700 flex flex-col z-40 transform transition-transform duration-300 ease-in-out translate-x-0 md:hidden">
-          <div className="p-4 border-b border-zinc-700 flex-shrink-0">
+        {/* Mobile panel - slides in from right with safe area support */}
+        <div 
+          className="fixed right-0 top-0 h-full h-dvh w-[85vw] max-w-sm bg-zinc-900 border-l border-zinc-700/50 flex flex-col z-50 transform transition-transform duration-300 ease-out translate-x-0 md:hidden shadow-2xl"
+          style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        >
+          {/* Header with professional styling */}
+          <div className="px-4 py-3 border-b border-zinc-800 flex-shrink-0 bg-zinc-900/95 backdrop-blur-xl">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-zinc-200 uppercase tracking-wider">Notifications</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔔</span>
+                <h2 className="text-base font-bold text-zinc-100 uppercase tracking-wide">Notifications</h2>
+                {notifications.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-amber-600/30 border border-amber-500/40 text-amber-400 text-xs font-bold min-w-[1.25rem] text-center">
+                    {notifications.length > 99 ? '99+' : notifications.length}
+                  </span>
+                )}
+              </div>
               {onClose && (
                 <button
                   onClick={onClose}
-                  className="text-zinc-400 hover:text-zinc-200 p-1 rounded-lg hover:bg-zinc-800 transition-colors"
+                  className="text-zinc-400 hover:text-zinc-200 w-10 h-10 flex items-center justify-center rounded-xl hover:bg-zinc-800 transition-all active:scale-95"
                   aria-label="Close notifications"
                 >
-                  ×
+                  <span className="text-xl">×</span>
                 </button>
               )}
             </div>
+            
+            {/* Mobile filter pills - horizontal scroll */}
+            <div className="flex items-center gap-1.5 mt-3 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
+              {[
+                { id: 'all' as FilterType, label: 'All', icon: '📋' },
+                { id: 'success' as FilterType, label: 'Success', icon: '✓' },
+                { id: 'error' as FilterType, label: 'Errors', icon: '✕' },
+                { id: 'warning' as FilterType, label: 'Warnings', icon: '⚠' },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setFilter(f.id)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap flex-shrink-0 active:scale-95 ${
+                    filter === f.id
+                      ? 'bg-amber-600/30 text-amber-400 border border-amber-500/40'
+                      : 'bg-zinc-800/80 text-zinc-400 border border-zinc-700/50'
+                  }`}
+                >
+                  <span>{f.icon}</span>
+                  <span>{f.label}</span>
+                  <span className="opacity-60">({getFilterCount(f.id)})</span>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-2">
-            {filteredNotifications.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-zinc-500 text-sm">No notifications yet</p>
-              </div>
-            ) : (
-              filteredNotifications.map((item) => renderNotification(item))
-            )}
+          
+          {/* Notification list with pull-to-refresh style */}
+          <div className="flex-1 overflow-y-auto overscroll-contain scroll-smooth">
+            <div className="p-3 space-y-2">
+              {filteredNotifications.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3 opacity-40">🔕</div>
+                  <p className="text-zinc-400 text-sm font-medium">No notifications</p>
+                  <p className="text-zinc-600 text-xs mt-1">You're all caught up!</p>
+                </div>
+              ) : (
+                filteredNotifications.map((item) => renderNotification(item))
+              )}
+            </div>
           </div>
+          
+          {/* Bottom safe area padding */}
+          <div className="h-safe-bottom flex-shrink-0" />
         </div>
       </>
     );

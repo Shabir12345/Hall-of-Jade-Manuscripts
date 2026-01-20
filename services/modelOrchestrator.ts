@@ -1,30 +1,33 @@
-import { grokText, grokJson } from './grokService';
+import { deepseekText, deepseekJson } from './deepseekService';
+import { geminiText, geminiJson } from './geminiService';
 import { logger } from './loggingService';
 import { env } from '../utils/env';
 
 /**
- * Cost per 1M tokens (approximate, as of 2024)
+ * Model Orchestrator - Simplified Two-Model Architecture
+ * 
+ * DeepSeek-V3.2 ("The Writer"): 
+ *   - Trained on massive Chinese web fiction corpus
+ *   - Natively understands cultivation tropes (Dantian, Tribulation Lightning, Jade Slips, etc.)
+ *   - Used for: Chapter generation, Arc/Saga planning, Creative expansion, Prose editing
+ * 
+ * Gemini 3 Flash ("The Clerk"):
+ *   - Fast, cost-effective for state extraction
+ *   - Used for: Metadata extraction, Lore Bible updates, Character/item tracking
+ */
+
+/**
+ * Cost per 1M tokens (approximate, as of 2025)
  */
 const MODEL_COSTS = {
-  claude: {
-    input: 3.0,   // $3.00 per 1M input tokens
-    output: 15.0, // $15.00 per 1M output tokens
+  deepseek: {
+    input: 0.14,  // $0.14 per 1M input tokens (cache miss)
+    output: 0.28, // $0.28 per 1M output tokens
+    // Note: Cache hit is $0.014/1M (90% cheaper)
   },
   gemini: {
     input: 0.10,  // $0.10 per 1M input tokens
     output: 0.40, // $0.40 per 1M output tokens
-  },
-  openai: {
-    input: 15.0,  // $15.00 per 1M input tokens (GPT-5)
-    output: 60.0, // $60.00 per 1M output tokens (GPT-5)
-  },
-  deepseek: {
-    input: 0.20,  // $0.20 per 1M input tokens
-    output: 0.60, // $0.60 per 1M output tokens
-  },
-  grok: {
-    input: 0.20,  // $0.20 per 1M input tokens
-    output: 0.50, // $0.50 per 1M output tokens (for reasoning variants)
   },
 };
 
@@ -39,11 +42,11 @@ function estimateTokens(text: string): number {
  * Estimates cost for a request
  */
 function estimateCost(
-  provider: string,
+  provider: 'deepseek' | 'gemini',
   inputText: string,
   outputText: string
 ): { inputCost: number; outputCost: number; totalCost: number; inputTokens: number; outputTokens: number } {
-  const costs = MODEL_COSTS[provider as keyof typeof MODEL_COSTS] || MODEL_COSTS.grok;
+  const costs = MODEL_COSTS[provider];
   const inputTokens = estimateTokens(inputText);
   const outputTokens = estimateTokens(outputText);
   
@@ -56,51 +59,87 @@ function estimateCost(
 
 /**
  * Task types that determine which model to use
+ * 
+ * DeepSeek ("The Writer") tasks - creative/narrative work:
+ *   - prose_generation: Chapter writing
+ *   - prose_editing: Chapter editing and revision
+ *   - arc_planning: Story arc planning
+ *   - creative_expansion: Expanding prose creatively
+ *   - drafting: Initial drafts
+ * 
+ * Gemini ("The Clerk") tasks - extraction/metadata work:
+ *   - metadata_extraction: Post-chapter state extraction
+ *   - lore_dictation: Processing dictated lore entries
+ *   - refine_spoken_input: Cleaning up voice input
+ *   - style_critique: Style evaluation for critique-correction loop ("The Auto-Critic")
  */
 export type TaskType =
-  | 'prose_generation'      // Grok - Best narrative flow
-  | 'prose_editing'          // Grok - Maintains quality
-  | 'metadata_extraction'    // Grok - Cost-effective for high-volume
-  | 'drafting'               // Grok - High-volume, low-stakes
-  | 'arc_planning'           // Grok - Complex planning
-  | 'creative_expansion'      // Grok - Creative quality
-  | 'lore_dictation'          // Grok - Cost-effective
-  | 'refine_spoken_input';    // Grok - Cost-effective
+  | 'prose_generation'      // DeepSeek - Chapter writing
+  | 'prose_editing'         // DeepSeek - Chapter editing
+  | 'metadata_extraction'   // Gemini - State extraction ("The Clerk")
+  | 'drafting'              // DeepSeek - Initial drafts
+  | 'arc_planning'          // DeepSeek - Story arc planning
+  | 'creative_expansion'    // DeepSeek - Creative expansion
+  | 'lore_dictation'        // Gemini - Processing lore entries
+  | 'refine_spoken_input'   // Gemini - Voice input cleanup
+  | 'style_critique';       // Gemini - Style critique for critique-correction loop
 
 /**
  * Model assignment map
+ * 
+ * DeepSeek-V3.2 is used for all creative/narrative tasks because:
+ *   - Trained on massive Chinese web fiction corpus
+ *   - Natively understands cultivation tropes
+ *   - Better at maintaining narrative consistency
+ * 
+ * Gemini Flash is used for extraction/metadata tasks because:
+ *   - Fast and cost-effective
+ *   - Good at structured data extraction
+ *   - Reliable JSON generation
  */
-const MODEL_ASSIGNMENTS: Record<TaskType, { provider: string; model: string; required: boolean }> = {
-  prose_generation: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
-  prose_editing: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
-  metadata_extraction: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
-  drafting: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
-  arc_planning: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
-  creative_expansion: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
-  lore_dictation: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
-  refine_spoken_input: { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true },
+const MODEL_ASSIGNMENTS: Record<TaskType, { provider: 'deepseek' | 'gemini'; model: string; description: string }> = {
+  // DeepSeek "The Writer" tasks
+  prose_generation: { provider: 'deepseek', model: 'deepseek-chat', description: 'Chapter generation' },
+  prose_editing: { provider: 'deepseek', model: 'deepseek-chat', description: 'Prose editing and revision' },
+  arc_planning: { provider: 'deepseek', model: 'deepseek-chat', description: 'Story arc planning' },
+  creative_expansion: { provider: 'deepseek', model: 'deepseek-chat', description: 'Creative prose expansion' },
+  drafting: { provider: 'deepseek', model: 'deepseek-chat', description: 'Initial drafting' },
+  
+  // Gemini "The Clerk" tasks
+  metadata_extraction: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'State extraction (The Clerk)' },
+  lore_dictation: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'Lore entry processing' },
+  refine_spoken_input: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'Voice input refinement' },
+  
+  // Gemini "The Auto-Critic" task - Style evaluation for critique-correction loop
+  style_critique: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'Style critique (The Auto-Critic)' },
 };
 
 /**
  * Validates that required API keys are available
  */
-function validateApiKey(provider: string, required: boolean): void {
-  let hasKey = false;
-  
-  if (provider === 'grok') {
-    hasKey = !!env.grok?.apiKey;
-  }
-  
-  if (required && !hasKey) {
-    throw new Error(
-      `XAI_API_KEY is required for ${provider} but is not set. ` +
-      `Please set XAI_API_KEY in your .env.local file.`
-    );
+function validateApiKey(provider: 'deepseek' | 'gemini'): void {
+  if (provider === 'deepseek') {
+    if (!env.deepseek?.apiKey) {
+      throw new Error(
+        `DEEPSEEK_API_KEY is required but not set. ` +
+        `Please set DEEPSEEK_API_KEY in your .env.local file.`
+      );
+    }
+  } else if (provider === 'gemini') {
+    if (!env.gemini?.apiKey) {
+      throw new Error(
+        `GEMINI_API_KEY is required but not set. ` +
+        `Please set GEMINI_API_KEY in your .env.local file.`
+      );
+    }
   }
 }
 
 /**
  * Routes a text generation task to the appropriate model
+ * 
+ * DeepSeek ("The Writer"): prose_generation, prose_editing, arc_planning, creative_expansion, drafting
+ * Gemini ("The Clerk"): metadata_extraction, lore_dictation, refine_spoken_input
  */
 export async function routeTextTask(
   taskType: TaskType,
@@ -114,7 +153,6 @@ export async function routeTextTask(
       cacheableContent: string;
       dynamicContent: string;
     };
-    cacheTtl?: '5m' | '1h'; // Cache TTL (5 minutes default, 1 hour optional)
   }
 ): Promise<string> {
   const assignment = MODEL_ASSIGNMENTS[taskType];
@@ -122,32 +160,37 @@ export async function routeTextTask(
     throw new Error(`Unknown task type: ${taskType}`);
   }
   
-  validateApiKey(assignment.provider, assignment.required);
+  validateApiKey(assignment.provider);
   
   const startTime = Date.now();
-  logger.info(`Routing ${taskType} to ${assignment.provider} (${assignment.model})`, 'modelOrchestrator');
+  logger.info(`[${assignment.provider.toUpperCase()}] Routing ${taskType} (${assignment.description})`, 'modelOrchestrator');
   
   try {
     let result: string;
     
-    switch (assignment.provider) {
-      case 'grok':
-        result = await grokText({
-          system: opts.system,
-          user: opts.user,
-          temperature: opts.temperature,
-          topP: opts.topP,
-          maxTokens: opts.maxTokens,
-          cacheMetadata: opts.cacheMetadata,
-          cacheTtl: opts.cacheTtl,
-        });
-        break;
-      default:
-        throw new Error(`Unsupported provider: ${assignment.provider}`);
+    if (assignment.provider === 'deepseek') {
+      result = await deepseekText({
+        model: 'deepseek-chat',
+        system: opts.system,
+        user: opts.user,
+        temperature: opts.temperature,
+        topP: opts.topP,
+        maxTokens: opts.maxTokens,
+      });
+    } else {
+      result = await geminiText({
+        model: 'gemini-2.5-flash',
+        system: opts.system,
+        user: opts.user,
+        temperature: opts.temperature,
+        topP: opts.topP,
+        maxTokens: opts.maxTokens,
+        cacheMetadata: opts.cacheMetadata,
+      });
     }
     
     const duration = Date.now() - startTime;
-    logger.info(`Completed ${taskType} in ${duration}ms using ${assignment.provider}`, 'modelOrchestrator', {
+    logger.info(`[${assignment.provider.toUpperCase()}] Completed ${taskType} in ${duration}ms`, 'modelOrchestrator', {
       taskType,
       provider: assignment.provider,
       model: assignment.model,
@@ -157,7 +200,7 @@ export async function routeTextTask(
     return result;
   } catch (error) {
     const duration = Date.now() - startTime;
-    logger.error(`Failed ${taskType} after ${duration}ms using ${assignment.provider}`, 'modelOrchestrator', 
+    logger.error(`[${assignment.provider.toUpperCase()}] Failed ${taskType} after ${duration}ms`, 'modelOrchestrator', 
       error instanceof Error ? error : undefined,
       {
         taskType,
@@ -172,7 +215,11 @@ export async function routeTextTask(
 
 /**
  * Routes a JSON generation task to the appropriate model
- * @param overrideProvider - Optional override provider for prose_generation task (only 'grok' supported now)
+ * 
+ * DeepSeek ("The Writer"): prose_generation, prose_editing, arc_planning, creative_expansion, drafting
+ * Gemini ("The Clerk"): metadata_extraction, lore_dictation, refine_spoken_input
+ * 
+ * @param overrideProvider - Optional override for prose_generation task (allows user to choose model)
  */
 export async function routeJsonTask<T>(
   taskType: TaskType,
@@ -186,8 +233,7 @@ export async function routeJsonTask<T>(
       cacheableContent: string;
       dynamicContent: string;
     };
-    cacheTtl?: '5m' | '1h'; // Cache TTL (5 minutes default, 1 hour optional)
-    overrideProvider?: string; // Override provider for prose_generation (only 'grok' supported now)
+    overrideProvider?: string; // Optional: 'deepseek' or 'gemini' to override default
   }
 ): Promise<T> {
   let assignment = MODEL_ASSIGNMENTS[taskType];
@@ -195,46 +241,51 @@ export async function routeJsonTask<T>(
     throw new Error(`Unknown task type: ${taskType}`);
   }
   
-  // Allow overriding provider for prose_generation task (only grok supported now)
+  // Allow overriding provider for prose_generation task
   if (taskType === 'prose_generation' && opts.overrideProvider) {
-    const overrideProvider = opts.overrideProvider;
-    if (overrideProvider === 'grok') {
-      assignment = { provider: 'grok', model: 'grok-4-1-fast-reasoning', required: true };
-    } else {
-      throw new Error(`Invalid override provider for prose_generation: ${overrideProvider}. Only 'grok' is supported.`);
+    if (opts.overrideProvider === 'deepseek') {
+      assignment = { provider: 'deepseek', model: 'deepseek-chat', description: 'Chapter generation (DeepSeek override)' };
+    } else if (opts.overrideProvider === 'gemini') {
+      assignment = { provider: 'gemini', model: 'gemini-2.5-flash', description: 'Chapter generation (Gemini override)' };
     }
+    // Ignore invalid override values - use default
   }
   
-  validateApiKey(assignment.provider, assignment.required);
+  validateApiKey(assignment.provider);
   
   const startTime = Date.now();
   const inputText = (opts.system || '') + '\n' + opts.user;
-  logger.info(`Routing ${taskType} (JSON) to ${assignment.provider} (${assignment.model})`, 'modelOrchestrator');
+  logger.info(`[${assignment.provider.toUpperCase()}] Routing ${taskType} JSON (${assignment.description})`, 'modelOrchestrator');
   
   try {
     let result: T;
     
-    switch (assignment.provider) {
-      case 'grok':
-        result = await grokJson<T>({
-          system: opts.system,
-          user: opts.user,
-          temperature: opts.temperature,
-          topP: opts.topP,
-          maxTokens: opts.maxTokens,
-          cacheMetadata: opts.cacheMetadata,
-          cacheTtl: opts.cacheTtl,
-        });
-        break;
-      default:
-        throw new Error(`Unsupported provider: ${assignment.provider}`);
+    if (assignment.provider === 'deepseek') {
+      result = await deepseekJson<T>({
+        model: 'deepseek-chat',
+        system: opts.system,
+        user: opts.user,
+        temperature: opts.temperature,
+        topP: opts.topP,
+        maxTokens: opts.maxTokens,
+      });
+    } else {
+      result = await geminiJson<T>({
+        model: 'gemini-2.5-flash',
+        system: opts.system,
+        user: opts.user,
+        temperature: opts.temperature,
+        topP: opts.topP,
+        maxTokens: opts.maxTokens,
+        cacheMetadata: opts.cacheMetadata,
+      });
     }
     
     const duration = Date.now() - startTime;
     const resultJson = JSON.stringify(result);
     const costEstimate = estimateCost(assignment.provider, inputText, resultJson);
     
-    logger.info(`Completed ${taskType} (JSON) in ${duration}ms using ${assignment.provider}`, 'modelOrchestrator', {
+    logger.info(`[${assignment.provider.toUpperCase()}] Completed ${taskType} JSON in ${duration}ms`, 'modelOrchestrator', {
       taskType,
       provider: assignment.provider,
       model: assignment.model,
@@ -251,7 +302,7 @@ export async function routeJsonTask<T>(
     return result;
   } catch (error) {
     const duration = Date.now() - startTime;
-    logger.error(`Failed ${taskType} (JSON) after ${duration}ms using ${assignment.provider}`, 'modelOrchestrator',
+    logger.error(`[${assignment.provider.toUpperCase()}] Failed ${taskType} JSON after ${duration}ms`, 'modelOrchestrator',
       error instanceof Error ? error : undefined,
       {
         taskType,
@@ -267,13 +318,23 @@ export async function routeJsonTask<T>(
 /**
  * Gets the model assignment for a task type (for UI display)
  */
-export function getModelAssignment(taskType: TaskType): { provider: string; model: string; required: boolean } {
-  return MODEL_ASSIGNMENTS[taskType] || { provider: 'unknown', model: 'unknown', required: false };
+export function getModelAssignment(taskType: TaskType): { provider: string; model: string; description: string } {
+  return MODEL_ASSIGNMENTS[taskType] || { provider: 'unknown', model: 'unknown', description: 'Unknown task' };
 }
 
 /**
  * Gets all model assignments (for UI display)
  */
-export function getAllModelAssignments(): Record<TaskType, { provider: string; model: string; required: boolean }> {
+export function getAllModelAssignments(): Record<TaskType, { provider: string; model: string; description: string }> {
   return MODEL_ASSIGNMENTS;
+}
+
+/**
+ * Gets the provider role description
+ */
+export function getProviderRole(provider: 'deepseek' | 'gemini'): string {
+  if (provider === 'deepseek') {
+    return 'The Writer - DeepSeek-V3.2 trained on Chinese web fiction, understands cultivation tropes natively';
+  }
+  return 'The Clerk - Gemini Flash for fast, accurate state extraction and metadata processing';
 }

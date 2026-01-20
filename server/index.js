@@ -1,11 +1,17 @@
 /**
- * Backend Proxy Server for Anthropic Claude API
+ * Backend Proxy Server (Legacy - Not Required for Two-Model Architecture)
  * 
- * This server proxies requests from the frontend to Anthropic's API
- * to bypass CORS restrictions. API keys are kept secure on the server.
+ * NOTE: This server is no longer required for the two-model architecture.
+ * Both DeepSeek and Gemini APIs work directly from the browser without CORS issues.
  * 
- * Run with: npm run server
- * Or: node server/index.js
+ * This file is kept for potential future use if a proxy is needed.
+ * 
+ * Two-Model Architecture:
+ *   - DeepSeek-V3.2 ("The Writer") - Direct API calls from browser
+ *   - Gemini Flash ("The Clerk") - Direct API calls from browser
+ * 
+ * If you need to run a proxy server for other purposes:
+ *   npm run server
  */
 
 import express from 'express';
@@ -31,74 +37,44 @@ app.use(express.json());
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'anthropic-proxy' });
+  res.json({ 
+    status: 'ok', 
+    service: 'hall-of-jade-manuscripts-proxy',
+    note: 'This proxy server is not required for the two-model architecture. DeepSeek and Gemini APIs work directly from the browser.',
+    architecture: {
+      writer: 'DeepSeek-V3.2 - Chapter generation and creative writing',
+      clerk: 'Gemini Flash - State extraction and metadata processing'
+    }
+  });
 });
 
-// Proxy endpoint for Claude API
-app.post('/api/claude/chat', async (req, res) => {
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    
-    if (!apiKey) {
-      return res.status(500).json({
-        error: 'ANTHROPIC_API_KEY is not set on the server. Please add it to your .env.local file.'
-      });
-    }
-
-    const { model, messages, system, system_cache_control, temperature, top_p, max_tokens } = req.body;
-
-    // Validate request
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({
-        error: 'Invalid request: messages must be an array'
-      });
-    }
-
-    // Prepare request for Anthropic API
-    const anthropicRequest = {
-      model: model || 'claude-sonnet-4-5-20250929',
-      messages: messages,
-      ...(system && { system }),
-      ...(system_cache_control && { system_cache_control }),
-      ...(temperature !== undefined && { temperature }),
-      ...(top_p !== undefined && { top_p }),
-      ...(max_tokens !== undefined && { max_tokens }),
-    };
-
-    // Forward request to Anthropic
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json',
+// Info endpoint
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Hall of Jade Manuscripts - Proxy Server',
+    status: 'running',
+    note: 'This server is not required for normal operation. The two-model architecture (DeepSeek + Gemini) works directly from the browser.',
+    architecture: {
+      deepseek: {
+        role: 'The Writer',
+        description: 'DeepSeek-V3.2 for chapter generation, arc planning, and creative writing',
+        corsRequired: false
       },
-      body: JSON.stringify(anthropicRequest),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: data.error?.message || `Anthropic API error: ${response.statusText}`,
-        status: response.status
-      });
+      gemini: {
+        role: 'The Clerk', 
+        description: 'Gemini Flash for state extraction, metadata processing, and Lore Bible updates',
+        corsRequired: false
+      }
     }
-
-    // Return the response
-    res.json(data);
-  } catch (error) {
-    console.error('Proxy error:', error);
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Internal server error'
-    });
-  }
+  });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Anthropic Proxy Server running on http://localhost:${PORT}`);
-  console.log(`📡 Proxying requests to Anthropic API`);
-  console.log(`🔑 API Key: ${process.env.ANTHROPIC_API_KEY ? '✓ Loaded' : '✗ Missing'}`);
-  console.log(`\n💡 Make sure your frontend is configured to use: http://localhost:${PORT}/api/claude/chat`);
+  console.log(`🚀 Proxy Server running on http://localhost:${PORT}`);
+  console.log(`\n📝 NOTE: This server is NOT required for the two-model architecture.`);
+  console.log(`   Both DeepSeek and Gemini APIs work directly from the browser.\n`);
+  console.log(`   Two-Model Architecture:`);
+  console.log(`   - DEEPSEEK_API_KEY (The Writer): ${process.env.DEEPSEEK_API_KEY ? '✓ Set' : '✗ Not Set'}`);
+  console.log(`   - GEMINI_API_KEY (The Clerk): ${process.env.GEMINI_API_KEY ? '✓ Set' : '✗ Not Set'}`);
 });

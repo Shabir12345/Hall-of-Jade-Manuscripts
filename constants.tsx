@@ -1,4 +1,5 @@
 import type { RegenerationConfig } from './types';
+import type { CritiqueCorrectionConfig } from './types/critique';
 
 /**
  * Core System Instruction - Concise API-compliant instruction for AI models
@@ -313,4 +314,48 @@ export const AI_DETECTION_CONFIG = {
     numVersions: 2,
     mixingStrategy: 'best-parts' as 'best-parts' | 'alternating' | 'weighted',
   },
+};
+
+/**
+ * Critique-Correction Loop Configuration
+ * 
+ * The Auto-Critic Agent uses Gemini Flash to evaluate DeepSeek-generated
+ * chapters against a Style Rubric and iteratively refines prose quality.
+ * 
+ * Cost: ~$0.002 per chapter iteration (Gemini Flash critique + DeepSeek correction)
+ * Expected iterations: 1-2 for quality chapters
+ */
+export const CRITIQUE_CORRECTION_CONFIG: CritiqueCorrectionConfig = {
+  // Master switch for the critique-correction loop
+  enabled: true,
+  
+  // Default minimum score (1-10) required to pass
+  // 8/10 produces "published author" level quality
+  defaultMinimumScore: 8,
+  
+  // Maximum iterations before accepting the chapter
+  // More iterations = higher quality but higher cost
+  maxIterations: 3,
+  
+  // Temperature for Gemini critique (lower = more consistent evaluation)
+  critiqueTemperature: 0.3,
+  
+  // Temperature for DeepSeek correction (higher = more creative rewrites)
+  correctionTemperature: 0.8,
+  
+  // Maximum issues to include in each correction prompt
+  // Too many can overwhelm the model, too few may miss important issues
+  maxIssuesPerCorrection: 8,
+  
+  // Whether to prioritize fixing high-weight criteria first
+  prioritizeHighWeightCriteria: true,
+  
+  // Whether to preserve approximate word count during corrections
+  preserveWordCount: true,
+  
+  // Tolerance for word count changes (0.1 = 10% change allowed)
+  wordCountTolerance: 0.15,
+  
+  // Whether to log detailed critique information
+  verboseLogging: false,
 };

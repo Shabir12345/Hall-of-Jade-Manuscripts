@@ -33,10 +33,8 @@ try {
   
   // Debug: Show what environment variables are actually available
   console.log('🔍 Debug - Available process.env keys:', Object.keys(process.env).filter(k => k.includes('API_KEY') || k.includes('SUPABASE')));
-  console.log('🔍 Debug - ANTHROPIC_API_KEY:', (process.env as any).ANTHROPIC_API_KEY ? `Set (${String((process.env as any).ANTHROPIC_API_KEY).substring(0, 10)}...)` : 'NOT SET');
-  console.log('🔍 Debug - GEMINI_API_KEY:', (process.env as any).GEMINI_API_KEY ? `Set (${String((process.env as any).GEMINI_API_KEY).substring(0, 10)}...)` : 'NOT SET');
-  console.log('🔍 Debug - OPENAI_API_KEY:', (process.env as any).OPENAI_API_KEY ? `Set (${String((process.env as any).OPENAI_API_KEY).substring(0, 10)}...)` : 'NOT SET');
-  console.log('🔍 Debug - DEEPSEEK_API_KEY:', (process.env as any).DEEPSEEK_API_KEY ? `Set (${String((process.env as any).DEEPSEEK_API_KEY).substring(0, 10)}...)` : 'NOT SET');
+  console.log('🔍 Debug - DEEPSEEK_API_KEY (The Writer):', (process.env as any).DEEPSEEK_API_KEY ? `Set (${String((process.env as any).DEEPSEEK_API_KEY).substring(0, 10)}...)` : 'NOT SET');
+  console.log('🔍 Debug - GEMINI_API_KEY (The Clerk):', (process.env as any).GEMINI_API_KEY ? `Set (${String((process.env as any).GEMINI_API_KEY).substring(0, 10)}...)` : 'NOT SET');
   
   // Show user-friendly error message
   document.body.innerHTML = `
@@ -53,10 +51,10 @@ try {
         </ol>
       </div>
       <div style="background: #1f2937; padding: 16px; border-radius: 8px; border: 1px solid #374151;">
-        <p style="color: #e5e7eb; margin-bottom: 8px; font-weight: 600;">📋 Required API Keys:</p>
+        <p style="color: #e5e7eb; margin-bottom: 8px; font-weight: 600;">📋 Required API Keys (Two-Model Architecture):</p>
         <ul style="color: #d1d5db; margin-left: 20px; line-height: 1.8;">
-          <li><code style="background: #374151; padding: 2px 6px; border-radius: 4px;">ANTHROPIC_API_KEY</code> - For Claude Sonnet 4.5 (prose generation)</li>
-          <li><code style="background: #374151; padding: 2px 6px; border-radius: 4px;">GEMINI_API_KEY</code> - For Gemini Flash (metadata extraction)</li>
+          <li><code style="background: #374151; padding: 2px 6px; border-radius: 4px;">DEEPSEEK_API_KEY</code> - "The Writer" - DeepSeek-V3.2 for chapter generation and creative writing</li>
+          <li><code style="background: #374151; padding: 2px 6px; border-radius: 4px;">GEMINI_API_KEY</code> - "The Clerk" - Gemini Flash for state extraction and metadata processing</li>
         </ul>
         <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 12px;">Check the browser console (F12) for debug information showing which keys are detected.</p>
       </div>

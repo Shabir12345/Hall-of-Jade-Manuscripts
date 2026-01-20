@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense, useMemo } from 'react';
 import type { NovelState, Chapter, WorldEntry, Character, Arc, Realm, Territory, Relationship, SystemLog, Scene, NovelItem, NovelTechnique, CharacterItemPossession, CharacterTechniqueMastery, ItemCategory, TechniqueCategory, TechniqueType, Antagonist, AntagonistRole, SymbolicElement } from './types';
+import type { GlobalMarketState } from './types/market';
 import { getAntagonistsForArc, addAntagonistToChapter } from './services/antagonistService';
+import { createDefaultMarketState } from './services/market/marketService';
 import { findMatchingAntagonist, mergeAntagonistInfo } from './utils/antagonistMatching';
 import Sidebar from './components/Sidebar';
 import LibraryView from './components/LibraryView';
@@ -24,7 +26,21 @@ import { useAuth } from './contexts/AuthContext';
 import { LoginForm } from './components/LoginForm';
 import { validateWorldEntryInput } from './utils/validation';
 import { novelChangeTracker } from './utils/novelTracking';
-import { extractPostChapterUpdates, generateNextChapter, planArc, processLoreDictation } from './services/aiService';
+import { extractPostChapterUpdates, generateNextChapter, planArc, processLoreDictation, ChapterGenerationResult } from './services/aiService';
+import TribulationGateModal from './components/TribulationGateModal';
+import ManualTribulationGateDialog from './components/ManualTribulationGateDialog';
+import WhatIfGateReplayDialog from './components/WhatIfGateReplayDialog';
+import { TribulationGate, TribulationTrigger } from './types/tribulationGates';
+import { 
+  resolveGate, 
+  skipGate, 
+  getGateConfig, 
+  createManualGate, 
+  getPendingGate,
+  buildWhatIfPromptInjection,
+  saveWhatIfChapter,
+  WhatIfChapter,
+} from './services/tribulationGateService';
 import { saveRevision } from './services/revisionService';
 import { useNovel } from './contexts/NovelContext';
 import { findOrCreateItem, findOrCreateTechnique } from './services/itemTechniqueService';
@@ -43,6 +59,7 @@ import { generateExtractionPreview, calculateTrustScore } from './services/trust
 import { generatePreGenerationSuggestions, analyzeGaps } from './services/gapDetectionService';
 import { TrustScoreWidget } from './components/TrustScoreWidget';
 import { GapAnalysisPanel } from './components/widgets/GapAnalysisPanel';
+import { MarketPanel } from './components/MarketPanel';
 import { PreGenerationAnalysis } from './components/PreGenerationAnalysis';
 import { analyzeStoryStructure } from './services/storyStructureAnalyzer';
 import { analyzeEngagement } from './services/engagementAnalyzer';
@@ -152,10 +169,12 @@ const DeviceDashboard = safeLazyImport(() => import('./components/DeviceDashboar
 const DraftComparisonView = safeLazyImport(() => import('./components/DraftComparisonView'));
 const ExcellenceScorecard = safeLazyImport(() => import('./components/ExcellenceScorecard'));
 const ImprovementHistoryPage = safeLazyImport(() => import('./components/ImprovementHistoryPage'));
+const MemoryDashboard = safeLazyImport(() => import('./components/MemoryDashboard'));
 const DashboardView = safeLazyImport(() => import('./components/views/DashboardView'));
 const CharactersView = lazy(() => import('./components/views/CharactersView'));
 const ChaptersView = safeLazyImport(() => import('./components/views/ChaptersView'));
 const PlanningView = safeLazyImport(() => import('./components/views/PlanningView'));
+const TribulationGateHistoryView = safeLazyImport(() => import('./components/views/TribulationGateHistoryView'));
 const KeyboardShortcutsHelp = safeLazyImport(() => import('./components/KeyboardShortcutsHelp'));
 
 const App: React.FC = () => {
@@ -285,9 +304,21 @@ const App: React.FC = () => {
   const [desktopNotificationPanelOpen, setDesktopNotificationPanelOpen] = useState(true);
   const [desktopNotificationPanelMinimized, setDesktopNotificationPanelMinimized] = useState(false);
   
+  // Sidebar collapsed state for tablets (persisted in localStorage)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem('sidebar-collapsed');
+    return saved === 'true';
+  });
+  
+  // Persist sidebar collapsed state
+  useEffect(() => {
+    localStorage.setItem('sidebar-collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+  
   const [editingWorld, setEditingWorld] = useState<WorldEntry | null>(null);
   const [editingChar, setEditingChar] = useState<Character | null>(null);
   const [editingArc, setEditingArc] = useState<Arc | null>(null);
+  const [showEconomyPanel, setShowEconomyPanel] = useState(false);
   const [arcAntagonists, setArcAntagonists] = useState<Antagonist[]>([]);
   const [isLoadingArcAntagonists, setIsLoadingArcAntagonists] = useState(false);
   const [isGeneratingPortrait, setIsGeneratingPortrait] = useState<string | null>(null);
@@ -296,6 +327,17 @@ const App: React.FC = () => {
   const [pendingFixProposals, setPendingFixProposals] = useState<EditorFixProposal[]>([]);
   const [currentEditorReport, setCurrentEditorReport] = useState<EditorReport | null>(null);
   const activeGenerationIdRef = useRef<string | null>(null);
+  
+  // Tribulation Gate state
+  const [showTribulationGate, setShowTribulationGate] = useState(false);
+  const [currentTribulationGate, setCurrentTribulationGate] = useState<TribulationGate | null>(null);
+  const [tribulationGateLoading, setTribulationGateLoading] = useState(false);
+  const [showManualGateDialog, setShowManualGateDialog] = useState(false);
+  const [manualGateLoading, setManualGateLoading] = useState(false);
+  const [showWhatIfDialog, setShowWhatIfDialog] = useState(false);
+  const [whatIfGate, setWhatIfGate] = useState<TribulationGate | null>(null);
+  const [whatIfLoading, setWhatIfLoading] = useState(false);
+  const pendingGenerationInstructionRef = useRef<string>('');
 
   // Warn user before closing if there are unsaved changes.
   useEffect(() => {
@@ -673,11 +715,48 @@ const App: React.FC = () => {
               addEphemeralLog('Parsing complete', 'discovery');
             }
           }
+          // Tribulation Gate phases
+          if (phase === 'tribulation_gate_check') {
+            setGenerationProgress(12);
+            setGenerationStatus('Consulting the Heavens...');
+          }
+          if (phase === 'tribulation_gate_triggered') {
+            setGenerationProgress(15);
+            setGenerationStatus('A Tribulation Gate appears!');
+            addEphemeralLog(`⚡ Tribulation Gate triggered: ${data?.triggerType}`, 'fate');
+          }
+          if (phase === 'tribulation_gate_generating') {
+            setGenerationProgress(18);
+            setGenerationStatus('Weaving the threads of fate...');
+            addEphemeralLog('Generating fate paths for your decision...', 'fate');
+          }
+          if (phase === 'tribulation_gate_ready') {
+            setGenerationProgress(20);
+            setGenerationStatus('Fate awaits your decision...');
+          }
         }
       });
 
       // If user cancelled while waiting, ignore the result.
       if (activeGenerationIdRef.current !== generationId) {
+        return;
+      }
+      
+      // Check if we need to show a Tribulation Gate
+      if (result?.requiresUserChoice && result?.tribulationGate) {
+        // Store the instruction for when the user makes their choice
+        pendingGenerationInstructionRef.current = customInstruction || instruction;
+        
+        // Show the Tribulation Gate modal
+        setCurrentTribulationGate(result.tribulationGate);
+        setShowTribulationGate(true);
+        
+        // Don't continue with chapter creation - wait for user choice
+        setIsGenerating(false);
+        setGenerationProgress(0);
+        setGenerationStatus('');
+        
+        addEphemeralLog('⚡ A Tribulation Gate has appeared! Your choice will shape the story.', 'fate');
         return;
       }
       
@@ -818,6 +897,10 @@ const App: React.FC = () => {
               'skill': 'skill',
               'skills': 'skill',
               'status': 'status',
+              'state': 'notes', // Map 'state' to 'notes' for general state changes (emotional, mental, etc.)
+              'character_state': 'notes',
+              'characterstate': 'notes',
+              'condition': 'notes', // Map 'condition' to 'notes' for character conditions
               'notes': 'notes',
               'note': 'notes',
               'profile': 'notes',
@@ -829,6 +912,14 @@ const App: React.FC = () => {
               'mental': 'notes',
               'mentalstate': 'notes',
               'mental_state': 'notes',
+              'physical': 'appearance', // Map 'physical' to 'appearance' for physical/appearance changes
+              'physical_state': 'appearance',
+              'physicalstate': 'appearance',
+              'appearance': 'appearance',
+              'looks': 'appearance',
+              'body': 'appearance',
+              'bodystate': 'appearance',
+              'body_state': 'appearance',
               'new': 'new',
             };
             
@@ -880,6 +971,13 @@ const App: React.FC = () => {
               const notesValue = String(update.newValue).trim();
               if (notesValue && notesValue.length > 0) {
                 char.notes = notesValue;
+              }
+            }
+            if (update.updateType === 'appearance' && update.newValue) {
+              const appearanceValue = String(update.newValue).trim();
+              if (appearanceValue && appearanceValue.length > 0) {
+                char.appearance = appearanceValue;
+                localAddLog(`${char.name}'s appearance updated.`, 'update');
               }
             }
             if (update.updateType === 'relationship' && update.targetName) {
@@ -1145,6 +1243,19 @@ const App: React.FC = () => {
         presenceType: 'direct' | 'mentioned' | 'hinted' | 'influence';
         significance: 'major' | 'minor' | 'foreshadowing';
         notes: string;
+      }> = [];
+
+      // Track thread progression events for saving after chapter is saved to database
+      // This prevents foreign key constraint errors - chapter must exist first
+      const pendingThreadProgressionEvents: Array<{
+        id: string;
+        threadId: string;
+        chapterNumber: number;
+        chapterId: string;
+        eventType: string;
+        description: string;
+        significance: 'major' | 'minor' | 'foreshadowing';
+        createdAt: number;
       }> = [];
 
       // Post-chapter extraction pass (Codex + World Bible + Territories + Arc checklist progress)
@@ -1837,14 +1948,10 @@ const App: React.FC = () => {
                 localAddLog(`Thread discovered: ${result.thread.title}`, 'discovery');
               }
 
-              // Save progression event if available
+              // Collect progression event for deferred saving (after chapter is saved to database)
+              // This prevents foreign key constraint errors since thread_progression_events requires chapter_id to exist
               if (result.progressionEvent) {
-                try {
-                  const { saveThreadProgressionEvent } = await import('./services/threadService');
-                  await saveThreadProgressionEvent(result.progressionEvent);
-                } catch (error) {
-                  console.warn('Failed to save thread progression event:', error);
-                }
+                pendingThreadProgressionEvents.push(result.progressionEvent);
               }
             }
           } catch (error) {
@@ -2584,6 +2691,71 @@ const App: React.FC = () => {
         });
       }
 
+      // Save thread progression events after chapter is saved to database
+      // This prevents foreign key constraint errors (chapter must exist first)
+      const threadEventsToSave = pendingThreadProgressionEvents;
+      if (chapterIdToSave && threadEventsToSave.length > 0) {
+        const saveThreadProgressionEvents = async (retries = 8, initialDelay = 2000) => {
+          for (let i = 0; i < retries; i++) {
+            try {
+              // Exponential backoff: 2s, 3s, 4s, 5s, 6s, 7s, 8s, 9s
+              await new Promise(resolve => setTimeout(resolve, initialDelay + (i * 1000)));
+              
+              const { saveThreadProgressionEvent } = await import('./services/threadService');
+              
+              const results = await Promise.allSettled(
+                threadEventsToSave.map(event =>
+                  saveThreadProgressionEvent(event).catch(err => {
+                    // Handle foreign key constraint errors - chapter may not exist yet
+                    const errorMsg = err?.message || String(err);
+                    if (errorMsg.includes('foreign key constraint') || 
+                        errorMsg.includes('23503') ||
+                        errorMsg.includes('Key is not present')) {
+                      // Expected error - chapter will be saved via saveNovel, retry later
+                      throw err; // Re-throw to trigger retry
+                    }
+                    // For other errors, log and continue
+                    console.warn('Unexpected error saving thread progression event:', errorMsg);
+                    return Promise.resolve(null);
+                  })
+                )
+              );
+
+              const successful = results.filter((r: PromiseSettledResult<any>) => 
+                r.status === 'fulfilled' && r.value !== null
+              ).length;
+              const failed = results.filter((r: PromiseSettledResult<any>) => 
+                r.status === 'rejected'
+              ).length;
+
+              if (successful > 0) {
+                localAddLog(`Saved ${successful} thread progression event(s)`, 'update');
+              }
+
+              // If all succeeded or we're on the last retry, stop
+              if (failed === 0) {
+                break;
+              }
+              
+              // If still failing on last retry, log but don't crash
+              if (i === retries - 1 && failed > 0) {
+                console.warn(`Failed to save ${failed} thread progression event(s) after ${retries} retries`);
+              }
+            } catch (err) {
+              // Only log on the last retry
+              if (i === retries - 1) {
+                console.warn('Error saving thread progression events after retries:', err);
+              }
+            }
+          }
+        };
+
+        // Start saving thread progression events asynchronously (don't block)
+        saveThreadProgressionEvents().catch(err => {
+          console.warn('Thread progression events save failed:', err);
+        });
+      }
+
       // Stop showing "Generating..." as soon as content is applied to the UI.
       if (activeGenerationIdRef.current === generationId) {
         setIsGenerating(false);
@@ -2710,6 +2882,243 @@ const App: React.FC = () => {
       setInstruction('');
     }
   };
+
+  // Tribulation Gate handlers
+  const handleTribulationGateSelect = useCallback(async (pathId: string) => {
+    if (!currentTribulationGate || !activeNovel) return;
+    
+    setTribulationGateLoading(true);
+    
+    try {
+      // Resolve the gate with the user's choice
+      const resolvedGate = resolveGate(currentTribulationGate.id, pathId);
+      
+      if (!resolvedGate) {
+        showError('Failed to save your choice. Please try again.');
+        setTribulationGateLoading(false);
+        return;
+      }
+      
+      const selectedPath = currentTribulationGate.fatePaths.find(p => p.id === pathId);
+      if (selectedPath) {
+        addEphemeralLog(`⚡ Fate chosen: ${selectedPath.label}`, 'fate');
+        showSuccess(`You have chosen: ${selectedPath.label}`);
+      }
+      
+      // Close the modal
+      setShowTribulationGate(false);
+      setCurrentTribulationGate(null);
+      setTribulationGateLoading(false);
+      
+      // Get the saved instruction
+      const savedInstruction = pendingGenerationInstructionRef.current;
+      pendingGenerationInstructionRef.current = '';
+      
+      // Build the fate instruction to inject into the chapter generation
+      const fateInstruction = selectedPath 
+        ? `${savedInstruction}\n\n╔══════════════════════════════════════════════════════════════════╗
+║  FATE DECISION: ${currentTribulationGate.triggerType.toUpperCase().replace(/_/g, ' ')}
+╚══════════════════════════════════════════════════════════════════╝
+
+The reader has chosen the protagonist's fate at this critical moment.
+
+SITUATION: ${currentTribulationGate.situation}
+
+CHOSEN PATH: ${selectedPath.label}
+${selectedPath.description}
+
+EXPECTED CONSEQUENCES:
+${selectedPath.consequences.map(c => `• ${c}`).join('\n')}
+
+EMOTIONAL TONE: ${selectedPath.emotionalTone}
+RISK LEVEL: ${selectedPath.riskLevel}
+
+CRITICAL INSTRUCTION: The chapter MUST follow this chosen path. Do not deviate from
+the reader's choice. The consequences should begin to manifest in this chapter.
+══════════════════════════════════════════════════════════════════════`
+        : savedInstruction;
+      
+      // Resume chapter generation - the handleGenerateNext function will handle everything
+      // We use a small delay to ensure state updates have propagated
+      setTimeout(() => {
+        handleGenerateNext(fateInstruction);
+      }, 100);
+      
+    } catch (error) {
+      logger.error('Error in Tribulation Gate selection', 'tribulationGate', 
+        error instanceof Error ? error : undefined);
+      showError('An error occurred while processing your choice.');
+      setTribulationGateLoading(false);
+    }
+  }, [currentTribulationGate, activeNovel, showError, showSuccess, addEphemeralLog, handleGenerateNext]);
+
+  const handleTribulationGateSkip = useCallback(() => {
+    if (!currentTribulationGate) return;
+    
+    // Skip the gate
+    skipGate(currentTribulationGate.id, 'User chose to skip');
+    
+    addEphemeralLog('⚡ Tribulation Gate skipped. The AI will decide your fate...', 'fate');
+    
+    // Close modal
+    setShowTribulationGate(false);
+    setCurrentTribulationGate(null);
+    
+    const savedInstruction = pendingGenerationInstructionRef.current;
+    pendingGenerationInstructionRef.current = '';
+    
+    // Resume generation without the gate choice - use setTimeout to ensure state updates
+    setTimeout(() => {
+      handleGenerateNext(savedInstruction);
+    }, 100);
+  }, [currentTribulationGate, addEphemeralLog, handleGenerateNext]);
+
+  const handleTribulationGateLetFateDecide = useCallback(() => {
+    if (!currentTribulationGate || currentTribulationGate.fatePaths.length === 0) return;
+    
+    // Randomly select a path
+    const randomIndex = Math.floor(Math.random() * currentTribulationGate.fatePaths.length);
+    const randomPath = currentTribulationGate.fatePaths[randomIndex];
+    
+    addEphemeralLog(`🎲 Fate has decided: ${randomPath.label}`, 'fate');
+    
+    // Process as if user selected this path
+    handleTribulationGateSelect(randomPath.id);
+  }, [currentTribulationGate, addEphemeralLog, handleTribulationGateSelect]);
+
+  // Manual Tribulation Gate trigger handler
+  const handleManualGateTrigger = useCallback(async (
+    triggerType: TribulationTrigger,
+    protagonistName: string,
+    customSituation?: string
+  ) => {
+    if (!activeNovel) return;
+    
+    setManualGateLoading(true);
+    
+    try {
+      const nextChapterNumber = activeNovel.chapters.length + 1;
+      
+      const gate = await createManualGate(
+        activeNovel.id,
+        nextChapterNumber,
+        triggerType,
+        protagonistName,
+        customSituation
+      );
+      
+      if (gate) {
+        setCurrentTribulationGate(gate);
+        setShowManualGateDialog(false);
+        setShowTribulationGate(true);
+        addEphemeralLog(`⚡ Manual Tribulation Gate summoned: ${triggerType}`, 'fate');
+        showSuccess('Tribulation Gate has been summoned!');
+      } else {
+        showError('Failed to create Tribulation Gate. Please try again.');
+      }
+    } catch (error) {
+      logger.error('Error creating manual gate', 'tribulationGate',
+        error instanceof Error ? error : undefined);
+      showError('An error occurred while summoning the gate.');
+    } finally {
+      setManualGateLoading(false);
+    }
+  }, [activeNovel, addEphemeralLog, showSuccess, showError]);
+
+  // What If replay handler - generates alternate chapter based on different choice
+  const handleWhatIfReplay = useCallback(async (
+    gate: TribulationGate,
+    alternatePathId: string
+  ) => {
+    if (!activeNovel) return;
+    
+    setWhatIfLoading(true);
+    
+    try {
+      const alternatePath = gate.fatePaths.find(p => p.id === alternatePathId);
+      if (!alternatePath) {
+        showError('Selected path not found.');
+        return;
+      }
+      
+      addEphemeralLog(`🔮 Exploring alternate timeline: ${alternatePath.label}`, 'fate');
+      
+      // Get the original chapter content for context
+      const originalChapter = activeNovel.chapters.find(c => c.number === gate.chapterNumber);
+      
+      // Build the What If prompt injection
+      const whatIfPrompt = buildWhatIfPromptInjection(
+        gate,
+        alternatePathId,
+        originalChapter?.content
+      );
+      
+      // Generate alternate chapter using a simplified approach
+      // This calls the AI directly with the What If context
+      const result = await generateNextChapter(
+        {
+          ...activeNovel,
+          // Temporarily adjust chapters to be "before" this gate
+          chapters: activeNovel.chapters.filter(c => c.number < gate.chapterNumber),
+        },
+        whatIfPrompt,
+        {
+          skipTribulationGate: true, // Don't trigger another gate
+          onPhase: (phase, data) => {
+            if (phase === 'llm_request_start') {
+              setGenerationStatus('Weaving alternate timeline...');
+            }
+            if (phase === 'llm_request_end') {
+              setGenerationStatus('Alternate reality formed...');
+            }
+          },
+        }
+      );
+      
+      if (result && result.chapterContent && !result.requiresUserChoice) {
+        // Save the What If chapter
+        const whatIfChapter: WhatIfChapter = {
+          id: generateUUID(),
+          gateId: gate.id,
+          novelId: activeNovel.id,
+          originalChapterNumber: gate.chapterNumber,
+          alternatePathId,
+          alternatePathLabel: alternatePath.label,
+          content: result.chapterContent,
+          title: result.chapterTitle || `What If: ${alternatePath.label}`,
+          summary: result.chapterSummary,
+          createdAt: Date.now(),
+        };
+        
+        saveWhatIfChapter(whatIfChapter);
+        
+        setShowWhatIfDialog(false);
+        setWhatIfGate(null);
+        
+        showSuccess(`Alternate timeline generated: "${alternatePath.label}"`);
+        addEphemeralLog(`🔮 Alternate chapter saved: ${whatIfChapter.title}`, 'fate');
+        
+        // Optionally show the alternate chapter content
+        // For now, we just log success - could add a viewer in the future
+        
+      } else {
+        showError('Failed to generate alternate timeline. Please try again.');
+      }
+      
+    } catch (error) {
+      logger.error('Error generating What If chapter', 'tribulationGate',
+        error instanceof Error ? error : undefined);
+      showError('An error occurred while exploring the alternate timeline.');
+    } finally {
+      setWhatIfLoading(false);
+    }
+  }, [activeNovel, addEphemeralLog, showSuccess, showError, generateNextChapter]);
+
+  // Open What If dialog for a gate
+  const openWhatIfDialog = useCallback((gate: TribulationGate) => {
+    setWhatIfGate(gate);
+    setShowWhatIfDialog(true);
+  }, []);
 
   const handleBatchGenerate = async (customInstruction?: string) => {
     if (!activeNovel) return;
@@ -3417,6 +3826,36 @@ const App: React.FC = () => {
     });
   };
 
+  /**
+   * Handle market state updates from the MarketPanel
+   */
+  const handleUpdateMarketState = useCallback((marketState: GlobalMarketState) => {
+    updateActiveNovel(prev => ({
+      ...prev,
+      globalMarketState: marketState,
+      updatedAt: Date.now(),
+    }));
+  }, [updateActiveNovel]);
+
+  /**
+   * Initialize market state if it doesn't exist when Economy panel is opened
+   */
+  const handleToggleEconomyPanel = useCallback(() => {
+    setShowEconomyPanel(prev => {
+      const newValue = !prev;
+      // Initialize market state if opening and it doesn't exist
+      if (newValue && activeNovel && !activeNovel.globalMarketState) {
+        const defaultMarketState = createDefaultMarketState(activeNovel.id);
+        updateActiveNovel(prevNovel => ({
+          ...prevNovel,
+          globalMarketState: defaultMarketState,
+          updatedAt: Date.now(),
+        }));
+      }
+      return newValue;
+    });
+  }, [activeNovel, updateActiveNovel]);
+
   const handleDeleteNovel = async (id: string) => {
     setConfirmDialog({
       isOpen: true,
@@ -3495,7 +3934,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100 selection:bg-amber-600/30">
+    <div className="flex h-screen h-dvh w-screen overflow-hidden bg-zinc-950 text-zinc-100 selection:bg-amber-600/30">
       <LoadingIndicator
         isVisible={loadingState.isLoading}
         message={loadingState.message}
@@ -3504,20 +3943,22 @@ const App: React.FC = () => {
         variant="banner"
         position="top"
       />
-      {/* Mobile Menu Button */}
+      {/* Mobile Menu Button - positioned with safe area */}
       <button
         onClick={() => setMobileSidebarOpen(true)}
-        className="md:hidden fixed top-4 left-4 z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2"
+        className="md:hidden fixed z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2"
+        style={{ top: 'max(1rem, env(safe-area-inset-top, 1rem))', left: 'max(1rem, env(safe-area-inset-left, 1rem))' }}
         aria-label="Open navigation menu"
         title="Open menu"
       >
         <span className="text-xl">☰</span>
       </button>
 
-      {/* Mobile Notification Panel Button */}
+      {/* Mobile Notification Panel Button - positioned with safe area */}
       <button
         onClick={() => setMobileNotificationPanelOpen(true)}
-        className="md:hidden fixed top-4 right-4 z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2"
+        className="md:hidden fixed z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2"
+        style={{ top: 'max(1rem, env(safe-area-inset-top, 1rem))', right: 'max(1rem, env(safe-area-inset-right, 1rem))' }}
         aria-label="Open notifications"
         title="Open notifications"
       >
@@ -3535,11 +3976,15 @@ const App: React.FC = () => {
 
       {/* Sidebar - Hidden on mobile when closed, shown on desktop or mobile when open */}
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto transform transition-transform duration-300 ease-in-out ${
+        className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto transform transition-all duration-300 ease-in-out ${
           mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        <Sidebar onNavigate={() => setMobileSidebarOpen(false)} />
+        <Sidebar 
+          onNavigate={() => setMobileSidebarOpen(false)} 
+          isCollapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
       </aside>
 
       <NotificationPanel 
@@ -3552,16 +3997,25 @@ const App: React.FC = () => {
         onDesktopMinimize={() => setDesktopNotificationPanelMinimized(!desktopNotificationPanelMinimized)}
       />
 
-      <main className={`flex-1 relative overflow-y-auto ${desktopNotificationPanelOpen && !desktopNotificationPanelMinimized ? 'md:mr-80' : ''}`} data-tour="main-content">
+      <main className={`flex-1 relative overflow-y-auto scroll-smooth-mobile ${desktopNotificationPanelOpen && !desktopNotificationPanelMinimized ? 'md:mr-80' : ''}`} data-tour="main-content">
+        {/* Saving indicator - positioned with safe area */}
         {isSaving && (
-          <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 bg-zinc-900/95 backdrop-blur-sm border border-amber-600/50 rounded-xl px-3 md:px-4 py-2 md:py-2.5 flex items-center space-x-2 md:space-x-3 z-50 shadow-xl shadow-amber-900/20 animate-in slide-in duration-200">
+          <div 
+            className="fixed bg-zinc-900/95 backdrop-blur-sm border border-amber-600/50 rounded-xl px-3 md:px-4 py-2 md:py-2.5 flex items-center space-x-2 md:space-x-3 z-50 shadow-xl shadow-amber-900/20 animate-in slide-in duration-200"
+            style={{ 
+              bottom: 'max(1rem, env(safe-area-inset-bottom, 1rem))', 
+              right: 'max(1rem, env(safe-area-inset-right, 1rem))' 
+            }}
+          >
             <div className="animate-spin rounded-full h-4 w-4 border-2 border-zinc-600 border-t-amber-600 flex-shrink-0"></div>
             <span className="text-xs md:text-sm text-amber-500 font-semibold whitespace-nowrap">Saving...</span>
           </div>
         )}
+        {/* Desktop Library Button - positioned relative to sidebar width */}
         <button 
           onClick={() => setView('library')}
-          className="fixed top-4 left-[232px] z-50 p-2.5 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 hidden md:block"
+          className={`fixed top-4 z-50 p-2.5 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 hidden md:block`}
+          style={{ left: sidebarCollapsed ? '88px' : '272px' }}
           title="Return to Hall"
           aria-label="Return to library"
         >🏛️</button>
@@ -3575,9 +4029,11 @@ const App: React.FC = () => {
             🔔
           </button>
         )}
+        {/* Mobile Library Button - positioned with safe area */}
         <button 
           onClick={() => setView('library')}
-          className="fixed top-4 left-4 z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 md:hidden"
+          className="fixed z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 md:hidden"
+          style={{ top: 'max(1rem, env(safe-area-inset-top, 1rem))', left: 'max(1rem, env(safe-area-inset-left, 1rem))' }}
           title="Return to Hall"
           aria-label="Return to library"
         >🏛️</button>
@@ -3599,6 +4055,8 @@ const App: React.FC = () => {
                 setActiveChapterId(chapterId);
                 setView('editor');
               }}
+              onUpdateNovel={updateActiveNovel}
+              onManualTribulationGate={() => setShowManualGateDialog(true)}
             />
           </Suspense>
         )}
@@ -4010,6 +4468,11 @@ const App: React.FC = () => {
             <ImprovementHistoryPage />
           </Suspense>
         )}
+        {currentView === 'memory-dashboard' && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <MemoryDashboard novelState={activeNovel} />
+          </Suspense>
+        )}
         {currentView === 'chapters' && (
           <Suspense fallback={<LoadingSpinnerCentered />}>
             <ChaptersView
@@ -4029,6 +4492,27 @@ const App: React.FC = () => {
              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 md:mb-12 border-b border-zinc-700 pb-6">
               <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">World Bible</h2>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+                {/* Economy Toggle Button */}
+                <button
+                  onClick={handleToggleEconomyPanel}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 whitespace-nowrap ${
+                    showEconomyPanel
+                      ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/30'
+                      : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700 hover:text-zinc-300'
+                  }`}
+                  title="Toggle Spirit Stone Market (Economic Simulation)"
+                  aria-label="Toggle Economy Panel"
+                >
+                  <span>💰</span>
+                  <span>Economy</span>
+                  {activeNovel.globalMarketState && activeNovel.globalMarketState.standardItems.length > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                      showEconomyPanel ? 'bg-emerald-600/30' : 'bg-zinc-700'
+                    }`}>
+                      {activeNovel.globalMarketState.standardItems.length}
+                    </span>
+                  )}
+                </button>
                 <div className="flex items-center bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 space-x-3 flex-shrink-0">
                   <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide whitespace-nowrap">Dictate Lore:</span>
                   <VoiceInput onResult={handleVoiceLore} />
@@ -4043,6 +4527,27 @@ const App: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Economy Panel - Spirit Stone Market */}
+            {showEconomyPanel && (
+              <div className="mb-8 md:mb-12 bg-zinc-900/50 border border-emerald-900/30 rounded-2xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">💰</span>
+                    <h3 className="text-base md:text-lg font-bold text-emerald-400">Spirit Stone Market</h3>
+                  </div>
+                  <p className="text-xs text-zinc-500 hidden sm:block">
+                    Track item prices for economic consistency across chapters
+                  </p>
+                </div>
+                <MarketPanel
+                  marketState={activeNovel.globalMarketState}
+                  onUpdateMarketState={handleUpdateMarketState}
+                  currentChapter={activeNovel.chapters.length}
+                />
+              </div>
+            )}
+
             {activeNovel.worldBible.filter(e => e.realmId === activeNovel.currentRealmId).length === 0 ? (
               <div className="py-16 px-8 text-center border-2 border-dashed border-zinc-700 rounded-2xl bg-zinc-900/30">
                 <div className="text-6xl mb-4">📜</div>
@@ -4649,6 +5154,26 @@ const App: React.FC = () => {
             <StoryThreadsView novelState={activeNovel} />
           </Suspense>
         )}
+        
+        {currentView === 'gate-history' && activeNovel && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
+              <TribulationGateHistoryView
+                novel={activeNovel}
+                onViewChapter={(chapterNumber) => {
+                  const chapter = activeNovel.chapters.find(c => c.number === chapterNumber);
+                  if (chapter) {
+                    setActiveChapterId(chapter.id);
+                    setCurrentView('chapters');
+                  }
+                }}
+                onClose={() => setCurrentView('dashboard')}
+                onWhatIfReplay={openWhatIfDialog}
+              />
+            </div>
+          </Suspense>
+        )}
+        
         {currentView === 'antagonists' && activeNovel && (
           <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
             <Suspense fallback={<div className="text-zinc-400 text-center py-12">Loading Opposition Registry...</div>}>
@@ -4753,6 +5278,47 @@ const App: React.FC = () => {
         onConfirm={confirmDialog.onConfirm}
         onCancel={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
       />
+
+      {/* Tribulation Gate Modal */}
+      {showTribulationGate && currentTribulationGate && (
+        <TribulationGateModal
+          gate={currentTribulationGate}
+          isOpen={showTribulationGate}
+          onSelectPath={handleTribulationGateSelect}
+          onSkip={handleTribulationGateSkip}
+          onLetFateDecide={handleTribulationGateLetFateDecide}
+          isLoading={tribulationGateLoading}
+          autoSelectAfterMs={
+            activeNovel?.tribulationGateConfig?.autoSelectAfterMs
+          }
+        />
+      )}
+
+      {/* Manual Tribulation Gate Dialog */}
+      {showManualGateDialog && activeNovel && (
+        <ManualTribulationGateDialog
+          isOpen={showManualGateDialog}
+          onClose={() => setShowManualGateDialog(false)}
+          onTriggerGate={handleManualGateTrigger}
+          novel={activeNovel}
+          isLoading={manualGateLoading}
+        />
+      )}
+
+      {/* What If Gate Replay Dialog */}
+      {showWhatIfDialog && whatIfGate && activeNovel && (
+        <WhatIfGateReplayDialog
+          isOpen={showWhatIfDialog}
+          onClose={() => {
+            setShowWhatIfDialog(false);
+            setWhatIfGate(null);
+          }}
+          gate={whatIfGate}
+          novel={activeNovel}
+          onReplay={handleWhatIfReplay}
+          isLoading={whatIfLoading}
+        />
+      )}
 
       {showExportDialog && activeNovel && (
         <Suspense fallback={null}>

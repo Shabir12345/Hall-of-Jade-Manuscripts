@@ -6,9 +6,11 @@
  * 
  * Based on AuthorMist research showing RL-based paraphrasing
  * reduces detectability by 80-90% while preserving meaning.
+ * 
+ * Uses DeepSeek-V3.2 ("The Writer") for paraphrasing tasks.
  */
 
-import { grokText } from "./grokService";
+import { deepseekText } from "./deepseekService";
 import { rateLimiter } from "./rateLimiter";
 import { checkMultipleDetectors, getChapterDetectionScore } from "./multiDetectorService";
 import { AI_DETECTION_CONFIG } from "../constants";
@@ -128,7 +130,7 @@ Return ONLY the rewritten text (no JSON, no explanations).`;
     try {
       const improvedText = await rateLimiter.queueRequest('generate', async () => {
         const temperature = aggressiveness === 'very aggressive' ? 0.9 : aggressiveness === 'aggressive' ? 0.85 : 0.8;
-        return await grokText({
+        return await deepseekText({
           system: 'You are a professional editor specializing in making AI-generated text appear human-written while preserving meaning.',
           user: improvementPrompt,
           temperature,

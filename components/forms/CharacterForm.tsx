@@ -82,12 +82,18 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
     });
   }, [character, onUpdateCharacter]);
 
+  // Common input class for consistent mobile styling
+  const inputClass = "w-full bg-zinc-950 border border-zinc-700 rounded-lg xs:rounded-xl p-3 xs:p-4 text-sm xs:text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all";
+  const textareaClass = `${inputClass} resize-none leading-relaxed`;
+  const labelClass = "text-xs xs:text-sm font-semibold text-zinc-400 uppercase tracking-wide";
+
   return (
     <Modal
       isOpen={true}
       onClose={onCancel}
       title="Character Manifestation"
       maxWidth="3xl"
+      fullScreenMobile={true}
       headerActions={
         <>
           <CreativeSpark 
@@ -99,36 +105,52 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
           <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, notes: character.notes ? character.notes + " " + text : text })} />
         </>
       }
+      footer={
+        <div className="flex flex-col-reverse xs:flex-row gap-2 xs:gap-3">
+          <button 
+            onClick={onCancel}
+            className="flex-1 xs:flex-none px-4 xs:px-6 py-2.5 xs:py-3 text-zinc-400 hover:text-zinc-200 transition-colors duration-200 uppercase font-semibold text-xs xs:text-sm rounded-lg hover:bg-zinc-800"
+          >
+            Cancel
+          </button>
+          <button 
+            onClick={handleSave}
+            className="flex-1 xs:flex-none bg-amber-600 hover:bg-amber-500 text-white px-4 xs:px-8 py-2.5 xs:py-3 rounded-lg xs:rounded-xl font-semibold text-xs xs:text-sm transition-all duration-200 shadow-lg shadow-amber-900/40 hover:scale-105"
+          >
+            Save Character
+          </button>
+        </div>
+      }
     >
       {/* Template Selection */}
       {!character.name && (
-        <div className="mb-6 p-4 bg-zinc-900/50 border border-zinc-700 rounded-xl">
+        <div className="mb-4 xs:mb-6 p-3 xs:p-4 bg-zinc-900/50 border border-zinc-700 rounded-lg xs:rounded-xl">
           <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Character Templates</label>
+            <label className={labelClass}>Character Templates</label>
             <button
               type="button"
               onClick={() => setShowTemplates(!showTemplates)}
-              className="text-xs text-amber-500 hover:text-amber-400 transition-colors"
+              className="text-xs text-amber-500 hover:text-amber-400 transition-colors px-2 py-1 rounded-lg active:scale-95"
             >
               {showTemplates ? 'Hide' : 'Show'} Templates
             </button>
           </div>
           {showTemplates && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto scrollbar-thin">
+            <div className="grid grid-cols-1 xs:grid-cols-2 gap-2 max-h-48 xs:max-h-64 overflow-y-auto scrollbar-thin -mx-1 px-1">
               {CHARACTER_TEMPLATES.map(template => (
                 <button
                   key={template.id}
                   type="button"
                   onClick={() => handleTemplateSelect(template)}
-                  className={`text-left p-3 rounded-lg border transition-all ${
+                  className={`text-left p-2.5 xs:p-3 rounded-lg border transition-all active:scale-[0.98] ${
                     selectedTemplate?.id === template.id
                       ? 'border-amber-500 bg-amber-950/20'
                       : 'border-zinc-700 bg-zinc-950 hover:border-zinc-600'
                   }`}
                 >
-                  <div className="font-semibold text-zinc-200 text-sm">{template.name}</div>
-                  <div className="text-xs text-zinc-400 mt-1">{template.description}</div>
-                  <div className="text-xs text-zinc-500 mt-1">Type: {template.archetype}</div>
+                  <div className="font-semibold text-zinc-200 text-xs xs:text-sm">{template.name}</div>
+                  <div className="text-[10px] xs:text-xs text-zinc-400 mt-1 line-clamp-2">{template.description}</div>
+                  <div className="text-[10px] xs:text-xs text-zinc-500 mt-1">Type: {template.archetype}</div>
                 </button>
               ))}
             </div>
@@ -136,15 +158,15 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
         </div>
       )}
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 xs:gap-4 md:gap-6">
         {/* Basic Info Section */}
-        <div className="col-span-2">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4 pb-2 border-b border-zinc-700">Basic Info</h3>
+        <div className="col-span-1 sm:col-span-2">
+          <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider mb-3 xs:mb-4 pb-2 border-b border-zinc-700">Basic Info</h3>
         </div>
         
-        <div className="space-y-2">
+        <div className="space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-name">Name</label>
+            <label className={labelClass} htmlFor="char-name">Name</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, name: text })} />
           </div>
           <input 
@@ -152,13 +174,13 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Name" 
             value={character.name} 
             onChange={e => onUpdateCharacter({ ...character, name: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+            className={inputClass}
           />
         </div>
         
-        <div className="space-y-2">
+        <div className="space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-age">Age</label>
+            <label className={labelClass} htmlFor="char-age">Age</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, age: text })} />
           </div>
           <input 
@@ -166,13 +188,13 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Age" 
             value={character.age || ''} 
             onChange={e => onUpdateCharacter({ ...character, age: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+            className={inputClass}
           />
         </div>
         
-        <div className="space-y-2">
+        <div className="space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-personality">Personality</label>
+            <label className={labelClass} htmlFor="char-personality">Personality</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, personality: text })} />
           </div>
           <input 
@@ -180,13 +202,13 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Personality traits..." 
             value={character.personality || ''} 
             onChange={e => onUpdateCharacter({ ...character, personality: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+            className={inputClass}
           />
         </div>
         
-        <div className="space-y-2">
+        <div className="space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-realm">Realm</label>
+            <label className={labelClass} htmlFor="char-realm">Realm</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, currentCultivation: text })} />
           </div>
           <input 
@@ -194,17 +216,17 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Realm" 
             value={character.currentCultivation} 
             onChange={e => onUpdateCharacter({ ...character, currentCultivation: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+            className={inputClass}
           />
         </div>
         
-        <div className="space-y-2">
-          <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-status">Status</label>
+        <div className="space-y-1.5 xs:space-y-2">
+          <label className={labelClass} htmlFor="char-status">Status</label>
           <select
             id="char-status"
             value={character.status}
             onChange={e => onUpdateCharacter({ ...character, status: e.target.value as 'Alive' | 'Deceased' | 'Unknown' })}
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all"
+            className={inputClass}
           >
             <option value="Alive">Alive</option>
             <option value="Deceased">Deceased</option>
@@ -212,11 +234,11 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
           </select>
         </div>
 
-        <div className="col-span-2 pt-2">
-          <label className="flex items-center justify-between gap-4 bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3">
-            <span className="text-sm font-semibold text-zinc-300">
+        <div className="col-span-1 sm:col-span-2 pt-2">
+          <label className="flex items-center justify-between gap-3 xs:gap-4 bg-zinc-950 border border-zinc-700 rounded-lg xs:rounded-xl px-3 xs:px-4 py-2.5 xs:py-3 cursor-pointer active:scale-[0.99] transition-transform">
+            <span className="text-xs xs:text-sm font-semibold text-zinc-300">
               Protagonist (main character)
-              <span className="block text-[11px] text-zinc-500 font-normal mt-1">
+              <span className="block text-[10px] xs:text-[11px] text-zinc-500 font-normal mt-0.5 xs:mt-1">
                 You can mark multiple characters as protagonists.
               </span>
             </span>
@@ -224,20 +246,20 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
               type="checkbox"
               checked={!!character.isProtagonist}
               onChange={(e) => onUpdateCharacter({ ...character, isProtagonist: e.target.checked })}
-              className="h-5 w-5 accent-amber-500"
+              className="h-5 w-5 xs:h-6 xs:w-6 accent-amber-500 cursor-pointer"
               aria-label="Mark as protagonist"
             />
           </label>
         </div>
         
         {/* Character Depth Section */}
-        <div className="col-span-2 pt-6 border-t border-zinc-700 mt-4">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4 pb-2 border-b border-zinc-700">Character Depth</h3>
+        <div className="col-span-1 sm:col-span-2 pt-4 xs:pt-6 border-t border-zinc-700 mt-2 xs:mt-4">
+          <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider mb-3 xs:mb-4 pb-2 border-b border-zinc-700">Character Depth</h3>
         </div>
         
-        <div className="col-span-2 space-y-2">
+        <div className="col-span-1 sm:col-span-2 space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-appearance">Appearance</label>
+            <label className={labelClass} htmlFor="char-appearance">Appearance</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, appearance: text })} />
           </div>
           <textarea 
@@ -245,13 +267,13 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Physical description, distinctive features..." 
             value={character.appearance || ''} 
             onChange={e => onUpdateCharacter({ ...character, appearance: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 h-24 resize-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all leading-relaxed"
+            className={`${textareaClass} h-20 xs:h-24`}
           />
         </div>
         
-        <div className="col-span-2 space-y-2">
+        <div className="col-span-1 sm:col-span-2 space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-background">Background</label>
+            <label className={labelClass} htmlFor="char-background">Background</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, background: text })} />
           </div>
           <textarea 
@@ -259,13 +281,13 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Origin story, past experiences, upbringing..." 
             value={character.background || ''} 
             onChange={e => onUpdateCharacter({ ...character, background: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 h-24 resize-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all leading-relaxed"
+            className={`${textareaClass} h-20 xs:h-24`}
           />
         </div>
         
-        <div className="col-span-2 space-y-2">
+        <div className="col-span-1 sm:col-span-2 space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-goals">Goals</label>
+            <label className={labelClass} htmlFor="char-goals">Goals</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, goals: text })} />
           </div>
           <textarea 
@@ -273,13 +295,13 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Motivations, desires, what they seek to achieve..." 
             value={character.goals || ''} 
             onChange={e => onUpdateCharacter({ ...character, goals: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 h-24 resize-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all leading-relaxed"
+            className={`${textareaClass} h-20 xs:h-24`}
           />
         </div>
         
-        <div className="col-span-2 space-y-2">
+        <div className="col-span-1 sm:col-span-2 space-y-1.5 xs:space-y-2">
           <div className="flex justify-between items-center">
-            <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide" htmlFor="char-flaws">Flaws</label>
+            <label className={labelClass} htmlFor="char-flaws">Flaws</label>
             <VoiceInput onResult={(text) => onUpdateCharacter({ ...character, flaws: text })} />
           </div>
           <textarea 
@@ -287,11 +309,11 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
             placeholder="Weaknesses, vulnerabilities, character flaws..." 
             value={character.flaws || ''} 
             onChange={e => onUpdateCharacter({ ...character, flaws: e.target.value })} 
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-base text-zinc-200 h-24 resize-none focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all leading-relaxed"
+            className={`${textareaClass} h-20 xs:h-24`}
           />
         </div>
 
-        <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-zinc-700">
+        <div className="col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4 xs:gap-6 pt-3 xs:pt-4 border-t border-zinc-700">
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Techniques</label>

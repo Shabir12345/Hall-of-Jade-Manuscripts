@@ -116,7 +116,7 @@ export function processThreadUpdates(
       const significance = (update?.significance || 'minor') as 'major' | 'minor' | 'foreshadowing';
 
       // Find existing thread by title (improved fuzzy matching)
-      // First try exact match, then try partial match, then try by threadId
+      // Uses multiple strategies for robust matching
       const titleLower = title.toLowerCase();
       let existingThread = existingThreads.find(
         t => t.title.toLowerCase() === titleLower
@@ -127,6 +127,61 @@ export function processThreadUpdates(
         existingThread = existingThreads.find(
           t => t.title.toLowerCase().includes(titleLower) ||
                titleLower.includes(t.title.toLowerCase())
+        );
+      }
+      
+      // If no partial match, try keyword-based matching
+      // Extract significant keywords (3+ chars, not common words)
+      if (!existingThread) {
+        const commonWords = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'about', 'that', 'this', 'will', 'have', 'been', 'being', 'their', 'there', 'what', 'which', 'when', 'where', 'quest', 'thread', 'daily']);
+        const titleKeywords = titleLower.split(/[\s\-_:]+/)
+          .filter(w => w.length >= 3 && !commonWords.has(w));
+        
+        if (titleKeywords.length > 0) {
+          // Find thread with highest keyword overlap
+          let bestMatch: StoryThread | undefined;
+          let bestOverlap = 0;
+          const minOverlapThreshold = Math.max(1, Math.floor(titleKeywords.length * 0.4)); // At least 40% keyword overlap
+          
+          for (const thread of existingThreads) {
+            const threadTitleLower = thread.title.toLowerCase();
+            const threadKeywords = threadTitleLower.split(/[\s\-_:]+/)
+              .filter(w => w.length >= 3 && !commonWords.has(w));
+            
+            // Count matching keywords
+            let overlap = 0;
+            for (const kw of titleKeywords) {
+              if (threadKeywords.some(tk => tk.includes(kw) || kw.includes(tk))) {
+                overlap++;
+              }
+            }
+            
+            // Also check if any title keyword is in the other thread's title
+            for (const kw of titleKeywords) {
+              if (threadTitleLower.includes(kw) && !threadKeywords.some(tk => tk.includes(kw) || kw.includes(tk))) {
+                overlap += 0.5;
+              }
+            }
+            
+            if (overlap > bestOverlap && overlap >= minOverlapThreshold) {
+              bestOverlap = overlap;
+              bestMatch = thread;
+            }
+          }
+          
+          if (bestMatch) {
+            existingThread = bestMatch;
+            console.debug(`[Thread Matching] Fuzzy matched "${title}" to existing thread "${bestMatch.title}" (${bestOverlap}/${titleKeywords.length} keywords)`);
+          }
+        }
+      }
+      
+      // Try matching by type + key entity name (for threads like "Azure System Integration")
+      if (!existingThread && update.relatedEntityName) {
+        const entityName = String(update.relatedEntityName).toLowerCase().trim();
+        existingThread = existingThreads.find(t => 
+          t.title.toLowerCase().includes(entityName) &&
+          t.type === type
         );
       }
       

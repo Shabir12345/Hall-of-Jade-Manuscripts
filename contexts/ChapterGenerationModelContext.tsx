@@ -1,17 +1,33 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
-export type ChapterGenerationModel = 'grok';
+/**
+ * Chapter Generation Model Context
+ * 
+ * Controls which model is used for chapter generation.
+ * Default is DeepSeek-V3.2 ("The Writer") which is trained on Chinese web fiction
+ * and natively understands cultivation tropes.
+ */
+
+export type ChapterGenerationModel = 'deepseek';
 
 const STORAGE_KEY = 'apexforge.chapterGenerationModel';
 
 export function getStoredChapterGenerationModel(): ChapterGenerationModel {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw === 'grok') return raw;
-  return 'grok'; // Default to Grok
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    // Always return deepseek - it's the only option for chapter generation
+    return 'deepseek';
+  } catch {
+    return 'deepseek';
+  }
 }
 
 export function setStoredChapterGenerationModel(model: ChapterGenerationModel): void {
-  localStorage.setItem(STORAGE_KEY, model);
+  try {
+    localStorage.setItem(STORAGE_KEY, model);
+  } catch {
+    // ignore persistence failures
+  }
 }
 
 interface ChapterGenerationModelContextType {
@@ -24,12 +40,12 @@ const ChapterGenerationModelContext = createContext<ChapterGenerationModelContex
 /**
  * Hook to access the Chapter Generation Model context.
  * 
- * Provides access to the currently selected model for chapter generation (Grok)
- * and method to change it. The selected model is persisted to localStorage.
- * Must be used within a ChapterGenerationModelProvider.
+ * Provides access to the currently selected model for chapter generation.
+ * DeepSeek-V3.2 is the default and recommended model for chapter generation
+ * because it's trained on Chinese web fiction and understands cultivation tropes.
  * 
  * @returns {ChapterGenerationModelContextType} The context containing:
- * - model: Currently selected model ('grok')
+ * - model: Currently selected model ('deepseek')
  * - setModel: Change the selected model (persists to localStorage)
  * 
  * @throws {Error} If used outside of a ChapterGenerationModelProvider
@@ -39,10 +55,7 @@ const ChapterGenerationModelContext = createContext<ChapterGenerationModelContex
  * const { model, setModel } = useChapterGenerationModel();
  * 
  * // Get current model
- * console.log('Current model:', model);
- * 
- * // Change model
- * setModel('grok');
+ * console.log('Current model:', model); // 'deepseek'
  * ```
  */
 export function useChapterGenerationModel(): ChapterGenerationModelContextType {
@@ -57,7 +70,7 @@ export const ChapterGenerationModelProvider: React.FC<{ children: React.ReactNod
       return getStoredChapterGenerationModel();
     } catch {
       // localStorage may be blocked; default safely.
-      return 'grok';
+      return 'deepseek';
     }
   });
 

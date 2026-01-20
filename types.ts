@@ -316,11 +316,82 @@ export interface NovelState {
     confidence: number;
     reason: string;
   }>;
+  /** Director Agent configuration for pacing control */
+  directorConfig?: {
+    enabled: boolean;
+    minBeatsPerChapter: number;
+    maxBeatsPerChapter: number;
+    defaultTargetWordCount: number;
+    enableClimaxProtection: boolean;
+    useReasonerMode: boolean;
+  };
+  /** Living World configuration for background simulation */
+  livingWorldConfig?: {
+    enabled: boolean;
+    chapterInterval: number;
+    seclusionTrigger: boolean;
+    timeSkipThreshold: number;
+    volatilityLevel: 'stable' | 'moderate' | 'chaotic';
+    maxEventsPerSimulation: number;
+    protectedEntityIds: string[];
+  };
+  /** Living World status tracking */
+  livingWorldStatus?: {
+    lastSimulationChapter: number;
+    totalEventsGenerated: number;
+    undiscoveredEvents: number;
+  };
+  /** Tribulation Gates configuration for human-in-the-loop decisions */
+  tribulationGateConfig?: {
+    enabled: boolean;
+    minimumChapterGap: number;
+    autoSelectAfterMs?: number;
+    triggerSensitivity: 'low' | 'medium' | 'high';
+    excludedTriggers?: string[];
+    maxPendingGates?: number;
+    showConsequences: boolean;
+    showRiskLevels: boolean;
+  };
+  /** Tribulation Gates status tracking */
+  tribulationGateStatus?: {
+    totalGates: number;
+    resolvedGates: number;
+    skippedGates: number;
+    lastGateChapter: number;
+  };
+  /** Tension tracking across chapters for pacing */
+  tensionHistory?: Array<{
+    chapterNumber: number;
+    startTension: number;
+    endTension: number;
+    averageTension: number;
+    peakMoment?: string;
+  }>;
+  /** Face Graph configuration for social network memory */
+  faceGraphConfig?: {
+    enabled: boolean;
+    autoCalculateRipples: boolean;
+    maxRippleDegrees: number;
+    rippleKarmaThreshold: number;
+    karmaDecayPerChapter: number;
+    autoExtractKarma: boolean;
+    protectedCharacterIds: string[];
+  };
+  /** Face Graph status tracking */
+  faceGraphStatus?: {
+    totalKarmaEvents: number;
+    unresolvedKarma: number;
+    activeBloodFeuds: number;
+    pendingRipples: number;
+    lastUpdatedChapter: number;
+  };
+  /** Global Market State for economic simulation (Spirit Stone Market) */
+  globalMarketState?: import('./types/market').GlobalMarketState;
   updatedAt: number;
   createdAt: number;
 }
 
-export type ViewType = 'dashboard' | 'world-bible' | 'characters' | 'chapters' | 'editor' | 'planning' | 'library' | 'world-map' | 'storyboard' | 'timeline' | 'beatsheet' | 'matrix' | 'analytics' | 'search' | 'goals' | 'antagonists' | 'character-systems' | 'story-threads' | 'structure-visualizer' | 'engagement-dashboard' | 'tension-curve' | 'theme-evolution' | 'character-psychology' | 'device-dashboard' | 'draft-comparison' | 'excellence-scorecard' | 'improvement-history';
+export type ViewType = 'dashboard' | 'world-bible' | 'characters' | 'chapters' | 'editor' | 'planning' | 'library' | 'world-map' | 'storyboard' | 'timeline' | 'beatsheet' | 'matrix' | 'analytics' | 'search' | 'goals' | 'antagonists' | 'character-systems' | 'story-threads' | 'structure-visualizer' | 'engagement-dashboard' | 'tension-curve' | 'theme-evolution' | 'character-psychology' | 'device-dashboard' | 'draft-comparison' | 'excellence-scorecard' | 'improvement-history' | 'memory-dashboard' | 'face-graph';
 
 // Style Analysis Types
 export interface WritingStyleMetrics {
@@ -435,6 +506,26 @@ export interface PromptContext {
   comprehensiveCharacterContext?: Array<{ characterId: string; formattedContext: string }>; // Full context for characters appearing in chapter
   openPlotPointsContext?: string; // All unresolved plot points requiring attention
   storyProgressionAnalysis?: string; // How the story is progressing overall
+  // Face Graph context (social network memory)
+  faceGraphContext?: string; // Formatted Face Graph context including karma, feuds, debts
+  unresolvedKarmaContext?: Array<{
+    characterId: string;
+    characterName: string;
+    karmaEventSummary: string;
+    severity: string;
+    sentimentTowardMC: number;
+  }>;
+  activeBloodFeudsContext?: Array<{
+    feudName: string;
+    aggrievedPartyName: string;
+    targetPartyName: string;
+    intensity: number;
+  }>;
+  pendingRipplesContext?: Array<{
+    affectedCharacterName: string;
+    potentialResponse: string;
+    threatLevel: string;
+  }>;
 }
 
 export interface PromptBuilderConfig {

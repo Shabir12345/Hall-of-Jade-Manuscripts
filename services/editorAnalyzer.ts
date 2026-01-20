@@ -1,7 +1,7 @@
 import { NovelState, Chapter, Arc } from '../types';
 import { EditorAnalysis, EditorIssue, EditorFix, ChapterBatchEditorInput, ArcEditorInput, EditorServiceOptions, OverallFlowRating, FixStatus } from '../types/editor';
 import { buildChapterBatchAnalysisPrompt, buildArcAnalysisPrompt } from './promptEngine/writers/editorPromptWriter';
-import { grokJson } from './grokService';
+import { geminiJson } from './geminiService';
 import { SYSTEM_INSTRUCTION } from '../constants';
 import { rateLimiter } from './rateLimiter';
 import { generateUUID } from '../utils/uuid';
@@ -14,6 +14,7 @@ const WARNING_CACHE_TTL = 30000; // 30 seconds
 /**
  * Editor Analyzer
  * Analyzes chapters using AI to detect issues with story flow, gaps, transitions, grammar, etc.
+ * Uses Gemini Flash ("The Clerk") for structured analysis and extraction.
  */
 
 /**
@@ -71,7 +72,7 @@ export async function analyzeChapterBatch(
     }
   }
 
-  // Build JSON schema description for Grok
+  // Build JSON schema description for Gemini
   const jsonSchema = `{
     "analysis": {
       "overallFlow": "excellent" | "good" | "adequate" | "needs_work",
@@ -109,9 +110,9 @@ export async function analyzeChapterBatch(
     ]
   }`;
 
-  // Call Grok API
+  // Call Gemini API (The Clerk for analysis/extraction)
   const parsed = await rateLimiter.queueRequest('analyze', async () => {
-    return await grokJson<{
+    return await geminiJson<{
       analysis: {
         overallFlow: string;
         continuityScore: number;
@@ -528,7 +529,7 @@ export async function analyzeArc(
   
   options?.onProgress?.('Calling AI for arc analysis...', 30);
 
-  // Build JSON schema description for Grok (arc-specific)
+  // Build JSON schema description for Gemini (arc-specific)
   const jsonSchema = `{
     "analysis": {
       "overallFlow": "excellent" | "good" | "adequate" | "needs_work",
@@ -570,7 +571,7 @@ export async function analyzeArc(
     }
   }`;
 
-  // Call Grok API with error handling for partial responses
+  // Call Gemini API with error handling for partial responses
   let parsed: {
     analysis?: {
       overallFlow?: string;
@@ -612,7 +613,7 @@ export async function analyzeArc(
 
   try {
     parsed = await rateLimiter.queueRequest('analyze-arc', async () => {
-      return await grokJson<{
+      return await geminiJson<{
         analysis: {
           overallFlow: string;
           continuityScore: number;

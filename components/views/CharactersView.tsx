@@ -236,10 +236,13 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
 
   if (isLoading) {
     return (
-      <div className="p-4 md:p-5 lg:p-6 max-w-7xl mx-auto pt-12 md:pt-16">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 md:mb-8 border-b border-zinc-700 pb-4">
-          <div className="h-8 w-48 bg-zinc-800/50 rounded animate-pulse" />
-          <div className="h-10 w-32 bg-zinc-800/50 rounded animate-pulse" />
+      <div 
+        className="p-3 xs:p-4 md:p-5 lg:p-6 max-w-7xl mx-auto"
+        style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top, 1rem) + 2.5rem))' }}
+      >
+        <div className="flex flex-col xs:flex-row justify-between items-start xs:items-center gap-3 xs:gap-4 mb-4 xs:mb-6 md:mb-8 border-b border-zinc-700 pb-3 xs:pb-4">
+          <div className="h-7 xs:h-8 w-32 xs:w-48 bg-zinc-800/50 rounded animate-pulse" />
+          <div className="h-9 xs:h-10 w-24 xs:w-32 bg-zinc-800/50 rounded animate-pulse" />
         </div>
         <SkeletonList items={5} showAvatar={true} />
       </div>
@@ -248,11 +251,15 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
 
   return (
     <>
-      <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto pt-20 md:pt-24">
+      <div 
+        className="p-3 xs:p-4 md:p-6 lg:p-8 max-w-7xl mx-auto"
+        style={{ paddingTop: 'max(4rem, calc(env(safe-area-inset-top, 1rem) + 3.5rem))' }}
+      >
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 md:mb-8 border-b border-zinc-700 pb-4 md:pb-6">
-          <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Codex</h2>
-          <div className="flex gap-3 flex-wrap items-center">
+        <div className="flex flex-col xs:flex-row justify-between items-start xs:items-center gap-3 xs:gap-4 mb-4 xs:mb-6 md:mb-8 border-b border-zinc-700 pb-3 xs:pb-4 md:pb-6">
+          <h2 className="text-xl xs:text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Codex</h2>
+          {/* Action buttons - horizontal scroll on mobile */}
+          <div className="flex gap-2 xs:gap-3 flex-nowrap items-center overflow-x-auto scrollbar-hide -mx-3 xs:mx-0 px-3 xs:px-0 pb-1 xs:pb-0 w-full xs:w-auto">
             {/* View Mode Toggle */}
             <div className="flex items-center gap-1 bg-zinc-800/50 rounded-lg p-1 border border-zinc-700">
               <button
