@@ -43,26 +43,26 @@ interface ChapterEditorProps {
 const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSave, onClose, onNavigateChapter }) => {
   const { showSuccess, showError } = useToast();
   const { startLoading, stopLoading, updateMessage } = useLoading();
-  
+
   // Calculate previous and next chapters early to avoid initialization issues
   const { previousChapter, nextChapter } = useMemo(() => {
     if (!novelState || !novelState.chapters || novelState.chapters.length === 0) {
       return { previousChapter: null, nextChapter: null };
     }
-    
+
     const sortedChapters = [...novelState.chapters].sort((a, b) => a.number - b.number);
     const currentIndex = sortedChapters.findIndex(c => c.id === chapter.id);
-    
+
     if (currentIndex === -1) {
       return { previousChapter: null, nextChapter: null };
     }
-    
+
     return {
       previousChapter: currentIndex > 0 ? sortedChapters[currentIndex - 1] : null,
       nextChapter: currentIndex < sortedChapters.length - 1 ? sortedChapters[currentIndex + 1] : null,
     };
   }, [novelState, chapter.id]);
-  
+
   const [content, setContent] = useState(chapter.content);
   const [title, setTitle] = useState(chapter.title);
   const [isAiEditing, setIsAiEditing] = useState(false);
@@ -107,6 +107,13 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
   const [autocompleteTarget, setAutocompleteTarget] = useState<'content' | 'instruction'>('content');
   const contentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const instructionTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Mobile optimization state
+  const [isMobile, setIsMobile] = useState(false);
+  const [isHeaderVisible, setIsHeaderVisible] = useState(true);
+  const [lastScrollY, setLastScrollY] = useState(0);
+  const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const handleAiEdit = useCallback(async () => {
     if (!instruction) return;
@@ -222,7 +229,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
     const cursorPos = textarea.selectionStart;
     const textBeforeCursor = value.substring(0, cursorPos);
     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-    
+
     if (lastAtIndex !== -1) {
       // Check if there's a space or newline after @ (which would end the reference)
       const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
@@ -231,11 +238,11 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
         const query = textAfterAt;
         setAutocompleteQuery(query);
         setAutocompleteTarget(target);
-        
+
         // Calculate position for autocomplete
         const textareaRect = textarea.getBoundingClientRect();
         const scrollTop = textarea.scrollTop;
-        
+
         // Create a temporary element to measure text position
         const tempDiv = document.createElement('div');
         tempDiv.style.position = 'absolute';
@@ -246,55 +253,55 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
         tempDiv.style.padding = window.getComputedStyle(textarea).padding;
         tempDiv.textContent = textBeforeCursor;
         document.body.appendChild(tempDiv);
-        
+
         const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 20;
         const lines = textBeforeCursor.split('\n');
         const currentLine = lines.length - 1;
         const lineText = lines[currentLine] || '';
-        
+
         // Approximate position
         const top = textareaRect.top + (currentLine * lineHeight) + lineHeight + scrollTop;
         const left = textareaRect.left + (lineText.length * 8); // Rough estimate
-        
+
         document.body.removeChild(tempDiv);
-        
+
         setAutocompletePosition({ top: Math.min(top, window.innerHeight - 300), left });
         setShowAutocomplete(true);
         return;
       }
     }
-    
+
     // Hide autocomplete if @ is not found or reference is complete
     setShowAutocomplete(false);
   }, []);
 
   const handleAutocompleteSelect = useCallback((suggestion: EntitySuggestion) => {
-    const textarea = autocompleteTarget === 'content' 
-      ? contentTextareaRef.current 
+    const textarea = autocompleteTarget === 'content'
+      ? contentTextareaRef.current
       : instructionTextareaRef.current;
-    
+
     if (!textarea) return;
 
     const currentValue = autocompleteTarget === 'content' ? content : instruction;
     const cursorPos = textarea.selectionStart;
     const textBeforeCursor = currentValue.substring(0, cursorPos);
     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-    
+
     if (lastAtIndex !== -1) {
       const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
-      const newValue = 
-        currentValue.substring(0, lastAtIndex) + 
-        `@${suggestion.name}` + 
+      const newValue =
+        currentValue.substring(0, lastAtIndex) +
+        `@${suggestion.name}` +
         currentValue.substring(cursorPos);
-      
+
       if (autocompleteTarget === 'content') {
         setContent(newValue);
       } else {
         setInstruction(newValue);
       }
-      
+
       setShowAutocomplete(false);
-      
+
       // Set cursor position after the inserted reference
       setTimeout(() => {
         const newCursorPos = lastAtIndex + suggestion.name.length + 1;
@@ -309,9 +316,9 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
     const handleClickOutside = (e: MouseEvent) => {
       if (showAutocomplete) {
         const target = e.target as HTMLElement;
-        if (!target.closest('.reference-autocomplete-container') && 
-            target !== contentTextareaRef.current && 
-            target !== instructionTextareaRef.current) {
+        if (!target.closest('.reference-autocomplete-container') &&
+          target !== contentTextareaRef.current &&
+          target !== instructionTextareaRef.current) {
           setShowAutocomplete(false);
         }
       }
@@ -320,6 +327,75 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAutocomplete]);
+
+  // Detect mobile screen size
+  useEffect(() => {
+    const checkMobile = () => {
+      const isMobileScreen = window.innerWidth <= 768;
+      setIsMobile(isMobileScreen);
+      // On desktop, always show drawer; on mobile, default to closed
+      if (!isMobileScreen && !isAiDrawerOpen) {
+        setIsAiDrawerOpen(true);
+      }
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Load drawer state from localStorage on mount
+  useEffect(() => {
+    const savedDrawerState = localStorage.getItem('chapterEditor_aiDrawerOpen');
+    if (savedDrawerState !== null && isMobile) {
+      setIsAiDrawerOpen(savedDrawerState === 'true');
+    }
+  }, [isMobile]);
+
+  // Save drawer state to localStorage when it changes
+  useEffect(() => {
+    if (isMobile) {
+      localStorage.setItem('chapterEditor_aiDrawerOpen', String(isAiDrawerOpen));
+    }
+  }, [isAiDrawerOpen, isMobile]);
+
+  // Handle scroll for header auto-hide
+  useEffect(() => {
+    if (!isMobile || activeTab !== 'content') {
+      setIsHeaderVisible(true);
+      return;
+    }
+
+    const handleScroll = () => {
+      const textarea = contentTextareaRef.current;
+      if (!textarea) return;
+
+      const currentScrollY = textarea.scrollTop;
+
+      // Show header when at top
+      if (currentScrollY <= 10) {
+        setIsHeaderVisible(true);
+        setLastScrollY(currentScrollY);
+        return;
+      }
+
+      // Show header when scrolling up, hide when scrolling down
+      if (currentScrollY < lastScrollY) {
+        setIsHeaderVisible(true);
+      } else if (currentScrollY > lastScrollY && currentScrollY > 50) {
+        setIsHeaderVisible(false);
+      }
+
+      setLastScrollY(currentScrollY);
+    };
+
+    const textarea = contentTextareaRef.current;
+    if (textarea) {
+      textarea.addEventListener('scroll', handleScroll, { passive: true });
+      return () => textarea.removeEventListener('scroll', handleScroll);
+    }
+  }, [isMobile, activeTab, lastScrollY]);
+
 
   // Sync state when chapter prop changes (e.g., when navigating between chapters)
   useEffect(() => {
@@ -332,7 +408,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
     setShowTTS(false); // Close TTS when switching chapters
     setSelectedText(''); // Clear selection
     setSelectedRange(null); // Clear selection range
-    
+
     // Scroll to top when chapter changes
     if (contentTextareaRef.current) {
       contentTextareaRef.current.scrollTop = 0;
@@ -400,10 +476,10 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
   const handleTextSelection = useCallback(() => {
     const textarea = contentTextareaRef.current;
     if (!textarea) return;
-    
+
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    
+
     if (start !== end) {
       const selected = content.substring(start, end);
       setSelectedText(selected);
@@ -427,7 +503,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
   const confirmAddComment = useCallback(async (commentText: string) => {
     setShowCommentPrompt(false);
     if (!commentText || !commentText.trim() || !selectedRange) return;
-    
+
     try {
       const newComment = await createComment({
         chapterId: chapter.id,
@@ -471,7 +547,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
 
   const handleHighlight = useCallback(async (category: HighlightCategory, color: string, note?: string) => {
     if (!selectedRange) return;
-    
+
     try {
       const newHighlight = await createHighlight({
         chapterId: chapter.id,
@@ -505,18 +581,18 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
 
   const handleNavigateChapter = useCallback((chapterId: string) => {
     if (!onNavigateChapter) return;
-    
+
     // Check if there are unsaved changes
-    const hasUnsavedChanges = 
-      content !== chapter.content || 
-      title !== chapter.title || 
+    const hasUnsavedChanges =
+      content !== chapter.content ||
+      title !== chapter.title ||
       JSON.stringify(scenes) !== JSON.stringify(chapter.scenes || []);
-    
+
     if (hasUnsavedChanges) {
       // Auto-save before navigating
       onSave({ ...chapter, content, title, scenes });
     }
-    
+
     // Navigate to the new chapter
     onNavigateChapter(chapterId);
   }, [onNavigateChapter, chapter, content, title, scenes, onSave]);
@@ -527,7 +603,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
       // Only handle if not typing in an input/textarea (unless Ctrl/Cmd is pressed)
       const target = e.target as HTMLElement;
       const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
-      
+
       if (isInput && !(e.ctrlKey || e.metaKey)) {
         return; // Don't interfere with normal typing
       }
@@ -551,573 +627,611 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, novelState, onSa
 
   return (
     <>
-    <div className="flex flex-col h-full bg-zinc-950 animate-in fade-in slide-in-from-bottom-4 duration-300">
-      <ChapterEditorHeader
-        title={title}
-        content={content}
-        onTitleChange={setTitle}
-        onClose={onClose}
-        onSave={handleSave}
-        onShowHistory={() => {
-          setShowHistory(true);
-          setActiveTab('history');
-        }}
-        showTTS={showTTS}
-        onToggleTTS={handleToggleTTS}
-        showHistory={showHistory}
-        activeTab={activeTab}
-      />
-
-      <ChapterEditorTabs
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        scenesCount={scenes.length}
-        antagonistsCount={chapterAntagonists.length}
-        professionalEditorBadgeCount={professionalEditorBadgeCount}
-      />
-
-      {(previousChapter || nextChapter) && (
-        <ChapterNavigation
-          previousChapter={previousChapter}
-          nextChapter={nextChapter}
-          currentChapterNumber={chapter.number}
-          totalChapters={novelState?.chapters.length || 0}
-          onNavigate={handleNavigateChapter}
-          variant="top"
+      <div className="flex flex-col h-full bg-zinc-950 animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <ChapterEditorHeader
+          title={title}
+          content={content}
+          onTitleChange={setTitle}
+          onClose={onClose}
+          onSave={handleSave}
+          onShowHistory={() => {
+            setShowHistory(true);
+            setActiveTab('history');
+          }}
+          showTTS={showTTS}
+          onToggleTTS={handleToggleTTS}
+          showHistory={showHistory}
+          activeTab={activeTab}
+          isVisible={isHeaderVisible}
+          isMobile={isMobile}
         />
-      )}
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Content Tab */}
-        {activeTab === 'content' && (
-          <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-            <div className="flex-1 relative overflow-y-auto p-6 md:p-8 lg:p-12 scrollbar-thin">
-              <div className="absolute top-4 right-4 z-10">
-                <VoiceInput 
-                  onResult={(text) => setContent(prev => prev + "\n" + text)}
-                  className="shadow-xl bg-zinc-900/95 backdrop-blur-sm border border-zinc-700"
+        <ChapterEditorTabs
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          scenesCount={scenes.length}
+          antagonistsCount={chapterAntagonists.length}
+          professionalEditorBadgeCount={professionalEditorBadgeCount}
+        />
+
+        {(previousChapter || nextChapter) && (
+          <ChapterNavigation
+            previousChapter={previousChapter}
+            nextChapter={nextChapter}
+            currentChapterNumber={chapter.number}
+            totalChapters={novelState?.chapters.length || 0}
+            onNavigate={handleNavigateChapter}
+            variant="top"
+          />
+        )}
+
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Content Tab */}
+          {activeTab === 'content' && (
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+              <div className="flex-1 relative overflow-y-auto p-3 xs:p-4 sm:p-6 md:p-8 lg:p-12 scrollbar-thin">
+                {/* Voice Input - top right */}
+                <div className="absolute top-4 right-4 z-10">
+                  <VoiceInput
+                    onResult={(text) => setContent(prev => prev + "\n" + text)}
+                    className="shadow-xl bg-zinc-900/95 backdrop-blur-sm border border-zinc-700"
+                  />
+                </div>
+
+                {/* FAB - AI Editor Toggle (Mobile Only) */}
+                {isMobile && !isAiDrawerOpen && activeTab === 'content' && (
+                  <button
+                    onClick={() => setIsAiDrawerOpen(true)}
+                    className="fixed bottom-20 right-4 z-30 min-w-[56px] min-h-[56px] rounded-full bg-gradient-to-br from-amber-600 to-amber-500 text-white font-semibold text-sm shadow-lg shadow-amber-900/40 hover:shadow-xl hover:shadow-amber-900/50 hover:scale-110 transition-all duration-200 flex items-center justify-center md:hidden"
+                    aria-label="Open AI Editor"
+                    title="Open AI Editor"
+                  >
+                    <span className="text-lg">✨</span>
+                  </button>
+                )}
+
+                <textarea
+                  ref={contentTextareaRef}
+                  value={content}
+                  data-tour="editor-content"
+                  onChange={(e) => {
+                    const textarea = e.target as HTMLTextAreaElement;
+                    handleTextChange(e.target.value, 'content', textarea);
+                    // Track selection for highlighting/comments
+                    setTimeout(() => handleTextSelection(), 0);
+                  }}
+                  onSelect={handleTextSelection}
+                  onKeyDown={(e) => {
+                    if (showAutocomplete && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Escape')) {
+                      e.preventDefault();
+                      // Let autocomplete handle these keys
+                      return;
+                    }
+                  }}
+                  className="w-full h-full bg-transparent border-none focus:ring-0 text-zinc-300 font-serif-novel text-base md:text-lg lg:text-xl leading-relaxed resize-none placeholder-zinc-600 pr-16"
+                  placeholder="The story begins here... Use @ to reference characters, places, and world entries."
+                  aria-label="Chapter content"
                 />
-              </div>
-              <textarea
-                ref={contentTextareaRef}
-                value={content}
-                data-tour="editor-content"
-                onChange={(e) => {
-                  const textarea = e.target as HTMLTextAreaElement;
-                  handleTextChange(e.target.value, 'content', textarea);
-                  // Track selection for highlighting/comments
-                  setTimeout(() => handleTextSelection(), 0);
-                }}
-                onSelect={handleTextSelection}
-                onKeyDown={(e) => {
-                  if (showAutocomplete && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Escape')) {
-                    e.preventDefault();
-                    // Let autocomplete handle these keys
-                    return;
-                  }
-                }}
-                className="w-full h-full bg-transparent border-none focus:ring-0 text-zinc-300 font-serif-novel text-base md:text-lg lg:text-xl leading-relaxed resize-none placeholder-zinc-600 pr-16"
-                placeholder="The story begins here... Use @ to reference characters, places, and world entries."
-                aria-label="Chapter content"
-              />
-              {showAutocomplete && autocompleteTarget === 'content' && novelState && (
-                <div className="reference-autocomplete-container">
-                  <ReferenceAutocomplete
-                    query={autocompleteQuery}
-                    state={novelState}
-                    position={autocompletePosition}
-                    onSelect={handleAutocompleteSelect}
-                    onClose={() => setShowAutocomplete(false)}
-                  />
-                </div>
-              )}
-              
-              {/* Navigation buttons at bottom */}
-              {(previousChapter || nextChapter) && (
-                <div className="mt-4">
-                  <ChapterNavigation
-                    previousChapter={previousChapter}
-                    nextChapter={nextChapter}
-                    currentChapterNumber={chapter.number}
-                    totalChapters={novelState?.chapters.length || 0}
-                    onNavigate={handleNavigateChapter}
-                    variant="bottom"
-                  />
-                </div>
-              )}
-            </div>
+                {showAutocomplete && autocompleteTarget === 'content' && novelState && (
+                  <div className="reference-autocomplete-container">
+                    <ReferenceAutocomplete
+                      query={autocompleteQuery}
+                      state={novelState}
+                      position={autocompletePosition}
+                      onSelect={handleAutocompleteSelect}
+                      onClose={() => setShowAutocomplete(false)}
+                    />
+                  </div>
+                )}
 
-            <div className="w-full md:w-80 border-t md:border-t-0 md:border-l border-zinc-700 bg-zinc-900/40 p-4 md:p-6 space-y-6 overflow-y-auto scrollbar-thin">
-              <div>
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wide">AI Editor Agent</h3>
-                  <VoiceInput onResult={(text) => setInstruction(prev => prev ? prev + " " + text : text)} />
+                {/* Navigation buttons at bottom */}
+                {(previousChapter || nextChapter) && (
+                  <div className="mt-4">
+                    <ChapterNavigation
+                      previousChapter={previousChapter}
+                      nextChapter={nextChapter}
+                      currentChapterNumber={chapter.number}
+                      totalChapters={novelState?.chapters.length || 0}
+                      onNavigate={handleNavigateChapter}
+                      variant="bottom"
+                    />
+                  </div>
+                )}
+              </div>
+
+
+              {/* Mobile backdrop overlay */}
+              {isMobile && isAiDrawerOpen && (
+                <div
+                  className="fixed inset-0 bg-black/50 z-40 md:hidden"
+                  onClick={() => setIsAiDrawerOpen(false)}
+                  aria-label="Close AI editor drawer"
+                />
+              )}
+
+              {/* AI Editor Panel/Drawer */}
+              <div className={`
+                md:relative md:w-80 md:translate-x-0
+                fixed right-0 top-0 bottom-0 w-full max-w-sm z-50
+                border-t md:border-t-0 md:border-l border-zinc-700 bg-zinc-900/95 md:bg-zinc-900/40 backdrop-blur-sm md:backdrop-blur-none
+                p-4 md:p-6 space-y-6 overflow-y-auto scrollbar-thin
+                transition-transform duration-300 ease-in-out
+                ${isMobile && !isAiDrawerOpen ? 'translate-x-full' : 'translate-x-0'}
+              `}>
+                {/* Close button for mobile */}
+                {isMobile && (
+                  <button
+                    onClick={() => setIsAiDrawerOpen(false)}
+                    className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 p-2 rounded-lg hover:bg-zinc-800 transition-colors"
+                    aria-label="Close AI editor"
+                  >
+                    ✕
+                  </button>
+                )}
+
+                <div>
+                  <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wide">AI Editor Agent</h3>
+                    <VoiceInput onResult={(text) => setInstruction(prev => prev ? prev + " " + text : text)} />
+                  </div>
+                  <div className="relative">
+                    <textarea
+                      ref={instructionTextareaRef}
+                      value={instruction}
+                      onChange={(e) => {
+                        const textarea = e.target as HTMLTextAreaElement;
+                        handleTextChange(e.target.value, 'instruction', textarea);
+                      }}
+                      onKeyDown={(e) => {
+                        if (showAutocomplete && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Escape')) {
+                          e.preventDefault();
+                          // Let autocomplete handle these keys
+                          return;
+                        }
+                      }}
+                      placeholder="E.g., 'Make @CharacterName's face-slapping more satisfying'... Use @ to reference entities."
+                      className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg p-3 text-sm text-zinc-300 h-24 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all leading-relaxed"
+                      aria-label="AI editing instructions"
+                    />
+                    {showAutocomplete && autocompleteTarget === 'instruction' && novelState && (
+                      <div className="reference-autocomplete-container">
+                        <ReferenceAutocomplete
+                          query={autocompleteQuery}
+                          state={novelState}
+                          position={autocompletePosition}
+                          onSelect={handleAutocompleteSelect}
+                          onClose={() => setShowAutocomplete(false)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    disabled={isAiEditing}
+                    onClick={handleAiEdit}
+                    className={`w-full mt-2 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${isAiEditing
+                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                      : 'bg-zinc-100 text-zinc-950 hover:bg-white hover:scale-105'
+                      }`}
+                    aria-label={isAiEditing ? 'AI is editing...' : 'Rewrite with AI'}
+                  >
+                    {isAiEditing ? (
+                      <span className="flex items-center justify-center">
+                        <span className="animate-spin rounded-full h-3 w-3 border-2 border-zinc-950/30 border-t-zinc-950 mr-2"></span>
+                        Refining Prose...
+                      </span>
+                    ) : (
+                      'Rewrite with AI'
+                    )}
+                  </button>
                 </div>
-                <div className="relative">
-                  <textarea
-                    ref={instructionTextareaRef}
-                    value={instruction}
-                    onChange={(e) => {
-                      const textarea = e.target as HTMLTextAreaElement;
-                      handleTextChange(e.target.value, 'instruction', textarea);
-                    }}
-                    onKeyDown={(e) => {
-                      if (showAutocomplete && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Escape')) {
-                        e.preventDefault();
-                        // Let autocomplete handle these keys
-                        return;
-                      }
-                    }}
-                    placeholder="E.g., 'Make @CharacterName's face-slapping more satisfying'... Use @ to reference entities."
-                    className="w-full bg-zinc-800/50 border border-zinc-700 rounded-lg p-3 text-sm text-zinc-300 h-24 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all leading-relaxed"
-                    aria-label="AI editing instructions"
+
+                <div className="p-4 bg-amber-600/10 border border-amber-600/20 rounded-lg">
+                  <h4 className="text-xs text-amber-500 font-bold uppercase mb-2">Writer Tip</h4>
+                  <p className="text-sm text-zinc-400 leading-relaxed italic">
+                    "The climax of a cultivation arc must feel like a mountain falling into the sea. Don't rush the breakthrough."
+                  </p>
+                </div>
+
+                <div className="text-xs text-zinc-500 font-semibold">
+                  Character count: {content.length.toLocaleString()} | Est. Words: {content.split(/\s+/).filter(x => x).length.toLocaleString()}
+                </div>
+                {novelState && (
+                  <RelatedEntities
+                    novelState={novelState}
+                    entityType="chapter"
+                    entityId={chapter.id}
+                    maxItems={8}
                   />
-                  {showAutocomplete && autocompleteTarget === 'instruction' && novelState && (
-                    <div className="reference-autocomplete-container">
-                      <ReferenceAutocomplete
-                        query={autocompleteQuery}
-                        state={novelState}
-                        position={autocompletePosition}
-                        onSelect={handleAutocompleteSelect}
-                        onClose={() => setShowAutocomplete(false)}
+                )}
+              </div>
+            </div>
+          )}
+
+
+          {/* Scenes Tab */}
+          {activeTab === 'scenes' && (
+            <ChapterScenesEditor
+              scenes={scenes}
+              onCreateScene={handleCreateScene}
+              onEditScene={setEditingScene}
+              onDeleteScene={handleDeleteScene}
+            />
+          )}
+
+          {/* Antagonists Tab */}
+          {activeTab === 'antagonists' && (
+            <ChapterAntagonistsEditor
+              chapterId={chapter.id}
+              novelState={novelState}
+              antagonists={chapterAntagonists}
+              isLoading={isLoadingAntagonists}
+              onRefresh={async () => {
+                if (!novelState) return;
+                setIsLoadingAntagonists(true);
+                try {
+                  const updated = await getAntagonistsForChapter(chapter.id);
+                  setChapterAntagonists(updated);
+                } catch (error) {
+                  // Safely log error
+                  try {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    console.error('Error refreshing antagonists:', errorMessage);
+                  } catch {
+                    console.error('Error refreshing antagonists (details unavailable)');
+                  }
+                } finally {
+                  setIsLoadingAntagonists(false);
+                }
+              }}
+              onAntagonistsChange={setChapterAntagonists}
+              onSuccess={showSuccess}
+              onError={showError}
+            />
+          )}
+
+          {/* Professional Editor Tab */}
+          {activeTab === 'professional' && (
+            <div className="flex-1 flex flex-col overflow-hidden" data-tour="professional-editor">
+              {/* Professional Editor Toolbar */}
+              <div className="px-4 md:px-6 py-3 border-b border-zinc-700 bg-zinc-900/40">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500">Edit Mode:</span>
+                    {(['normal', 'suggest', 'track'] as EditingMode[]).map(mode => (
+                      <button
+                        key={mode}
+                        onClick={() => setEditingMode(mode)}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${editingMode === mode
+                          ? 'bg-amber-600/30 text-amber-400 border border-amber-600/50'
+                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
+                          }`}
+                      >
+                        {mode === 'normal' ? 'Normal' : mode === 'suggest' ? 'Suggest' : 'Track Changes'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Tooltip content="Add comments to specific parts of your chapter. Select text and add notes for review." position="bottom" delay={200}>
+                      <button
+                        onClick={() => setShowComments(!showComments)}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${showComments
+                          ? 'bg-blue-600/30 text-blue-400 border border-blue-600/50'
+                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
+                          }`}
+                      >
+                        Comments ({comments.length})
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Review AI-generated suggestions for improvements. Accept or reject each suggestion individually." position="bottom" delay={200}>
+                      <button
+                        onClick={() => setShowSuggestions(!showSuggestions)}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${showSuggestions
+                          ? 'bg-green-600/30 text-green-400 border border-green-600/50'
+                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
+                          }`}
+                      >
+                        Suggestions ({suggestions.filter(s => s.status === 'pending').length})
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Highlight text with different categories (plot, character, world-building, etc.) for organization." position="bottom" delay={200}>
+                      <button
+                        onClick={() => setShowHighlights(!showHighlights)}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${showHighlights
+                          ? 'bg-yellow-600/30 text-yellow-400 border border-yellow-600/50'
+                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
+                          }`}
+                      >
+                        Highlights ({highlights.length})
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Check for style issues, grammar, consistency, and writing quality. Click to run analysis." position="bottom" delay={200}>
+                      <button
+                        onClick={handleRunStyleCheck}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${styleChecks.length > 0
+                          ? 'bg-orange-600/30 text-orange-400 border border-orange-600/50'
+                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
+                          }`}
+                      >
+                        Style Check ({styleChecks.length})
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Compare original version with current version to see all changes side-by-side." position="bottom" delay={200}>
+                      <button
+                        onClick={() => setShowComparison(!showComparison)}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${showComparison
+                          ? 'bg-purple-600/30 text-purple-400 border border-purple-600/50'
+                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
+                          }`}
+                      >
+                        Compare
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Run comprehensive quality review including narrative craft, originality, voice consistency, and editorial quality checks." position="bottom" delay={200}>
+                      <button
+                        onClick={() => {
+                          setShowQualityReview(!showQualityReview);
+                          if (!showQualityReview && !editorialReview) {
+                            runEditorialReview();
+                          }
+                        }}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${showQualityReview
+                          ? 'bg-amber-600/30 text-amber-400 border border-amber-600/50'
+                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
+                          }`}
+                      >
+                        Quality Review {editorialReview && `(${editorialReview.signals.length})`}
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 md:p-8 scrollbar-thin">
+                <div className="max-w-4xl mx-auto space-y-6">
+                  {showComments && (
+                    <div>
+                      <CommentPanel
+                        comments={comments}
+                        onAddComment={handleAddComment}
+                        onEditComment={async (id, text) => {
+                          try {
+                            const updated = await updateComment(id, { comment: text });
+                            setComments(prev => prev.map(c => c.id === id ? updated : c));
+                            showSuccess('Comment updated');
+                          } catch (error: any) {
+                            showError(error.message || 'Failed to update comment');
+                          }
+                        }}
+                        onDeleteComment={async (id) => {
+                          try {
+                            await deleteComment(id);
+                            setComments(prev => prev.filter(c => c.id !== id));
+                            showSuccess('Comment deleted');
+                          } catch (error: any) {
+                            showError(error.message || 'Failed to delete comment');
+                          }
+                        }}
+                        onResolveComment={async (id) => {
+                          try {
+                            const updated = await resolveComment(id);
+                            setComments(prev => prev.map(c => c.id === id ? updated : c));
+                          } catch (error: any) {
+                            showError(error.message || 'Failed to resolve comment');
+                          }
+                        }}
+                        onUnresolveComment={async (id) => {
+                          try {
+                            const updated = await unresolveComment(id);
+                            setComments(prev => prev.map(c => c.id === id ? updated : c));
+                          } catch (error: any) {
+                            showError(error.message || 'Failed to unresolve comment');
+                          }
+                        }}
+                        onJumpToComment={(comment) => {
+                          setActiveTab('content');
+                          setTimeout(() => {
+                            if (contentTextareaRef.current) {
+                              const textarea = contentTextareaRef.current;
+                              const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 20;
+                              const textBefore = content.substring(0, comment.textRange.start);
+                              const lines = textBefore.split('\n').length;
+                              textarea.scrollTop = (lines - 1) * lineHeight;
+                              textarea.setSelectionRange(comment.textRange.start, comment.textRange.end);
+                              textarea.focus();
+                            }
+                          }, 100);
+                        }}
                       />
                     </div>
                   )}
-                </div>
-                <button
-                  disabled={isAiEditing}
-                  onClick={handleAiEdit}
-                  className={`w-full mt-2 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
-                    isAiEditing 
-                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' 
-                      : 'bg-zinc-100 text-zinc-950 hover:bg-white hover:scale-105'
-                  }`}
-                  aria-label={isAiEditing ? 'AI is editing...' : 'Rewrite with AI'}
-                >
-                  {isAiEditing ? (
-                    <span className="flex items-center justify-center">
-                      <span className="animate-spin rounded-full h-3 w-3 border-2 border-zinc-950/30 border-t-zinc-950 mr-2"></span>
-                      Refining Prose...
-                    </span>
-                  ) : (
-                    'Rewrite with AI'
+
+                  {showSuggestions && (
+                    <div>
+                      <TrackChangesView
+                        suggestions={suggestions}
+                        onAccept={handleAcceptSuggestion}
+                        onReject={handleRejectSuggestion}
+                      />
+                    </div>
                   )}
-                </button>
-              </div>
 
-              <div className="p-4 bg-amber-600/10 border border-amber-600/20 rounded-lg">
-                <h4 className="text-xs text-amber-500 font-bold uppercase mb-2">Writer Tip</h4>
-                <p className="text-sm text-zinc-400 leading-relaxed italic">
-                  "The climax of a cultivation arc must feel like a mountain falling into the sea. Don't rush the breakthrough."
-                </p>
-              </div>
-
-              <div className="text-xs text-zinc-500 font-semibold">
-                Character count: {content.length.toLocaleString()} | Est. Words: {content.split(/\s+/).filter(x => x).length.toLocaleString()}
-              </div>
-              {novelState && (
-                <RelatedEntities
-                  novelState={novelState}
-                  entityType="chapter"
-                  entityId={chapter.id}
-                  maxItems={8}
-                />
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Scenes Tab */}
-        {activeTab === 'scenes' && (
-          <ChapterScenesEditor
-            scenes={scenes}
-            onCreateScene={handleCreateScene}
-            onEditScene={setEditingScene}
-            onDeleteScene={handleDeleteScene}
-          />
-        )}
-
-        {/* Antagonists Tab */}
-        {activeTab === 'antagonists' && (
-          <ChapterAntagonistsEditor
-            chapterId={chapter.id}
-            novelState={novelState}
-            antagonists={chapterAntagonists}
-            isLoading={isLoadingAntagonists}
-            onRefresh={async () => {
-              if (!novelState) return;
-              setIsLoadingAntagonists(true);
-              try {
-                const updated = await getAntagonistsForChapter(chapter.id);
-                setChapterAntagonists(updated);
-              } catch (error) {
-                // Safely log error
-                try {
-                  const errorMessage = error instanceof Error ? error.message : String(error);
-                  console.error('Error refreshing antagonists:', errorMessage);
-                } catch {
-                  console.error('Error refreshing antagonists (details unavailable)');
-                }
-              } finally {
-                setIsLoadingAntagonists(false);
-              }
-            }}
-            onAntagonistsChange={setChapterAntagonists}
-            onSuccess={showSuccess}
-            onError={showError}
-          />
-        )}
-
-        {/* Professional Editor Tab */}
-        {activeTab === 'professional' && (
-          <div className="flex-1 flex flex-col overflow-hidden" data-tour="professional-editor">
-            {/* Professional Editor Toolbar */}
-            <div className="px-4 md:px-6 py-3 border-b border-zinc-700 bg-zinc-900/40">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500">Edit Mode:</span>
-                  {(['normal', 'suggest', 'track'] as EditingMode[]).map(mode => (
-                    <button
-                      key={mode}
-                      onClick={() => setEditingMode(mode)}
-                      className={`px-3 py-1 text-xs rounded transition-colors ${
-                        editingMode === mode
-                          ? 'bg-amber-600/30 text-amber-400 border border-amber-600/50'
-                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
-                      }`}
-                    >
-                      {mode === 'normal' ? 'Normal' : mode === 'suggest' ? 'Suggest' : 'Track Changes'}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Tooltip content="Add comments to specific parts of your chapter. Select text and add notes for review." position="bottom" delay={200}>
-                    <button
-                      onClick={() => setShowComments(!showComments)}
-                      className={`px-3 py-1 text-xs rounded transition-colors ${
-                        showComments
-                          ? 'bg-blue-600/30 text-blue-400 border border-blue-600/50'
-                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
-                      }`}
-                    >
-                      Comments ({comments.length})
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="Review AI-generated suggestions for improvements. Accept or reject each suggestion individually." position="bottom" delay={200}>
-                    <button
-                      onClick={() => setShowSuggestions(!showSuggestions)}
-                      className={`px-3 py-1 text-xs rounded transition-colors ${
-                        showSuggestions
-                          ? 'bg-green-600/30 text-green-400 border border-green-600/50'
-                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
-                      }`}
-                    >
-                      Suggestions ({suggestions.filter(s => s.status === 'pending').length})
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="Highlight text with different categories (plot, character, world-building, etc.) for organization." position="bottom" delay={200}>
-                    <button
-                      onClick={() => setShowHighlights(!showHighlights)}
-                      className={`px-3 py-1 text-xs rounded transition-colors ${
-                        showHighlights
-                          ? 'bg-yellow-600/30 text-yellow-400 border border-yellow-600/50'
-                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
-                      }`}
-                    >
-                      Highlights ({highlights.length})
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="Check for style issues, grammar, consistency, and writing quality. Click to run analysis." position="bottom" delay={200}>
-                    <button
-                      onClick={handleRunStyleCheck}
-                      className={`px-3 py-1 text-xs rounded transition-colors ${
-                        styleChecks.length > 0
-                          ? 'bg-orange-600/30 text-orange-400 border border-orange-600/50'
-                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
-                      }`}
-                    >
-                      Style Check ({styleChecks.length})
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="Compare original version with current version to see all changes side-by-side." position="bottom" delay={200}>
-                    <button
-                      onClick={() => setShowComparison(!showComparison)}
-                      className={`px-3 py-1 text-xs rounded transition-colors ${
-                        showComparison
-                          ? 'bg-purple-600/30 text-purple-400 border border-purple-600/50'
-                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
-                      }`}
-                    >
-                      Compare
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="Run comprehensive quality review including narrative craft, originality, voice consistency, and editorial quality checks." position="bottom" delay={200}>
-                    <button
-                      onClick={() => {
-                        setShowQualityReview(!showQualityReview);
-                        if (!showQualityReview && !editorialReview) {
-                          runEditorialReview();
-                        }
-                      }}
-                      className={`px-3 py-1 text-xs rounded transition-colors ${
-                        showQualityReview
-                          ? 'bg-amber-600/30 text-amber-400 border border-amber-600/50'
-                          : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 border border-zinc-700'
-                      }`}
-                    >
-                      Quality Review {editorialReview && `(${editorialReview.signals.length})`}
-                    </button>
-                  </Tooltip>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 md:p-8 scrollbar-thin">
-              <div className="max-w-4xl mx-auto space-y-6">
-                {showComments && (
-                  <div>
-                    <CommentPanel
-                      comments={comments}
-                      onAddComment={handleAddComment}
-                      onEditComment={async (id, text) => {
-                        try {
-                          const updated = await updateComment(id, { comment: text });
-                          setComments(prev => prev.map(c => c.id === id ? updated : c));
-                          showSuccess('Comment updated');
-                        } catch (error: any) {
-                          showError(error.message || 'Failed to update comment');
-                        }
-                      }}
-                      onDeleteComment={async (id) => {
-                        try {
-                          await deleteComment(id);
-                          setComments(prev => prev.filter(c => c.id !== id));
-                          showSuccess('Comment deleted');
-                        } catch (error: any) {
-                          showError(error.message || 'Failed to delete comment');
-                        }
-                      }}
-                      onResolveComment={async (id) => {
-                        try {
-                          const updated = await resolveComment(id);
-                          setComments(prev => prev.map(c => c.id === id ? updated : c));
-                        } catch (error: any) {
-                          showError(error.message || 'Failed to resolve comment');
-                        }
-                      }}
-                      onUnresolveComment={async (id) => {
-                        try {
-                          const updated = await unresolveComment(id);
-                          setComments(prev => prev.map(c => c.id === id ? updated : c));
-                        } catch (error: any) {
-                          showError(error.message || 'Failed to unresolve comment');
-                        }
-                      }}
-                      onJumpToComment={(comment) => {
-                        setActiveTab('content');
-                        setTimeout(() => {
-                          if (contentTextareaRef.current) {
-                            const textarea = contentTextareaRef.current;
-                            const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 20;
-                            const textBefore = content.substring(0, comment.textRange.start);
-                            const lines = textBefore.split('\n').length;
-                            textarea.scrollTop = (lines - 1) * lineHeight;
-                            textarea.setSelectionRange(comment.textRange.start, comment.textRange.end);
-                            textarea.focus();
+                  {showHighlights && selectedRange && (
+                    <div>
+                      <HighlightToolbar
+                        selectedText={selectedText}
+                        selectedRange={selectedRange}
+                        highlights={highlights}
+                        onHighlight={handleHighlight}
+                        onRemoveHighlight={async (id) => {
+                          try {
+                            await deleteHighlight(id);
+                            setHighlights(prev => prev.filter(h => h.id !== id));
+                            showSuccess('Highlight removed');
+                          } catch (error: any) {
+                            showError(error.message || 'Failed to remove highlight');
                           }
-                        }, 100);
-                      }}
-                    />
-                  </div>
-                )}
+                        }}
+                      />
+                    </div>
+                  )}
 
-                {showSuggestions && (
-                  <div>
-                    <TrackChangesView
-                      suggestions={suggestions}
-                      onAccept={handleAcceptSuggestion}
-                      onReject={handleRejectSuggestion}
-                    />
-                  </div>
-                )}
+                  {showStyleChecks && styleChecks.length > 0 && (
+                    <div>
+                      <StyleCheckPanel
+                        checks={styleChecks}
+                        onJumpToIssue={(check) => {
+                          setActiveTab('content');
+                          setTimeout(() => {
+                            if (contentTextareaRef.current) {
+                              const textarea = contentTextareaRef.current;
+                              textarea.setSelectionRange(check.location.start, check.location.end);
+                              textarea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              textarea.focus();
+                            }
+                          }, 100);
+                        }}
+                      />
+                    </div>
+                  )}
 
-                {showHighlights && selectedRange && (
-                  <div>
-                    <HighlightToolbar
-                      selectedText={selectedText}
-                      selectedRange={selectedRange}
-                      highlights={highlights}
-                      onHighlight={handleHighlight}
-                      onRemoveHighlight={async (id) => {
-                        try {
-                          await deleteHighlight(id);
-                          setHighlights(prev => prev.filter(h => h.id !== id));
-                          showSuccess('Highlight removed');
-                        } catch (error: any) {
-                          showError(error.message || 'Failed to remove highlight');
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-
-                {showStyleChecks && styleChecks.length > 0 && (
-                  <div>
-                    <StyleCheckPanel
-                      checks={styleChecks}
-                      onJumpToIssue={(check) => {
-                        setActiveTab('content');
-                        setTimeout(() => {
-                          if (contentTextareaRef.current) {
+                  {showQualityReview && (
+                    <div>
+                      <EditorialReviewPanel
+                        review={editorialReview}
+                        isLoading={isReviewLoading}
+                        onRecheck={() => runEditorialReview()}
+                        onJumpToLocation={(signal) => {
+                          if (signal.location && contentTextareaRef.current) {
                             const textarea = contentTextareaRef.current;
-                            textarea.setSelectionRange(check.location.start, check.location.end);
+                            textarea.setSelectionRange(signal.location.start, signal.location.end);
                             textarea.scrollIntoView({ behavior: 'smooth', block: 'center' });
                             textarea.focus();
                           }
-                        }, 100);
-                      }}
-                    />
-                  </div>
-                )}
+                        }}
+                        onDismissSignal={(signalId) => {
+                          // Signal dismissed - could store in state if needed
+                          console.log('Signal dismissed:', signalId);
+                        }}
+                      />
+                    </div>
+                  )}
 
-                {showQualityReview && (
-                  <div>
-                    <EditorialReviewPanel
-                      review={editorialReview}
-                      isLoading={isReviewLoading}
-                      onRecheck={() => runEditorialReview()}
-                      onJumpToLocation={(signal) => {
-                        if (signal.location && contentTextareaRef.current) {
-                          const textarea = contentTextareaRef.current;
-                          textarea.setSelectionRange(signal.location.start, signal.location.end);
-                          textarea.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          textarea.focus();
-                        }
-                      }}
-                      onDismissSignal={(signalId) => {
-                        // Signal dismissed - could store in state if needed
-                        console.log('Signal dismissed:', signalId);
-                      }}
-                    />
-                  </div>
-                )}
+                  {!showComments && !showSuggestions && !showHighlights && !showStyleChecks && !showQualityReview && (
+                    <div className="py-12 text-center bg-zinc-900/50 border border-dashed border-zinc-700 rounded-2xl">
+                      <p className="text-sm text-zinc-500 italic">Select a feature from the toolbar above to get started.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
-                {!showComments && !showSuggestions && !showHighlights && !showStyleChecks && !showQualityReview && (
-                  <div className="py-12 text-center bg-zinc-900/50 border border-dashed border-zinc-700 rounded-2xl">
-                    <p className="text-sm text-zinc-500 italic">Select a feature from the toolbar above to get started.</p>
-                  </div>
-                )}
+          {/* History Tab - Opens modal */}
+          {activeTab === 'history' && (
+            <div className="flex-1 overflow-y-auto p-6 md:p-8 scrollbar-thin flex items-center justify-center">
+              <div className="text-center max-w-md">
+                <div className="text-4xl mb-3">📜</div>
+                <h3 className="text-xl font-fantasy font-bold text-zinc-300 mb-2">Revision History</h3>
+                <p className="text-sm text-zinc-500 mb-6">Click the History button in the header to view revision history.</p>
+                <button
+                  onClick={() => setShowHistory(true)}
+                  className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-3 rounded-lg text-sm font-semibold transition-all duration-200 hover:scale-105"
+                >
+                  Open History
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {editingScene && (
+          <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50">
+            <SceneEditor
+              scene={editingScene}
+              novelState={novelState}
+              onSave={handleSaveScene}
+              onClose={() => setEditingScene(null)}
+            />
+          </div>
+        )}
+
+        {confirmDeleteScene && (
+          <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center z-[60] p-4">
+            <div className="bg-zinc-900 border border-red-500/50 p-6 rounded-2xl w-full max-w-md">
+              <h3 className="text-xl font-fantasy font-bold text-red-400 mb-4">Delete Scene</h3>
+              <p className="text-zinc-300 mb-6">Delete this scene? This action cannot be undone.</p>
+              <div className="flex justify-end space-x-4">
+                <button
+                  onClick={() => setConfirmDeleteScene(null)}
+                  className="px-6 py-2.5 text-zinc-400 font-semibold hover:text-zinc-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteSceneAction}
+                  className="px-8 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105"
+                >
+                  Delete
+                </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* History Tab - Opens modal */}
-        {activeTab === 'history' && (
-          <div className="flex-1 overflow-y-auto p-6 md:p-8 scrollbar-thin flex items-center justify-center">
-            <div className="text-center max-w-md">
-              <div className="text-4xl mb-3">📜</div>
-              <h3 className="text-xl font-fantasy font-bold text-zinc-300 mb-2">Revision History</h3>
-              <p className="text-sm text-zinc-500 mb-6">Click the History button in the header to view revision history.</p>
-              <button
-                onClick={() => setShowHistory(true)}
-                className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-3 rounded-lg text-sm font-semibold transition-all duration-200 hover:scale-105"
-              >
-                Open History
-              </button>
+
+        {showHistory && (
+          <RevisionHistory
+            entityType="chapter"
+            entityId={chapter.id}
+            onRestore={(revision) => {
+              handleRestoreRevision(revision);
+              setShowHistory(false);
+              setActiveTab('content');
+            }}
+            onClose={() => {
+              setShowHistory(false);
+              setActiveTab('content');
+            }}
+          />
+        )}
+
+        {showComparison && (
+          <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
+              <div className="p-4 border-b border-zinc-700 flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-zinc-300">Compare Versions</h3>
+                <button
+                  onClick={() => setShowComparison(false)}
+                  className="text-zinc-400 hover:text-zinc-200 transition-colors"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                <ComparisonView
+                  originalText={originalContent}
+                  editedText={content}
+                  suggestions={suggestions}
+                  onAccept={handleAcceptSuggestion}
+                  onReject={handleRejectSuggestion}
+                />
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {editingScene && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50">
-          <SceneEditor
-            scene={editingScene}
-            novelState={novelState}
-            onSave={handleSaveScene}
-            onClose={() => setEditingScene(null)}
-          />
-        </div>
-      )}
-
-      {confirmDeleteScene && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center z-[60] p-4">
-          <div className="bg-zinc-900 border border-red-500/50 p-6 rounded-2xl w-full max-w-md">
-            <h3 className="text-xl font-fantasy font-bold text-red-400 mb-4">Delete Scene</h3>
-            <p className="text-zinc-300 mb-6">Delete this scene? This action cannot be undone.</p>
-            <div className="flex justify-end space-x-4">
-              <button
-                onClick={() => setConfirmDeleteScene(null)}
-                className="px-6 py-2.5 text-zinc-400 font-semibold hover:text-zinc-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteSceneAction}
-                className="px-8 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-xl font-semibold transition-all duration-200 hover:scale-105"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-      {showHistory && (
-        <RevisionHistory
-          entityType="chapter"
-          entityId={chapter.id}
-          onRestore={(revision) => {
-            handleRestoreRevision(revision);
-            setShowHistory(false);
-            setActiveTab('content');
-          }}
-          onClose={() => {
-            setShowHistory(false);
-            setActiveTab('content');
-          }}
-        />
-      )}
-
-      {showComparison && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-zinc-700 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-zinc-300">Compare Versions</h3>
-              <button
-                onClick={() => setShowComparison(false)}
-                className="text-zinc-400 hover:text-zinc-200 transition-colors"
-              >
-                ×
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto p-4">
-              <ComparisonView
-                originalText={originalContent}
-                editedText={content}
-                suggestions={suggestions}
-                onAccept={handleAcceptSuggestion}
-                onReject={handleRejectSuggestion}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-
-    <PromptDialog
-      isOpen={showCommentPrompt}
-      title="Add Comment"
-      message="Enter your comment:"
-      placeholder="Comment text..."
-      confirmText="Add Comment"
-      onConfirm={confirmAddComment}
-      onCancel={() => setShowCommentPrompt(false)}
-      variant="info"
-    />
+      <PromptDialog
+        isOpen={showCommentPrompt}
+        title="Add Comment"
+        message="Enter your comment:"
+        placeholder="Comment text..."
+        confirmText="Add Comment"
+        onConfirm={confirmAddComment}
+        onCancel={() => setShowCommentPrompt(false)}
+        variant="info"
+      />
     </>
   );
 };

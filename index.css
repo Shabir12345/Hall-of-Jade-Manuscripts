@@ -10,13 +10,20 @@ html {
 /* CSS Custom Properties for spacing system (4px base unit) */
 :root {
   --spacing-unit: 4px;
-  --spacing-xs: calc(var(--spacing-unit) * 1);   /* 4px */
-  --spacing-sm: calc(var(--spacing-unit) * 2);   /* 8px */
-  --spacing-md: calc(var(--spacing-unit) * 4);   /* 16px */
-  --spacing-lg: calc(var(--spacing-unit) * 6);   /* 24px */
-  --spacing-xl: calc(var(--spacing-unit) * 8);   /* 32px */
-  --spacing-2xl: calc(var(--spacing-unit) * 12); /* 48px */
-  --spacing-3xl: calc(var(--spacing-unit) * 16); /* 64px */
+  --spacing-xs: calc(var(--spacing-unit) * 1);
+  /* 4px */
+  --spacing-sm: calc(var(--spacing-unit) * 2);
+  /* 8px */
+  --spacing-md: calc(var(--spacing-unit) * 4);
+  /* 16px */
+  --spacing-lg: calc(var(--spacing-unit) * 6);
+  /* 24px */
+  --spacing-xl: calc(var(--spacing-unit) * 8);
+  /* 32px */
+  --spacing-2xl: calc(var(--spacing-unit) * 12);
+  /* 48px */
+  --spacing-3xl: calc(var(--spacing-unit) * 16);
+  /* 64px */
 }
 
 /* Custom scrollbar styles */
@@ -78,37 +85,53 @@ html {
 }
 
 /* Smooth transitions for interactive elements */
-button, a, input, textarea, select {
+button,
+a,
+input,
+textarea,
+select {
   transition-property: color, background-color, border-color, transform, box-shadow;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 200ms;
 }
 
 /* Prevent text overflow and improve readability */
-h1, h2, h3, h4, h5, h6, p {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
 /* Improve spacing for better visual hierarchy */
-.space-y-6 > * + * {
+.space-y-6>*+* {
   margin-top: 1.5rem;
 }
 
-.space-y-8 > * + * {
+.space-y-8>*+* {
   margin-top: 2rem;
 }
 
 /* Better button spacing - normalized sizing */
 button {
-  min-height: 2.25rem; /* Reduced from 2.5rem (36px) */
-  font-size: 0.875rem; /* 14px base */
+  min-height: 2.25rem;
+  /* Reduced from 2.5rem (36px) */
+  font-size: 0.875rem;
+  /* 14px base */
 }
 
 /* Improve form element spacing - normalized sizing */
-input, textarea, select {
-  padding: 0.5rem 0.75rem; /* Reduced from 0.75rem 1rem */
-  font-size: 0.875rem; /* 14px base */
+input,
+textarea,
+select {
+  padding: 0.5rem 0.75rem;
+  /* Reduced from 0.75rem 1rem */
+  font-size: 0.875rem;
+  /* 14px base */
 }
 
 /* Better focus states */
@@ -127,11 +150,13 @@ img {
 /* Better line height for readability */
 body {
   line-height: 1.6;
-  font-size: 1rem; /* Explicit rem-based sizing */
+  font-size: 1rem;
+  /* Explicit rem-based sizing */
 }
 
 /* Improve card spacing */
-.bg-zinc-900, .bg-zinc-800 {
+.bg-zinc-900,
+.bg-zinc-800 {
   padding: 1.5rem;
 }
 
@@ -217,8 +242,11 @@ a:hover {
 }
 
 @media (min-width: 768px) {
-  .bg-zinc-900, .bg-zinc-800 {
-    padding: 1.25rem; /* Reduced from 2rem */
+
+  .bg-zinc-900,
+  .bg-zinc-800 {
+    padding: 1.25rem;
+    /* Reduced from 2rem */
   }
 }
 
@@ -227,16 +255,20 @@ a:hover {
   0% {
     transform: translateX(-100%) skewX(-20deg);
   }
+
   100% {
     transform: translateX(200%) skewX(-20deg);
   }
 }
 
 @keyframes pulse-glow {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.4;
     box-shadow: 0 0 10px rgba(245, 158, 11, 0.3), 0 0 20px rgba(245, 158, 11, 0.2);
   }
+
   50% {
     opacity: 0.8;
     box-shadow: 0 0 15px rgba(245, 158, 11, 0.5), 0 0 30px rgba(245, 158, 11, 0.3), 0 0 40px rgba(245, 158, 11, 0.2);
@@ -248,12 +280,15 @@ a:hover {
     transform: translateX(0) translateY(0) scale(0.8);
     opacity: 0;
   }
+
   20% {
     opacity: 1;
   }
+
   80% {
     opacity: 1;
   }
+
   100% {
     transform: translateX(100px) translateY(-20px) scale(1.2);
     opacity: 0;
@@ -261,10 +296,13 @@ a:hover {
 }
 
 @keyframes milestone-pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
     opacity: 0.6;
   }
+
   50% {
     transform: scale(1.3);
     opacity: 1;
@@ -272,9 +310,12 @@ a:hover {
 }
 
 @keyframes gradient-shift {
-  0%, 100% {
+
+  0%,
+  100% {
     background-position: 0% 50%;
   }
+
   50% {
     background-position: 100% 50%;
   }
@@ -302,7 +343,8 @@ a:hover {
    ======================================== */
 
 /* Prevent horizontal scroll on all devices */
-html, body {
+html,
+body {
   overflow-x: hidden;
   max-width: 100vw;
 }
@@ -312,15 +354,19 @@ html, body {
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom);
   }
+
   .safe-top {
     padding-top: env(safe-area-inset-top);
   }
+
   .safe-left {
     padding-left: env(safe-area-inset-left);
   }
+
   .safe-right {
     padding-right: env(safe-area-inset-right);
   }
+
   .safe-all {
     padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
@@ -331,6 +377,7 @@ html, body {
 
 /* Touch-friendly tap targets for touch devices */
 @media (pointer: coarse) {
+
   button:not(.compact-btn),
   a[role="button"]:not(.compact-btn),
   [role="button"]:not(.compact-btn),
@@ -339,13 +386,14 @@ html, body {
     min-height: 44px;
     min-width: 44px;
   }
-  
+
   /* Larger form inputs on touch devices */
   input:not([type="checkbox"]):not([type="radio"]),
   textarea,
   select {
     min-height: 44px;
-    font-size: 16px; /* Prevents iOS zoom on focus */
+    font-size: 16px;
+    /* Prevents iOS zoom on focus */
   }
 }
 
@@ -411,6 +459,7 @@ html, body {
   .hide-mobile {
     display: block;
   }
+
   .show-mobile-only {
     display: none;
   }
@@ -436,11 +485,13 @@ html, body {
 
 /* Sidebar collapsed state utilities */
 .sidebar-collapsed {
-  width: 4.5rem; /* 72px - icons only */
+  width: 4.5rem;
+  /* 72px - icons only */
 }
 
 .sidebar-expanded {
-  width: 16rem; /* 256px - full width */
+  width: 16rem;
+  /* 256px - full width */
 }
 
 /* Smooth sidebar transition */
@@ -473,15 +524,17 @@ html, body {
 
 /* Mobile card adjustments */
 @media (max-width: 639px) {
-  .bg-zinc-900, .bg-zinc-800 {
+
+  .bg-zinc-900,
+  .bg-zinc-800 {
     padding: 1rem;
   }
-  
+
   /* Reduce border radius on very small screens */
   .rounded-2xl {
     border-radius: 1rem;
   }
-  
+
   .rounded-xl {
     border-radius: 0.75rem;
   }
@@ -512,7 +565,8 @@ html, body {
 /* Ensure modals don't overflow on small screens */
 .modal-responsive {
   max-height: calc(100vh - 2rem);
-  max-height: calc(100dvh - 2rem); /* Dynamic viewport height for mobile */
+  max-height: calc(100dvh - 2rem);
+  /* Dynamic viewport height for mobile */
   overflow-y: auto;
 }
 
@@ -548,4 +602,100 @@ html, body {
     bottom: 2rem;
     right: 2rem;
   }
+}
+
+/* ========================================
+   MOBILE CHAPTER EDITOR OPTIMIZATIONS
+   ======================================== */
+
+/* FAB button for AI drawer toggle */
+.fab-button {
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%);
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 200ms ease-in-out;
+}
+
+.fab-button:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 16px rgba(217, 119, 6, 0.4);
+}
+
+.fab-button:active {
+  transform: scale(0.95);
+}
+
+/* Mobile drawer animations */
+.drawer-slide-enter {
+  transform: translateX(100%);
+}
+
+.drawer-slide-enter-active {
+  transform: translateX(0);
+  transition: transform 300ms ease-in-out;
+}
+
+.drawer-slide-exit {
+  transform: translateX(0);
+}
+
+.drawer-slide-exit-active {
+  transform: translateX(100%);
+  transition: transform 300ms ease-in-out;
+}
+
+/* Header auto-hide animations */
+.header-hidden {
+  transform: translateY(-100%);
+  transition: transform 300ms ease-in-out;
+}
+
+.header-visible {
+  transform: translateY(0);
+  transition: transform 300ms ease-in-out;
+}
+
+/* Mobile content optimization */
+@media (max-width: 768px) {
+  .chapter-content-mobile {
+    height: calc(100vh - var(--header-height, 120px));
+    height: calc(100dvh - var(--header-height, 120px));
+  }
+
+  .chapter-editor-container {
+    padding: 0.5rem;
+  }
+
+  /* Ensure proper touch scrolling */
+  .chapter-editor-textarea {
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+}
+
+/* Smooth backdrop fade */
+.backdrop-fade-enter {
+  opacity: 0;
+}
+
+.backdrop-fade-enter-active {
+  opacity: 1;
+  transition: opacity 200ms ease-in-out;
+}
+
+.backdrop-fade-exit {
+  opacity: 1;
+}
+
+.backdrop-fade-exit-active {
+  opacity: 0;
+  transition: opacity 200ms ease-in-out;
 }

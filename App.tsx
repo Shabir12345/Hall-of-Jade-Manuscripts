@@ -926,11 +926,9 @@ const App: React.FC = () => {
               'new': 'new',
               'location': 'location',
               'cultivation_progress': 'cultivation',
-              'cultivation': 'cultivation',
               'cultivationlevel': 'cultivation',
               'cultivation_level': 'cultivation',
               'realm': 'cultivation',
-              'power': 'cultivation',
               'strength': 'cultivation',
               'possession': 'notes',
               'possesses': 'notes',
@@ -4148,8 +4146,8 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                         disabled={isGenerating}
                         onClick={() => handleGenerateNext()}
                         className={`py-3 md:py-4 rounded-xl font-fantasy text-base md:text-lg font-semibold transition-all duration-200 ${isGenerating
-                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                            : 'bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 hover:scale-105 text-white shadow-lg shadow-amber-900/30'
+                          ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 hover:scale-105 text-white shadow-lg shadow-amber-900/30'
                           }`}
                         aria-label={isGenerating ? 'Generating chapter...' : 'Generate next chapter'}
                       >
@@ -4505,8 +4503,8 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                 <button
                   onClick={handleToggleEconomyPanel}
                   className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 whitespace-nowrap ${showEconomyPanel
-                      ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/30'
-                      : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700 hover:text-zinc-300'
+                    ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/30'
+                    : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700 hover:text-zinc-300'
                     }`}
                   title="Toggle Spirit Stone Market (Economic Simulation)"
                   aria-label="Toggle Economy Panel"
