@@ -25,15 +25,19 @@ interface CacheEntry<T> {
 /**
  * Query Cache Class
  * 
- * Provides in-memory caching with TTL support.
+ * OPTIMIZED: Enhanced in-memory caching with TTL support and LRU eviction
  * Cache entries are automatically expired based on their TTL.
  */
 class QueryCache {
   private cache = new Map<string, CacheEntry<unknown>>();
   private defaultTTL = 60000; // 1 minute default TTL
+  private maxCacheSize = 1000; // OPTIMIZED: Increased cache size limit
+  private accessOrder = new Map<string, number>(); // Track access for LRU
+  private accessCounter = 0; // Counter for LRU tracking
 
   /**
    * Get cached data by key
+   * OPTIMIZED: Added LRU access tracking
    * 
    * @param key - Cache key
    * @returns Cached data if found and not expired, null otherwise
@@ -49,14 +53,19 @@ class QueryCache {
     const now = Date.now();
     if (now - entry.timestamp > entry.ttl) {
       this.cache.delete(key);
+      this.accessOrder.delete(key);
       return null;
     }
+
+    // Update access order for LRU
+    this.accessOrder.set(key, ++this.accessCounter);
 
     return entry.data as T;
   }
 
   /**
    * Set cached data with optional TTL
+   * OPTIMIZED: Added LRU eviction when cache is full
    * 
    * @param key - Cache key
    * @param data - Data to cache
@@ -64,15 +73,39 @@ class QueryCache {
    * @template T - Type of data to cache
    */
   set<T>(key: string, data: T, ttl = this.defaultTTL): void {
+    // Evict oldest entries if cache is full
+    if (this.cache.size >= this.maxCacheSize) {
+      this.evictOldestEntries();
+    }
+
     this.cache.set(key, {
       data,
       timestamp: Date.now(),
       ttl,
     });
+
+    // Update access order
+    this.accessOrder.set(key, ++this.accessCounter);
+  }
+
+  /**
+   * Evict oldest entries to make room for new ones (LRU eviction)
+   */
+  private evictOldestEntries(): void {
+    const entriesToEvict = Math.floor(this.maxCacheSize * 0.2); // Evict 20% of cache
+    const sortedEntries = Array.from(this.accessOrder.entries())
+      .sort(([, a], [, b]) => a - b);
+
+    for (let i = 0; i < entriesToEvict && i < sortedEntries.length; i++) {
+      const [key] = sortedEntries[i];
+      this.cache.delete(key);
+      this.accessOrder.delete(key);
+    }
   }
 
   /**
    * Invalidate cache entries
+   * OPTIMIZED: Also clear access order tracking
    * 
    * @param pattern - Optional pattern to match keys. If provided, only keys
    *                  containing this pattern will be invalidated. If not provided,
@@ -81,6 +114,7 @@ class QueryCache {
   invalidate(pattern?: string): void {
     if (!pattern) {
       this.cache.clear();
+      this.accessOrder.clear();
       return;
     }
 
@@ -94,6 +128,7 @@ class QueryCache {
 
     keysToDelete.forEach((key) => {
       this.cache.delete(key);
+      this.accessOrder.delete(key);
     });
   }
 

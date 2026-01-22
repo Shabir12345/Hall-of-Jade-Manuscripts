@@ -13,16 +13,16 @@ interface PromptCacheDashboardProps {
 
 export const PromptCacheDashboard: React.FC<PromptCacheDashboardProps> = ({ className = '' }) => {
   const [stats, setStats] = React.useState<CacheStatistics | null>(null);
-  const [grokStats, setGrokStats] = React.useState<CacheStatistics | null>(null);
+  const [deepseekStats, setDeepseekStats] = React.useState<CacheStatistics | null>(null);
 
   // Update stats every 5 seconds
   React.useEffect(() => {
     const updateStats = () => {
       const allStats = getCacheStatistics();
-      const grok = getCacheStatistics('grok');
-      
+      const deepseek = getCacheStatistics('deepseek');
+
       setStats(allStats);
-      setGrokStats(grok);
+      setDeepseekStats(deepseek);
     };
 
     updateStats();
@@ -58,7 +58,7 @@ export const PromptCacheDashboard: React.FC<PromptCacheDashboardProps> = ({ clas
   return (
     <div className={`bg-white dark:bg-gray-800 rounded-lg shadow p-6 ${className}`}>
       <h2 className="text-xl font-semibold mb-4">Prompt Cache Performance</h2>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         {/* Overall Statistics */}
         <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
@@ -148,25 +148,25 @@ export const PromptCacheDashboard: React.FC<PromptCacheDashboardProps> = ({ clas
 
       {/* Provider-Specific Statistics */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Grok Statistics */}
-        {grokStats && grokStats.totalRequests > 0 && (
+        {/* DeepSeek Statistics */}
+        {deepseekStats && deepseekStats.totalRequests > 0 && (
           <div className="bg-gray-50 dark:bg-gray-700/30 p-4 rounded-lg">
             <h3 className="text-sm font-medium text-gray-900 dark:text-gray-200 mb-2">
-              Grok (XAI)
+              DeepSeek-V3
             </h3>
             <div className="space-y-1 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">Hit Rate:</span>
-                <span className="font-semibold">{grokStats.hitRate.toFixed(1)}%</span>
+                <span className="font-semibold">{deepseekStats.hitRate.toFixed(1)}%</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">Requests:</span>
-                <span>{formatNumber(grokStats.totalRequests)}</span>
+                <span>{formatNumber(deepseekStats.totalRequests)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">Savings:</span>
                 <span className="text-green-600 dark:text-green-400">
-                  {formatCurrency(grokStats.estimatedSavings.dollars)}
+                  {formatCurrency(deepseekStats.estimatedSavings.dollars)}
                 </span>
               </div>
             </div>
@@ -179,7 +179,7 @@ export const PromptCacheDashboard: React.FC<PromptCacheDashboardProps> = ({ clas
         <p className="text-xs text-gray-500 dark:text-gray-400">
           Prompt caching reduces API costs by reusing World State and Previous Chapters context (~75% savings on cached tokens).
           <br />
-          Grok: Automatic prefix caching with implicit caching for repeated context.
+          DeepSeek: Explicit context caching for repeated narrative state.
         </p>
       </div>
     </div>

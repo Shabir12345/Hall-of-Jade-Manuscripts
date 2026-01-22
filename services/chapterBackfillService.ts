@@ -143,6 +143,8 @@ export async function mergeExtractedData(
         const existingChar = mergedCharacters[idx];
         const set = u?.set || {};
         
+        console.log(`[Backfill] Updating existing character "${name}" with:`, Object.keys(set));
+        
         const updatedChar: Character = {
           ...existingChar,
           age: typeof set.age === 'string' && set.age.trim() ? set.age : existingChar.age,
@@ -267,6 +269,7 @@ export async function mergeExtractedData(
         }
       } else if (u?.name) {
         // Create new character
+        console.log(`[Backfill] Creating new character "${u.name}"`);
         const newChar: Character = {
           id: generateUUID(),
           name: String(u.name),
@@ -801,6 +804,15 @@ export async function mergeExtractedData(
     c.id === chapter.id ? updatedChapter : c
   );
 
+  console.log(`[Backfill] Merge complete for chapter ${chapter.number}. Final state:`, {
+    totalCharacters: mergedCharacters.length,
+    newCharacters: mergedCharacters.length - updatedState.characterCodex.length,
+    totalItems: items.length,
+    totalTechniques: techniques.length,
+    totalWorldBible: mergedWorldBible.length,
+    totalTerritories: mergedTerritories.length
+  });
+
   return {
     ...updatedState,
     characterCodex: mergedCharacters,
@@ -900,6 +912,11 @@ export async function backfillAllChapters(
   if (processed > 0 && errors.length < sortedChapters.length) {
     try {
       onLog?.(`Saving updated novel state...`);
+      console.log(`[Backfill] Final save. State before save:`, {
+        characterCount: currentState.characterCodex.length,
+        itemCount: currentState.novelItems?.length || 0,
+        techniqueCount: currentState.novelTechniques?.length || 0
+      });
       await saveNovel(currentState);
       onLog?.(`✅ Novel state saved successfully`);
     } catch (error) {
@@ -908,6 +925,13 @@ export async function backfillAllChapters(
       logger.error('Failed to save novel state after backfill', 'backfill', error instanceof Error ? error : new Error(errorMessage));
     }
   }
+
+  console.log(`[Backfill] Operation complete. Returning:`, {
+    success: errors.length === 0,
+    processed,
+    errorCount: errors.length,
+    hasUpdatedState: !!currentState
+  });
 
   return {
     success: errors.length === 0,

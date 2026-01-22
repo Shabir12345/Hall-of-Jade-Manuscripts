@@ -14,6 +14,10 @@ const CACHE_COSTS = {
     inputRegular: 0.20, // $0.20 per 1M input tokens (Grok)
     inputCacheRead: 0.05, // ~75% savings (implicit prefix caching)
   },
+  deepseek: {
+    inputRegular: 0.14, // $0.14 per 1M input tokens (DeepSeek-V3)
+    inputCacheRead: 0.01, // $0.01 per 1M tokens (Cache Hit)
+  },
 };
 
 /**
@@ -40,9 +44,9 @@ export function recordCacheHit(
     timestamp: Date.now(),
     isHit: true,
   };
-  
+
   addRecord(record);
-  
+
   // Log cache hit
   console.log(`[Cache] ${provider} HIT: ${cachedTokens} tokens cached (${cachedTokens} / ${totalTokens} = ${((cachedTokens / totalTokens) * 100).toFixed(1)}%)`);
 }
@@ -63,9 +67,9 @@ export function recordCacheMiss(
     timestamp: Date.now(),
     isHit: false,
   };
-  
+
   addRecord(record);
-  
+
   // Log cache miss
   console.log(`[Cache] ${provider} MISS: ${totalTokens} tokens (cache key: ${cacheKey.substring(0, 50)}...)`);
 }
@@ -75,7 +79,7 @@ export function recordCacheMiss(
  */
 function addRecord(record: CacheRecord): void {
   cacheRecords.push(record);
-  
+
   // Keep only the most recent records
   if (cacheRecords.length > MAX_RECORDS) {
     cacheRecords.shift();
@@ -90,19 +94,19 @@ export function calculateSavings(hits: number, misses: number, provider: CachePr
   // This is approximate - in practice we'd track actual token counts
   const avgCachedTokens = 50000; // Average ~50k tokens of cacheable content
   const avgTotalTokens = 70000; // Average ~70k total tokens
-  
+
   const totalCachedTokens = hits * avgCachedTokens;
   const totalTokens = (hits + misses) * avgTotalTokens;
-  
+
   // Calculate costs
   const costs = CACHE_COSTS[provider];
   const inputCostWithoutCache = (totalTokens / 1_000_000) * costs.inputRegular;
-  
+
   // Grok: implicit prefix caching with ~75% savings on cached tokens
   const cacheReadCost = (totalCachedTokens / 1_000_000) * costs.inputCacheRead;
   const nonCachedCost = ((totalTokens - totalCachedTokens) / 1_000_000) * costs.inputRegular;
   const inputCostWithCache = cacheReadCost + nonCachedCost;
-  
+
   return {
     hits,
     misses,
@@ -122,7 +126,7 @@ export function getCacheStatistics(provider?: CacheProvider): CacheStatistics {
   const records = provider
     ? cacheRecords.filter(r => r.provider === provider)
     : cacheRecords;
-  
+
   if (records.length === 0) {
     return {
       hits: 0,
@@ -137,22 +141,22 @@ export function getCacheStatistics(provider?: CacheProvider): CacheStatistics {
       },
     };
   }
-  
+
   const hits = records.filter(r => r.isHit).length;
   const misses = records.filter(r => !r.isHit).length;
   const totalRequests = records.length;
   const hitRate = totalRequests > 0 ? (hits / totalRequests) * 100 : 0;
-  
+
   const totalCachedTokens = records
     .filter(r => r.isHit)
     .reduce((sum, r) => sum + r.cachedTokens, 0);
-  
+
   const totalTokens = records.reduce((sum, r) => sum + r.totalTokens, 0);
-  
+
   // Calculate savings based on provider
-  const actualProvider = provider || (records.length > 0 ? records[0].provider : 'grok');
+  const actualProvider = provider || (records.length > 0 ? records[0].provider : 'deepseek');
   const savings = calculateSavings(hits, misses, actualProvider);
-  
+
   return {
     hits,
     misses,
@@ -180,7 +184,7 @@ export function getCacheStatisticsForPeriod(
     const matchesProvider = !provider || r.provider === provider;
     return inPeriod && matchesProvider;
   });
-  
+
   if (periodRecords.length === 0) {
     return {
       hits: 0,
@@ -195,21 +199,21 @@ export function getCacheStatisticsForPeriod(
       },
     };
   }
-  
+
   const hits = periodRecords.filter(r => r.isHit).length;
   const misses = periodRecords.filter(r => !r.isHit).length;
   const totalRequests = periodRecords.length;
   const hitRate = totalRequests > 0 ? (hits / totalRequests) * 100 : 0;
-  
+
   const totalCachedTokens = periodRecords
     .filter(r => r.isHit)
     .reduce((sum, r) => sum + r.cachedTokens, 0);
-  
+
   const totalTokens = periodRecords.reduce((sum, r) => sum + r.totalTokens, 0);
-  
-  const actualProvider = provider || (periodRecords.length > 0 ? periodRecords[0].provider : 'claude');
+
+  const actualProvider = provider || (periodRecords.length > 0 ? periodRecords[0].provider : 'deepseek');
   const savings = calculateSavings(hits, misses, actualProvider);
-  
+
   return {
     hits,
     misses,

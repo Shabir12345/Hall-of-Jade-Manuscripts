@@ -2,7 +2,7 @@
  * Cache-related types for prompt caching
  */
 
-export type CacheProvider = 'grok';
+export type CacheProvider = 'grok' | 'deepseek';
 
 export interface CacheMetadata {
   cacheableContent: string;
@@ -63,5 +63,9 @@ export const PROVIDER_CACHE_REQUIREMENTS: Record<CacheProvider, ProviderCacheReq
   grok: {
     minimumTokens: 1024, // 1,024 tokens for Grok
     cacheType: 'implicit', // Implicit prefix matching (similar to Gemini)
+  },
+  deepseek: {
+    minimumTokens: 64, // DeepSeek's minimum cache block size is small
+    cacheType: 'explicit', // DeepSeek uses explicit context caching (simulated here)
   },
 };

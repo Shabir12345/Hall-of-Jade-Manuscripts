@@ -60,7 +60,7 @@ interface NovelContextType {
   syncNow: () => Promise<void>;
 }
 
-const NovelContext = createContext<NovelContextType | undefined>(undefined);
+export const NovelContext = createContext<NovelContextType | undefined>(undefined);
 
 /**
  * Hook to access the Novel context.

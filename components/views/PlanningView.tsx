@@ -3,7 +3,7 @@
  * Arc planning and management interface
  */
 
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState, useEffect } from 'react';
 import type { NovelState, Arc, Chapter } from '../../types';
 import CreativeSpark from '../CreativeSpark';
 import VoiceInput from '../VoiceInput';
@@ -16,6 +16,7 @@ import { backfillAllChapters } from '../../services/chapterBackfillService';
 import { DEFAULT_RUBRICS, STYLE_CRITERIA, getRubricById } from '../../config/styleRubrics';
 import { CRITIQUE_CORRECTION_CONFIG } from '../../constants';
 import type { StyleRubric, StyleCriterion } from '../../types/critique';
+import { getRelevantArcMemories } from '../../services/memory/arcMemoryService';
 
 const DEFAULT_ARC_TARGET_CHAPTERS = 10;
 
@@ -68,7 +69,15 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
 }) => {
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [isStyleRubricExpanded, setIsStyleRubricExpanded] = useState(false);
-  
+  const [arcMemories, setArcMemories] = useState<ArcMemorySummary[]>([]);
+
+  useEffect(() => {
+    if (novel) {
+      const memories = getRelevantArcMemories(novel, novel.chapters.length, 5);
+      setArcMemories(memories);
+    }
+  }, [novel]);
+
   // Get the current style configuration from novel state or use defaults
   const novelStyleConfig = useMemo(() => {
     const config = (novel as any).novelStyleConfig || {
@@ -225,7 +234,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
       checklist: needsChecklist ? buildDefaultArcChecklist() : arc.checklist,
     };
   }, [novel]);
-
+  
   const handleApplyArcFix = useCallback(async (
     arcWithDefaults: Arc,
     displayArc: Arc,
@@ -912,6 +921,18 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
           </div>
         )}
       </section>
+      
+      {arcMemories.length > 0 && (
+        <div className="arc-memory-panel bg-gray-100 p-4 rounded-lg mt-4">
+          <h3 className="text-lg font-bold mb-2">Relevant Arc Memories</h3>
+          {arcMemories.map(memory => (
+            <div key={memory.arcId} className="mb-3">
+              <h4 className="text-md font-semibold text-blue-700">{memory.arcTitle}</h4>
+              <p className="text-sm text-gray-700">{memory.summary.substring(0, 150)}...</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

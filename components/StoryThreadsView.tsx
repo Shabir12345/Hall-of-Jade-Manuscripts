@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { StoryThread, NovelState, ThreadStatus, ThreadPriority, StoryThreadType } from '../types';
 import { useStoryThreadManagement } from '../hooks/useStoryThreadManagement';
-import { useNovel } from '../contexts/NovelContext';
+import { NovelContext } from '../contexts/NovelContext';
 import { useToast } from '../contexts/ToastContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { analyzeThreadHealth, detectPlotHoles, suggestThreadPacing } from '../services/threadAnalyzer';
@@ -10,20 +10,24 @@ import ConfirmDialog from './ConfirmDialog';
 import { EntityLink } from './EntityLink';
 import ThreadTimeline from './ThreadTimeline';
 import { threadTemplates, createThreadFromTemplate } from '../utils/threadTemplates';
+import { MemoryContextPanel } from './MemoryContextPanel';
+import { Pickaxe, Search } from 'lucide-react';
+import { RecoveredThread } from '../types/narrativeForensics';
 
 interface StoryThreadsViewProps {
   novelState: NovelState;
 }
 
 const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
-  const { updateActiveNovel } = useNovel();
+  const novelContext = React.useContext(NovelContext);
+  const { updateActiveNovel } = novelContext || {};
   const { showSuccess, showError } = useToast();
-  const { navigate } = useNavigation();
+  const { navigateToView } = useNavigation();
   const [selectedThread, setSelectedThread] = useState<StoryThread | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean; threadId: string | null }>({ 
-    isOpen: false, 
-    threadId: null 
+  const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean; threadId: string | null }>({
+    isOpen: false,
+    threadId: null
   });
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
@@ -35,9 +39,9 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
     if (config.variant === 'danger') {
       // Store the delete function to call when confirmed
       pendingDeleteRef.current = config.onConfirm;
-      setConfirmDelete({ 
-        isOpen: true, 
-        threadId: selectedThread?.id || null 
+      setConfirmDelete({
+        isOpen: true,
+        threadId: selectedThread?.id || null
       });
     }
   }, [selectedThread]);
@@ -68,7 +72,7 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
     filterRelatedEntity,
   } = useStoryThreadManagement(
     novelState,
-    updateActiveNovel,
+    updateActiveNovel || (() => { }),
     handleConfirmDelete,
     showSuccess,
     showError
@@ -193,11 +197,10 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                     setShowBulkActions(false);
                   }
                 }}
-                className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
-                  bulkMode
-                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                    : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-200'
-                }`}
+                className={`px-4 py-2 rounded-lg font-semibold transition-colors ${bulkMode
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                  : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-200'
+                  }`}
               >
                 {bulkMode ? 'Cancel Selection' : 'Bulk Select'}
               </button>
@@ -207,7 +210,7 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                     const threadsToExport = filteredThreads.length > 0 && selectedThreadIds.size > 0
                       ? filteredThreads.filter(t => selectedThreadIds.has(t.id))
                       : filteredThreads;
-                    
+
                     // Export as JSON
                     const dataStr = JSON.stringify(threadsToExport, null, 2);
                     const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -382,53 +385,53 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                   className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
                 />
               </div>
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value as StoryThreadType | 'all')}
-              className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
-              aria-label="Filter by thread type"
-            >
-              <option value="all">All Types</option>
-              <option value="enemy">⚔️ Enemy</option>
-              <option value="technique">✨ Technique</option>
-              <option value="item">💎 Item</option>
-              <option value="location">📍 Location</option>
-              <option value="sect">🏛️ Sect</option>
-              <option value="promise">🤝 Promise</option>
-              <option value="mystery">🔍 Mystery</option>
-              <option value="relationship">💕 Relationship</option>
-              <option value="power">⚡ Power</option>
-              <option value="quest">🗺️ Quest</option>
-              <option value="revelation">💡 Revelation</option>
-              <option value="conflict">🔥 Conflict</option>
-              <option value="alliance">🤝 Alliance</option>
-            </select>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as ThreadStatus | 'all')}
-              className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
-              aria-label="Filter by thread status"
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="paused">Paused</option>
-              <option value="resolved">Resolved</option>
-              <option value="abandoned">Abandoned</option>
-            </select>
-            <select
-              value={filterPriority}
-              onChange={(e) => setFilterPriority(e.target.value as ThreadPriority | 'all')}
-              className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
-              aria-label="Filter by thread priority"
-            >
-              <option value="all">All Priorities</option>
-              <option value="critical">Critical</option>
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-              <option value="low">Low</option>
-            </select>
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value as StoryThreadType | 'all')}
+                className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
+                aria-label="Filter by thread type"
+              >
+                <option value="all">All Types</option>
+                <option value="enemy">⚔️ Enemy</option>
+                <option value="technique">✨ Technique</option>
+                <option value="item">💎 Item</option>
+                <option value="location">📍 Location</option>
+                <option value="sect">🏛️ Sect</option>
+                <option value="promise">🤝 Promise</option>
+                <option value="mystery">🔍 Mystery</option>
+                <option value="relationship">💕 Relationship</option>
+                <option value="power">⚡ Power</option>
+                <option value="quest">🗺️ Quest</option>
+                <option value="revelation">💡 Revelation</option>
+                <option value="conflict">🔥 Conflict</option>
+                <option value="alliance">🤝 Alliance</option>
+              </select>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value as ThreadStatus | 'all')}
+                className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
+                aria-label="Filter by thread status"
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="paused">Paused</option>
+                <option value="resolved">Resolved</option>
+                <option value="abandoned">Abandoned</option>
+              </select>
+              <select
+                value={filterPriority}
+                onChange={(e) => setFilterPriority(e.target.value as ThreadPriority | 'all')}
+                className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
+                aria-label="Filter by thread priority"
+              >
+                <option value="all">All Priorities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
             </div>
-            
+
             {/* Advanced Filters */}
             <div className="flex flex-wrap gap-4 text-sm">
               <div className="flex items-center gap-2">
@@ -493,20 +496,20 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                   className="w-32 px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
                 />
               </div>
-              {(filterChapterRange.min !== null || filterChapterRange.max !== null || 
-                filterHealthRange.min !== null || filterHealthRange.max !== null || 
+              {(filterChapterRange.min !== null || filterChapterRange.max !== null ||
+                filterHealthRange.min !== null || filterHealthRange.max !== null ||
                 filterRelatedEntity.trim()) && (
-                <button
-                  onClick={() => {
-                    setFilterChapterRange({ min: null, max: null });
-                    setFilterHealthRange({ min: null, max: null });
-                    setFilterRelatedEntity('');
-                  }}
-                  className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-200 rounded transition-colors"
-                >
-                  Clear Advanced
-                </button>
-              )}
+                  <button
+                    onClick={() => {
+                      setFilterChapterRange({ min: null, max: null });
+                      setFilterHealthRange({ min: null, max: null });
+                      setFilterRelatedEntity('');
+                    }}
+                    className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-200 rounded transition-colors"
+                  >
+                    Clear Advanced
+                  </button>
+                )}
             </div>
           </div>
         </div>
@@ -542,7 +545,7 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                   <div className="text-lg font-semibold text-red-400">{plotHoles.length}</div>
                 </div>
               </div>
-              
+
               {/* Completion Forecast */}
               {analytics.completionForecast.threadsNeedingResolution > 0 && (
                 <div className="mt-4 pt-4 border-t border-zinc-700">
@@ -564,7 +567,7 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                   </div>
                 </div>
               )}
-              
+
               {/* Threads by Type */}
               {Object.keys(analytics.threadsByType).length > 0 && (
                 <div className="mt-4 pt-4 border-t border-zinc-700">
@@ -574,7 +577,7 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                       <div key={type} className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800 rounded text-xs">
                         <span>{getTypeIcon(type as StoryThreadType)}</span>
                         <span className="text-zinc-300">{type}</span>
-                        <span className="text-zinc-500">({count})</span>
+                        <span className="text-zinc-500">({count as any})</span>
                       </div>
                     ))}
                   </div>
@@ -583,23 +586,23 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
             </div>
 
             {/* Critical Issues Banner */}
-            {(plotHoles.filter(h => h.severity === 'critical').length > 0 || 
+            {(plotHoles.filter(h => h.severity === 'critical').length > 0 ||
               pacingSuggestions.filter(s => s.urgency === 'high').length > 0) && (
-              <div className="p-4 bg-red-950/20 border-b border-red-500/50">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">⚠️</span>
-                  <h3 className="text-sm font-bold text-red-400 uppercase">Critical Issues</h3>
+                <div className="p-4 bg-red-950/20 border-b border-red-500/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xl">⚠️</span>
+                    <h3 className="text-sm font-bold text-red-400 uppercase">Critical Issues</h3>
+                  </div>
+                  <div className="space-y-1 text-xs text-zinc-300">
+                    {plotHoles.filter(h => h.severity === 'critical').slice(0, 2).map((hole, idx) => (
+                      <p key={idx}>• {hole.thread.title}</p>
+                    ))}
+                    {pacingSuggestions.filter(s => s.urgency === 'high').slice(0, 2).map((sug, idx) => (
+                      <p key={idx}>• {sug.thread.title}</p>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-1 text-xs text-zinc-300">
-                  {plotHoles.filter(h => h.severity === 'critical').slice(0, 2).map((hole, idx) => (
-                    <p key={idx}>• {hole.thread.title}</p>
-                  ))}
-                  {pacingSuggestions.filter(s => s.urgency === 'high').slice(0, 2).map((sug, idx) => (
-                    <p key={idx}>• {sug.thread.title}</p>
-                  ))}
-                </div>
-              </div>
-            )}
+              )}
 
             {/* Thread List */}
             <div className="p-4 space-y-2">
@@ -632,7 +635,7 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                   const health = calculateThreadHealth(thread, currentChapter);
                   const isStale = currentChapter - thread.lastUpdatedChapter > 10;
                   const isSelected = selectedThreadIds.has(thread.id);
-                  
+
                   return (
                     <div
                       key={thread.id}
@@ -651,13 +654,12 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                           setSelectedThread(thread);
                         }
                       }}
-                      className={`p-4 rounded-lg border cursor-pointer transition-all ${
-                        bulkMode && isSelected
-                          ? 'bg-amber-600/30 border-amber-600'
-                          : selectedThread?.id === thread.id && !bulkMode
+                      className={`p-4 rounded-lg border cursor-pointer transition-all ${bulkMode && isSelected
+                        ? 'bg-amber-600/30 border-amber-600'
+                        : selectedThread?.id === thread.id && !bulkMode
                           ? 'bg-amber-600/20 border-amber-600/50'
                           : 'bg-zinc-800/50 border-zinc-700 hover:border-zinc-600'
-                      }`}
+                        }`}
                     >
                       {bulkMode && (
                         <div className="flex items-center mb-2">
@@ -715,9 +717,8 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                         <div className="flex items-center gap-2">
                           <div className="w-16 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
                             <div
-                              className={`h-full ${
-                                health >= 70 ? 'bg-emerald-500' : health >= 40 ? 'bg-amber-500' : 'bg-red-500'
-                              }`}
+                              className={`h-full ${health >= 70 ? 'bg-emerald-500' : health >= 40 ? 'bg-amber-500' : 'bg-red-500'
+                                }`}
                               style={{ width: `${health}%` }}
                             />
                           </div>
@@ -882,12 +883,51 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                     </div>
                   </div>
 
+                  {/* Akasha Evidence Badge */}
+                  {selectedThread && 'isRecovered' in selectedThread && (selectedThread as any).isRecovered && (
+                    <div className="mb-6 p-4 bg-amber-900/10 border border-amber-600/30 rounded-xl flex gap-4 items-start">
+                      <div className="p-2 bg-amber-500/10 rounded-lg">
+                        <Pickaxe className="w-5 h-5 text-amber-500" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-amber-500 font-bold text-sm uppercase tracking-wider">Akasha Recovery Evidence</span>
+                          <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-bold rounded uppercase">Verified</span>
+                        </div>
+                        <p className="text-xs text-zinc-400 mb-3">
+                          This thread was excavated from the narrative records. Original source detected in Chapter {(selectedThread as unknown as RecoveredThread).historicalEvidence.originChapter}.
+                        </p>
+                        <div className="bg-zinc-950/50 p-3 rounded-lg border-l-2 border-amber-500 mb-3">
+                          <p className="text-sm text-zinc-300 italic">"{(selectedThread as unknown as RecoveredThread).historicalEvidence.originQuote}"</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-1.5">
+                            <Search className="w-3 h-3 text-zinc-500" />
+                            <span className="text-xs text-zinc-500">Neglect Gap: <span className="text-zinc-300 font-mono">{(selectedThread as unknown as RecoveredThread).neglectScore} chapters</span></span>
+                          </div>
+                          <button
+                            onClick={() => navigateToView('narrative-forensics')}
+                            className="text-xs text-amber-500 hover:text-amber-400 font-semibold flex items-center gap-1 transition-colors"
+                          >
+                            Explore in Akasha Records →
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {selectedThread.description && (
                     <div className="mb-4">
                       <h3 className="text-sm font-bold text-zinc-400 uppercase mb-2">Description</h3>
                       <p className="text-zinc-300">{selectedThread.description}</p>
                     </div>
                   )}
+
+                  {/* Memory Context Integration */}
+                  <MemoryContextPanel
+                    thread={selectedThread}
+                    novelState={novelState}
+                  />
 
                   {/* Progression Notes */}
                   {selectedThread.progressionNotes && selectedThread.progressionNotes.length > 0 && (
@@ -911,9 +951,8 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                                 ) : (
                                   <span className="text-xs font-semibold text-amber-500">Ch {note.chapterNumber}</span>
                                 )}
-                                <span className={`text-xs px-2 py-0.5 rounded ${
-                                  note.significance === 'major' ? 'bg-amber-600/20 text-amber-400' : 'bg-zinc-700 text-zinc-400'
-                                }`}>
+                                <span className={`text-xs px-2 py-0.5 rounded ${note.significance === 'major' ? 'bg-amber-600/20 text-amber-400' : 'bg-zinc-700 text-zinc-400'
+                                  }`}>
                                   {note.significance}
                                 </span>
                               </div>
@@ -1079,10 +1118,10 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                 </div>
 
                 {/* Thread Timeline */}
-                <ThreadTimeline 
-                  thread={selectedThread} 
-                  novelState={novelState} 
-                  currentChapter={currentChapter} 
+                <ThreadTimeline
+                  thread={selectedThread}
+                  novelState={novelState}
+                  currentChapter={currentChapter}
                 />
 
                 {/* Health Analysis */}
@@ -1098,13 +1137,12 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                       </div>
                       <div className="w-full h-2 bg-zinc-700 rounded-full overflow-hidden">
                         <div
-                          className={`h-full ${
-                            calculateThreadHealth(selectedThread, currentChapter) >= 70
-                              ? 'bg-emerald-500'
-                              : calculateThreadHealth(selectedThread, currentChapter) >= 40
+                          className={`h-full ${calculateThreadHealth(selectedThread, currentChapter) >= 70
+                            ? 'bg-emerald-500'
+                            : calculateThreadHealth(selectedThread, currentChapter) >= 40
                               ? 'bg-amber-500'
                               : 'bg-red-500'
-                          }`}
+                            }`}
                           style={{ width: `${calculateThreadHealth(selectedThread, currentChapter)}%` }}
                         />
                       </div>
@@ -1125,13 +1163,12 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                       {plotHoles.filter(hole => hole.thread.id === selectedThread.id).map((hole, idx) => (
                         <div
                           key={idx}
-                          className={`p-3 rounded-lg border ${
-                            hole.severity === 'critical'
-                              ? 'bg-red-950/20 border-red-500/50'
-                              : hole.severity === 'high'
+                          className={`p-3 rounded-lg border ${hole.severity === 'critical'
+                            ? 'bg-red-950/20 border-red-500/50'
+                            : hole.severity === 'high'
                               ? 'bg-orange-950/20 border-orange-500/50'
                               : 'bg-amber-950/20 border-amber-500/50'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-start gap-2">
                             <span className="text-lg">
@@ -1151,13 +1188,12 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                       {pacingSuggestions.filter(s => s.thread.id === selectedThread.id).map((suggestion, idx) => (
                         <div
                           key={idx}
-                          className={`p-3 rounded-lg border ${
-                            suggestion.urgency === 'high'
-                              ? 'bg-amber-950/20 border-amber-500/50'
-                              : suggestion.urgency === 'medium'
+                          className={`p-3 rounded-lg border ${suggestion.urgency === 'high'
+                            ? 'bg-amber-950/20 border-amber-500/50'
+                            : suggestion.urgency === 'medium'
                               ? 'bg-yellow-950/20 border-yellow-500/50'
                               : 'bg-blue-950/20 border-blue-500/50'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-start gap-2">
                             <span className="text-lg">💡</span>

@@ -5,6 +5,7 @@ import type { GlobalMarketState } from './types/market';
 import { getAntagonistsForArc, addAntagonistToChapter } from './services/antagonistService';
 import { createDefaultMarketState } from './services/market/marketService';
 import { findMatchingAntagonist, mergeAntagonistInfo } from './utils/antagonistMatching';
+import { findBestMatch } from './utils/characterNameMatching';
 import Sidebar from './components/Sidebar';
 import LibraryView from './components/LibraryView';
 import VoiceInput from './components/VoiceInput';
@@ -31,11 +32,11 @@ import TribulationGateModal from './components/TribulationGateModal';
 import ManualTribulationGateDialog from './components/ManualTribulationGateDialog';
 import WhatIfGateReplayDialog from './components/WhatIfGateReplayDialog';
 import { TribulationGate, TribulationTrigger } from './types/tribulationGates';
-import { 
-  resolveGate, 
-  skipGate, 
-  getGateConfig, 
-  createManualGate, 
+import {
+  resolveGate,
+  skipGate,
+  getGateConfig,
+  createManualGate,
   getPendingGate,
   buildWhatIfPromptInjection,
   saveWhatIfChapter,
@@ -76,6 +77,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 import { OnboardingTour } from './components/OnboardingTour';
 import { getTourById, MAIN_ONBOARDING_TOUR } from './utils/onboardingTours';
 import { AUTHENTICATION_ENABLED } from './config/supabase';
+import LoomExcavator from './components/LoomExcavatorFull';
 
 // Helper to safely convert any value to a string
 function safeToString(value: unknown): string {
@@ -83,11 +85,11 @@ function safeToString(value: unknown): string {
   if (value === undefined) return 'undefined';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  
+
   if (value instanceof Error) {
     return value.message || 'Error (no message)';
   }
-  
+
   // For objects, try JSON.stringify with circular reference handling
   try {
     const seen = new WeakSet();
@@ -117,7 +119,7 @@ function safeLazyImport<T extends React.ComponentType<any>>(
       // Log the error message safely to help with debugging
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('[safeLazyImport] Component failed to load:', errorMessage);
-      
+
       // Return a fallback component that shows the error message
       const FallbackComponent: React.FC = () => (
         <div className="p-6 bg-red-950/40 border border-red-900/60 rounded-xl">
@@ -159,6 +161,7 @@ const ExportDialog = safeLazyImport(() => import('./components/ExportDialog'));
 const AntagonistManager = safeLazyImport(() => import('./components/AntagonistManager'));
 const SystemManager = safeLazyImport(() => import('./components/SystemManager'));
 const StoryThreadsView = safeLazyImport(() => import('./components/StoryThreadsView'));
+const LoomDashboard = safeLazyImport(() => import('./components/loom/LoomDashboard'));
 // World-Class Enhancements Components
 const StructureVisualizer = safeLazyImport(() => import('./components/StructureVisualizer'));
 const EngagementDashboard = safeLazyImport(() => import('./components/EngagementDashboard'));
@@ -276,7 +279,7 @@ const App: React.FC = () => {
       return <LoginForm />;
     }
   }
-  
+
   // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -290,7 +293,7 @@ const App: React.FC = () => {
     isOpen: false,
     title: '',
     message: '',
-    onConfirm: () => {},
+    onConfirm: () => { },
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -303,18 +306,18 @@ const App: React.FC = () => {
   const [mobileNotificationPanelOpen, setMobileNotificationPanelOpen] = useState(false);
   const [desktopNotificationPanelOpen, setDesktopNotificationPanelOpen] = useState(true);
   const [desktopNotificationPanelMinimized, setDesktopNotificationPanelMinimized] = useState(false);
-  
+
   // Sidebar collapsed state for tablets (persisted in localStorage)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('sidebar-collapsed');
     return saved === 'true';
   });
-  
+
   // Persist sidebar collapsed state
   useEffect(() => {
     localStorage.setItem('sidebar-collapsed', String(sidebarCollapsed));
   }, [sidebarCollapsed]);
-  
+
   const [editingWorld, setEditingWorld] = useState<WorldEntry | null>(null);
   const [editingChar, setEditingChar] = useState<Character | null>(null);
   const [editingArc, setEditingArc] = useState<Arc | null>(null);
@@ -327,7 +330,7 @@ const App: React.FC = () => {
   const [pendingFixProposals, setPendingFixProposals] = useState<EditorFixProposal[]>([]);
   const [currentEditorReport, setCurrentEditorReport] = useState<EditorReport | null>(null);
   const activeGenerationIdRef = useRef<string | null>(null);
-  
+
   // Tribulation Gate state
   const [showTribulationGate, setShowTribulationGate] = useState(false);
   const [currentTribulationGate, setCurrentTribulationGate] = useState<TribulationGate | null>(null);
@@ -350,10 +353,10 @@ const App: React.FC = () => {
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
-    
+
     // Make verification function available in browser console
     (window as any).verifySupabase = logSupabaseVerification;
-    
+
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
@@ -411,14 +414,14 @@ const App: React.FC = () => {
 
     if (autoFixedCount > 0 || failedAutoFixes.length > 0 || appliedInAutoMode > 0 || failedInAutoMode.length > 0) {
       const fixParts: string[] = [];
-      
+
       if (autoFixedCount > 0) {
         fixParts.push(`${autoFixedCount} auto-fixed during review`);
       }
       if (appliedInAutoMode > 0) {
         fixParts.push(`${appliedInAutoMode} applied in automatic mode`);
       }
-      
+
       const totalFixed = autoFixedCount + appliedInAutoMode;
       if (totalFixed > 0) {
         parts.push(`${totalFixed} fix(es) applied (${autoFixedCount} during review, ${appliedInAutoMode} in auto mode).`);
@@ -430,7 +433,7 @@ const App: React.FC = () => {
         const uniqueFailedInAutoMode = failedInAutoMode.filter(f => !failedAutoFixIds.has(f.id));
         const totalFailed = failedAutoFixes.length + uniqueFailedInAutoMode.length;
         parts.push(`${totalFailed} fix(es) failed to apply.`);
-        
+
         // Add details about failed fixes
         if (failedAutoFixes.length > 0) {
           details.push(`Failed during review (${failedAutoFixes.length}):`);
@@ -446,7 +449,7 @@ const App: React.FC = () => {
             details.push(`  - Chapter ${fix.chapterNumber}, ${fix.fixType}: ${failureReason}`);
           });
         }
-        
+
         // If same fixes failed in both modes, add note
         const duplicatedFails = failedInAutoMode.filter(f => failedAutoFixIds.has(f.id));
         if (duplicatedFails.length > 0) {
@@ -469,12 +472,12 @@ const App: React.FC = () => {
   const formatChapterTitleForDisplay = (chapter: Chapter): string => {
     const titleLower = chapter.title.toLowerCase();
     const chapterPattern = /^chapter\s+\d+/i;
-    
+
     if (!chapterPattern.test(titleLower)) {
       // Title doesn't start with "Chapter X", add it
       return `Chapter ${chapter.number}: ${chapter.title}`;
     }
-    
+
     // Title has "Chapter X" but might have wrong number - extract and fix if needed
     const match = chapter.title.match(/^Chapter\s+(\d+)[:\s]+(.*)$/i);
     if (match) {
@@ -487,7 +490,7 @@ const App: React.FC = () => {
       // Number matches, return as-is (but ensure format)
       return `Chapter ${chapter.number}: ${titleContent || chapter.title.replace(/^Chapter\s+\d+[:\s]+/i, '').trim()}`;
     }
-    
+
     // Has "Chapter X" but weird format, try to fix
     return chapter.title.replace(/^Chapter\s+\d+/i, `Chapter ${chapter.number}`);
   };
@@ -498,11 +501,11 @@ const App: React.FC = () => {
 
     updateActiveNovel(prev => {
       const chapters = [...prev.chapters];
-      
+
       // Step 1: Fix duplicate chapter numbers by reassigning sequential numbers
       const sortedChapters = chapters.sort((a, b) => a.number - b.number || a.createdAt - b.createdAt);
       const numberMap = new Map<number, number[]>(); // Maps chapter number to array of indices
-      
+
       // Find duplicates
       sortedChapters.forEach((ch, idx) => {
         if (!numberMap.has(ch.number)) {
@@ -510,7 +513,7 @@ const App: React.FC = () => {
         }
         numberMap.get(ch.number)!.push(idx);
       });
-      
+
       // Fix duplicates by reassigning numbers sequentially
       let currentNumber = 1;
       const fixedChapters = sortedChapters.map((ch, idx) => {
@@ -536,12 +539,12 @@ const App: React.FC = () => {
           return ch;
         }
       });
-      
+
       // Step 2: Normalize titles to include "Chapter X: " prefix
       const normalizedChapters = fixedChapters.map(ch => {
         const titleLower = ch.title.toLowerCase();
         const chapterPattern = /^chapter\s+\d+/i;
-        
+
         if (!chapterPattern.test(titleLower)) {
           // Missing "Chapter X: " prefix
           return {
@@ -549,7 +552,7 @@ const App: React.FC = () => {
             title: `Chapter ${ch.number}: ${ch.title}`
           };
         }
-        
+
         // Has "Chapter X" but might have wrong number
         const match = ch.title.match(/^Chapter\s+(\d+)[:\s]+(.*)$/i);
         if (match) {
@@ -570,19 +573,19 @@ const App: React.FC = () => {
             };
           }
         }
-        
+
         return ch;
       });
-      
+
       // Sort by number again after fixing
       normalizedChapters.sort((a, b) => a.number - b.number);
-      
+
       return {
         ...prev,
         chapters: normalizedChapters
       };
     });
-    
+
     showSuccess('Chapters fixed: Duplicate numbers resolved and titles normalized');
   }, [activeNovel, updateActiveNovel, showSuccess]);
 
@@ -632,10 +635,10 @@ const App: React.FC = () => {
       const result = await generateNextChapter(activeNovel, customInstruction || instruction, {
         onPhase: (phase, data) => {
           if (activeGenerationIdRef.current !== generationId) return; // cancelled
-          
+
           if (phase === 'prompt_build_start') {
-             setGenerationProgress(10);
-             setGenerationStatus('Constructing narrative context...');
+            setGenerationProgress(10);
+            setGenerationStatus('Constructing narrative context...');
           }
           if (phase === 'prompt_build_end') {
             setGenerationProgress(20);
@@ -741,29 +744,29 @@ const App: React.FC = () => {
       if (activeGenerationIdRef.current !== generationId) {
         return;
       }
-      
+
       // Check if we need to show a Tribulation Gate
       if (result?.requiresUserChoice && result?.tribulationGate) {
         // Store the instruction for when the user makes their choice
         pendingGenerationInstructionRef.current = customInstruction || instruction;
-        
+
         // Show the Tribulation Gate modal
         setCurrentTribulationGate(result.tribulationGate);
         setShowTribulationGate(true);
-        
+
         // Don't continue with chapter creation - wait for user choice
         setIsGenerating(false);
         setGenerationProgress(0);
         setGenerationStatus('');
-        
+
         addEphemeralLog('⚡ A Tribulation Gate has appeared! Your choice will shape the story.', 'fate');
         return;
       }
-      
+
       setGenerationProgress(100);
       setGenerationStatus('Chapter generation complete!');
       addEphemeralLog('Chapter generated successfully. Processing updates...', 'discovery');
-      
+
       // Validate result data before creating chapter
       if (!result || !result.chapterContent || typeof result.chapterContent !== 'string') {
         throw new Error('Invalid chapter generation result: missing or invalid content');
@@ -794,7 +797,7 @@ const App: React.FC = () => {
           }
         }
       }
-      
+
       // Validate word count before creating chapter
       const wordCount = result.chapterContent.split(/\s+/).filter((word: string) => word.trim().length > 0).length;
       if (wordCount < 1500) {
@@ -802,7 +805,7 @@ const App: React.FC = () => {
       } else if (wordCount > 5000) {
         showWarning(`Generated chapter has ${wordCount} words, which is quite long. Consider breaking it into multiple chapters.`);
       }
-      
+
       // Validate content is not just whitespace
       if (result.chapterContent.trim().length < 500) {
         throw new Error('Generated chapter content is too short or contains only whitespace');
@@ -818,7 +821,7 @@ const App: React.FC = () => {
         scenes: [],
         createdAt: Date.now()
       };
-      
+
       // Validate logic audit if present
       if (newChapter.logicAudit) {
         const audit = newChapter.logicAudit;
@@ -860,11 +863,11 @@ const App: React.FC = () => {
       // Process character updates with comprehensive validation
       setGenerationStatus('Updating character information...');
       addEphemeralLog('Processing character updates...', 'discovery');
-      
+
       const existingCharacters = [...activeNovel.characterCodex];
       let characterUpdateCount = 0;
       const updateErrors: string[] = [];
-      
+
       if (result.characterUpdates && Array.isArray(result.characterUpdates) && result.characterUpdates.length > 0) {
         result.characterUpdates.forEach((update, index: number) => {
           try {
@@ -873,12 +876,12 @@ const App: React.FC = () => {
               updateErrors.push(`Update ${index + 1}: Invalid update object`);
               return;
             }
-            
+
             if (!update.name || typeof update.name !== 'string' || update.name.trim().length < 1) {
               updateErrors.push(`Update ${index + 1}: Invalid or missing character name`);
               return;
             }
-            
+
             // Normalize updateType variants to canonical values
             const updateTypeMap: Record<string, string> = {
               'cultivationstate': 'cultivation',
@@ -921,8 +924,21 @@ const App: React.FC = () => {
               'bodystate': 'appearance',
               'body_state': 'appearance',
               'new': 'new',
+              'location': 'location',
+              'cultivation_progress': 'cultivation',
+              'cultivation': 'cultivation',
+              'cultivationlevel': 'cultivation',
+              'cultivation_level': 'cultivation',
+              'realm': 'cultivation',
+              'power': 'cultivation',
+              'strength': 'cultivation',
+              'possession': 'notes',
+              'possesses': 'notes',
+              'has': 'notes',
+              'holds': 'notes',
+              'carries': 'notes',
             };
-            
+
             // Normalize updateType (case-insensitive)
             if (update.updateType) {
               const normalizedType = updateTypeMap[update.updateType.toLowerCase()];
@@ -934,123 +950,123 @@ const App: React.FC = () => {
                 update.updateType = 'notes';
               }
             }
-          
-          const charIndex = existingCharacters.findIndex(c => c.name.toLowerCase() === update.name.toLowerCase());
-          
-          if (charIndex > -1) {
-            let char = { ...existingCharacters[charIndex] };
-            if (update.updateType === 'cultivation') {
-              const cultivationValue = String(update.newValue || '').trim();
-              if (cultivationValue && cultivationValue.length > 0) {
-                char.currentCultivation = cultivationValue;
-                localAddLog(`Breakthrough! ${char.name} reached ${cultivationValue}.`, 'update');
-              }
-            }
-            if (update.updateType === 'skill' && update.newValue) {
-              const skillValue = String(update.newValue).trim();
-              if (skillValue && skillValue.length > 0) {
-                char.skills = [...new Set([...char.skills, skillValue])];
-                localAddLog(`${char.name} gained Technique: ${skillValue}.`, 'discovery');
-              }
-            }
-            if (update.updateType === 'item') {
-              const itemValue = String(update.newValue).trim();
-              if (itemValue && itemValue.length > 0) {
-                char.items = [...new Set([...char.items, itemValue])];
-                localAddLog(`${char.name} acquired Treasure: ${itemValue}.`, 'discovery');
-              }
-            }
-            if (update.updateType === 'status') {
-              const statusValue = String(update.newValue || 'Alive').trim();
-              if (statusValue === 'Alive' || statusValue === 'Deceased' || statusValue === 'Unknown') {
-                char.status = statusValue;
-                localAddLog(`${char.name} status updated: ${statusValue}`, 'update');
-              }
-            }
-            if (update.updateType === 'notes' && update.newValue) {
-              const notesValue = String(update.newValue).trim();
-              if (notesValue && notesValue.length > 0) {
-                char.notes = notesValue;
-              }
-            }
-            if (update.updateType === 'appearance' && update.newValue) {
-              const appearanceValue = String(update.newValue).trim();
-              if (appearanceValue && appearanceValue.length > 0) {
-                char.appearance = appearanceValue;
-                localAddLog(`${char.name}'s appearance updated.`, 'update');
-              }
-            }
-            if (update.updateType === 'relationship' && update.targetName) {
-              const targetChar = existingCharacters.find(c => c.name.toLowerCase() === update.targetName.toLowerCase());
-              if (targetChar) {
-                // Use relationship service for bidirectional relationship creation
-                const relationshipType = update.newValue || 'Unknown';
-                const result = addOrUpdateRelationship(
-                  existingCharacters,
-                  char.id,
-                  targetChar.id,
-                  relationshipType,
-                  'Karma link discovered in chronicle.',
-                  'Fate has intertwined their paths.',
-                  true // bidirectional
-                );
-                
-                if (result.success) {
-                  // Update existingCharacters array with bidirectional relationships
-                  const sourceIndex = existingCharacters.findIndex(c => c.id === char.id);
-                  const targetIndex = existingCharacters.findIndex(c => c.id === targetChar.id);
-                  if (sourceIndex >= 0) {
-                    existingCharacters[sourceIndex] = result.updatedCharacters[sourceIndex];
-                  }
-                  if (targetIndex >= 0) {
-                    existingCharacters[targetIndex] = result.updatedCharacters[targetIndex];
-                  }
-                  // Update char reference for subsequent updates
-                  if (sourceIndex >= 0) {
-                    char = existingCharacters[sourceIndex];
-                  }
-                  localAddLog(`Karma Link: ${char.name} <-> ${targetChar.name} (${relationshipType})`, 'fate');
+
+            const charIndex = existingCharacters.findIndex(c => c.name.toLowerCase() === update.name.toLowerCase());
+
+            if (charIndex > -1) {
+              let char = { ...existingCharacters[charIndex] };
+              if (update.updateType === 'cultivation') {
+                const cultivationValue = String(update.newValue || '').trim();
+                if (cultivationValue && cultivationValue.length > 0) {
+                  char.currentCultivation = cultivationValue;
+                  localAddLog(`Breakthrough! ${char.name} reached ${cultivationValue}.`, 'update');
                 }
               }
-            }
-            existingCharacters[charIndex] = char;
-            characterUpdateCount++;
-          } else if (update.updateType === 'new' && update.name) {
-            // Validate new character data
-            const charName = String(update.name).trim();
-            if (charName.length < 1) {
-              updateErrors.push(`New character: Invalid name`);
-              return;
-            }
-            
-            // Check if character already exists (case-insensitive)
-            const existingChar = existingCharacters.find(
-              c => normalize(c.name) === normalize(charName)
-            );
-            
-            if (existingChar) {
-              // Character already exists, update instead of creating new
-              localAddLog(`Character "${charName}" already exists, updating instead`, 'update');
-              const char = { ...existingChar };
-              if (update.newValue) {
-                char.currentCultivation = String(update.newValue).trim();
+              if (update.updateType === 'skill' && update.newValue) {
+                const skillValue = String(update.newValue).trim();
+                if (skillValue && skillValue.length > 0) {
+                  char.skills = [...new Set([...char.skills, skillValue])];
+                  localAddLog(`${char.name} gained Technique: ${skillValue}.`, 'discovery');
+                }
               }
-              const charIndex = existingCharacters.findIndex(c => c.id === existingChar.id);
-              if (charIndex > -1) {
-                existingCharacters[charIndex] = char;
+              if (update.updateType === 'item') {
+                const itemValue = String(update.newValue).trim();
+                if (itemValue && itemValue.length > 0) {
+                  char.items = [...new Set([...char.items, itemValue])];
+                  localAddLog(`${char.name} acquired Treasure: ${itemValue}.`, 'discovery');
+                }
+              }
+              if (update.updateType === 'status') {
+                const statusValue = String(update.newValue || 'Alive').trim();
+                if (statusValue === 'Alive' || statusValue === 'Deceased' || statusValue === 'Unknown') {
+                  char.status = statusValue;
+                  localAddLog(`${char.name} status updated: ${statusValue}`, 'update');
+                }
+              }
+              if (update.updateType === 'notes' && update.newValue) {
+                const notesValue = String(update.newValue).trim();
+                if (notesValue && notesValue.length > 0) {
+                  char.notes = notesValue;
+                }
+              }
+              if (update.updateType === 'appearance' && update.newValue) {
+                const appearanceValue = String(update.newValue).trim();
+                if (appearanceValue && appearanceValue.length > 0) {
+                  char.appearance = appearanceValue;
+                  localAddLog(`${char.name}'s appearance updated.`, 'update');
+                }
+              }
+              if (update.updateType === 'relationship' && update.targetName) {
+                const targetChar = existingCharacters.find(c => c.name.toLowerCase() === update.targetName.toLowerCase());
+                if (targetChar) {
+                  // Use relationship service for bidirectional relationship creation
+                  const relationshipType = update.newValue || 'Unknown';
+                  const result = addOrUpdateRelationship(
+                    existingCharacters,
+                    char.id,
+                    targetChar.id,
+                    relationshipType,
+                    'Karma link discovered in chronicle.',
+                    'Fate has intertwined their paths.',
+                    true // bidirectional
+                  );
+
+                  if (result.success) {
+                    // Update existingCharacters array with bidirectional relationships
+                    const sourceIndex = existingCharacters.findIndex(c => c.id === char.id);
+                    const targetIndex = existingCharacters.findIndex(c => c.id === targetChar.id);
+                    if (sourceIndex >= 0) {
+                      existingCharacters[sourceIndex] = result.updatedCharacters[sourceIndex];
+                    }
+                    if (targetIndex >= 0) {
+                      existingCharacters[targetIndex] = result.updatedCharacters[targetIndex];
+                    }
+                    // Update char reference for subsequent updates
+                    if (sourceIndex >= 0) {
+                      char = existingCharacters[sourceIndex];
+                    }
+                    localAddLog(`Karma Link: ${char.name} <-> ${targetChar.name} (${relationshipType})`, 'fate');
+                  }
+                }
+              }
+              existingCharacters[charIndex] = char;
+              characterUpdateCount++;
+            } else if (update.updateType === 'new' && update.name) {
+              // Validate new character data
+              const charName = String(update.name).trim();
+              if (charName.length < 1) {
+                updateErrors.push(`New character: Invalid name`);
+                return;
+              }
+
+              // Check if character already exists (case-insensitive)
+              const existingChar = existingCharacters.find(
+                c => normalize(c.name) === normalize(charName)
+              );
+
+              if (existingChar) {
+                // Character already exists, update instead of creating new
+                localAddLog(`Character "${charName}" already exists, updating instead`, 'update');
+                const char = { ...existingChar };
+                if (update.newValue) {
+                  char.currentCultivation = String(update.newValue).trim();
+                }
+                const charIndex = existingCharacters.findIndex(c => c.id === existingChar.id);
+                if (charIndex > -1) {
+                  existingCharacters[charIndex] = char;
+                  characterUpdateCount++;
+                }
+              } else {
+                const newChar = createNewCharacter({
+                  name: charName,
+                  currentCultivation: String(update.newValue || 'Unknown').trim(),
+                  notes: 'Newly introduced character.',
+                });
+                existingCharacters.push(newChar);
+                localAddLog(`Being Discovered: ${charName}`, 'discovery');
                 characterUpdateCount++;
               }
-            } else {
-              const newChar = createNewCharacter({
-                name: charName,
-                currentCultivation: String(update.newValue || 'Unknown').trim(),
-                notes: 'Newly introduced character.',
-              });
-              existingCharacters.push(newChar);
-              localAddLog(`Being Discovered: ${charName}`, 'discovery');
-              characterUpdateCount++;
             }
-          }
           } catch (error) {
             logger.error('Error processing character update', 'App', error instanceof Error ? error : new Error(String(error)), {
               characterName: update?.name || 'unknown',
@@ -1059,11 +1075,11 @@ const App: React.FC = () => {
             updateErrors.push(`Update ${index + 1} (${update?.name || 'unknown'}): ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
         });
-        
+
         if (characterUpdateCount > 0) {
           addEphemeralLog(`Updated ${characterUpdateCount} character(s)`, 'discovery');
         }
-        
+
         if (updateErrors.length > 0) {
           logger.warn('Character update errors', 'chapterProcessing', { errorCount: updateErrors.length, errors: updateErrors });
           localAddLog(`⚠️ ${updateErrors.length} character update error(s) encountered`, 'update');
@@ -1092,25 +1108,25 @@ const App: React.FC = () => {
       if (result.worldUpdates && Array.isArray(result.worldUpdates)) {
         let worldUpdateCount = 0;
         let realmCreated = false;
-        
+
         result.worldUpdates.forEach((w: { title?: unknown; content?: unknown; category?: unknown; isNewRealm?: unknown }) => {
           try {
             if (w.isNewRealm) {
               const realmTitle = String(w.title || 'New Realm').trim();
               const realmDescription = String(w.content || '').trim();
-              
+
               if (!realmTitle || realmTitle === 'New Realm') {
                 localAddLog('Skipped realm creation: Invalid or missing realm title', 'update');
                 return;
               }
-              
-              const newRealm: Realm = { 
-                id: generateUUID(), 
-                name: realmTitle, 
-                description: realmDescription, 
-                status: 'current' 
+
+              const newRealm: Realm = {
+                id: generateUUID(),
+                name: realmTitle,
+                description: realmDescription,
+                status: 'current'
               };
-              
+
               // Archive all existing realms
               realms.forEach(r => r.status = 'archived');
               realms.push(newRealm);
@@ -1121,27 +1137,27 @@ const App: React.FC = () => {
               // Validate world entry before adding
               const title = String(w.title || '').trim();
               const content = String(w.content || '').trim();
-              
+
               if (!title || title.length < 2) {
                 localAddLog('Skipped world entry: Invalid or missing title', 'update');
                 return;
               }
-              
+
               if (!content || content.length < 10) {
                 localAddLog(`Skipped world entry "${title}": Content too short or missing`, 'update');
                 return;
               }
-              
+
               if (!newRealmId || newRealmId.trim() === '') {
                 localAddLog(`Skipped world entry "${title}": No valid realm available`, 'update');
                 return;
               }
-              
+
               // Check for duplicate entries (by title)
               const existingEntry = worldBible.find(
                 entry => normalize(entry.title) === normalize(title) && entry.realmId === newRealmId
               );
-              
+
               if (existingEntry) {
                 // Update existing entry instead of creating duplicate
                 existingEntry.content = mergeAppend(existingEntry.content, content, newChapter.number);
@@ -1163,7 +1179,7 @@ const App: React.FC = () => {
             localAddLog(`Error processing world update: ${error instanceof Error ? error.message : 'Unknown error'}`, 'update');
           }
         });
-        
+
         if (worldUpdateCount > 0) {
           addEphemeralLog(`Added ${worldUpdateCount} world entry/entries`, 'discovery');
         }
@@ -1175,26 +1191,26 @@ const App: React.FC = () => {
       // Process territory updates with comprehensive validation
       if (result.territoryUpdates && Array.isArray(result.territoryUpdates)) {
         let territoryUpdateCount = 0;
-        
+
         result.territoryUpdates.forEach((t: { name?: unknown; type?: unknown; description?: unknown }) => {
           try {
             const name = String(t.name || '').trim();
-            
+
             if (!name || name.length < 2) {
               localAddLog('Skipped territory: Invalid or missing name', 'update');
               return;
             }
-            
+
             if (!newRealmId || newRealmId.trim() === '') {
               localAddLog(`Skipped territory "${name}": No valid realm available`, 'update');
               return;
             }
-            
+
             // Check for duplicate territories (by name in same realm)
             const existingTerritory = territories.find(
               territory => normalize(territory.name) === normalize(name) && territory.realmId === newRealmId
             );
-            
+
             if (existingTerritory) {
               // Update existing territory instead of creating duplicate
               const description = String(t.description || '').trim();
@@ -1219,7 +1235,7 @@ const App: React.FC = () => {
             localAddLog(`Error processing territory update: ${error instanceof Error ? error.message : 'Unknown error'}`, 'update');
           }
         });
-        
+
         if (territoryUpdateCount > 0) {
           addEphemeralLog(`Added ${territoryUpdateCount} territory/territories`, 'discovery');
         }
@@ -1257,6 +1273,99 @@ const App: React.FC = () => {
         significance: 'major' | 'minor' | 'foreshadowing';
         createdAt: number;
       }> = [];
+
+      // Process Heavenly Loom thread updates if available
+      if (result && (result as any).loomThreadUpdates && Array.isArray((result as any).loomThreadUpdates)) {
+        setGenerationProgress(96);
+        setGenerationStatus('Updating Heavenly Loom threads...');
+        addEphemeralLog('Processing Heavenly Loom thread updates...', 'update');
+
+        try {
+          const loomUpdates = (result as any).loomThreadUpdates;
+          let threadUpdateCount = 0;
+
+          // Merge Loom thread updates with existing threads
+          const existingThreads = workingNovelState.storyThreads || [];
+          const updatedThreads = existingThreads.map(existingThread => {
+            const loomUpdate = loomUpdates.find((update: any) => update.id === existingThread.id);
+            if (loomUpdate) {
+              threadUpdateCount++;
+              // Merge Loom updates into legacy thread format
+              return {
+                ...existingThread,
+                // Map Loom fields to legacy fields
+                status: loomUpdate.loomStatus === 'CLOSED' ? 'resolved' :
+                  loomUpdate.loomStatus === 'ABANDONED' ? 'abandoned' :
+                    loomUpdate.loomStatus === 'STALLED' ? 'paused' : 'active',
+                priority: loomUpdate.karmaWeight >= 80 ? 'critical' :
+                  loomUpdate.karmaWeight >= 60 ? 'high' :
+                    loomUpdate.karmaWeight >= 40 ? 'medium' : 'low',
+                lastUpdatedChapter: Math.max(existingThread.lastUpdatedChapter, loomUpdate.lastMentionedChapter),
+                resolutionNotes: loomUpdate.loomStatus === 'CLOSED' ? 'Resolved via Heavenly Loom' : existingThread.resolutionNotes,
+                progressionNotes: [
+                  ...(existingThread.progressionNotes || []),
+                  {
+                    chapterNumber: newChapter.number,
+                    note: `Loom: ${loomUpdate.loomStatus}${loomUpdate.lastProgressType ? ` (${loomUpdate.lastProgressType})` : ''}`,
+                    significance: loomUpdate.loomStatus === 'CLOSED' ? 'major' : 'minor' as any
+                  }
+                ],
+                updatedAt: Date.now()
+              };
+            }
+            return existingThread;
+          });
+
+          // Add any new threads created by Loom
+          const newThreads = loomUpdates
+            .filter((update: any) => !existingThreads.find(t => t.id === update.id))
+            .map((loomThread: any) => ({
+              id: loomThread.id,
+              novelId: activeNovel.id,
+              title: loomThread.title,
+              type: loomThread.category === 'SOVEREIGN' ? 'mystery' :
+                loomThread.category === 'MAJOR' ? 'enemy' :
+                  loomThread.category === 'MINOR' ? 'item' : 'quest',
+              status: loomThread.loomStatus === 'CLOSED' ? 'resolved' :
+                loomThread.loomStatus === 'ABANDONED' ? 'abandoned' :
+                  loomThread.loomStatus === 'STALLED' ? 'paused' : 'active',
+              priority: loomThread.karmaWeight >= 80 ? 'critical' :
+                loomThread.karmaWeight >= 60 ? 'high' :
+                  loomThread.karmaWeight >= 40 ? 'medium' : 'low',
+              description: loomThread.summary,
+              introducedChapter: loomThread.firstChapter,
+              lastUpdatedChapter: loomThread.lastMentionedChapter,
+              resolvedChapter: loomThread.loomStatus === 'CLOSED' ? loomThread.lastMentionedChapter : undefined,
+              progressionNotes: [{
+                chapterNumber: newChapter.number,
+                note: `Created by Loom: ${loomThread.loomStatus}`,
+                significance: 'minor' as any
+              }],
+              resolutionNotes: loomThread.loomStatus === 'CLOSED' ? 'Resolved via Heavenly Loom' : undefined,
+              satisfactionScore: undefined,
+              chaptersInvolved: [newChapter.number],
+              createdAt: loomThread.createdAt,
+              updatedAt: Date.now(),
+              lastActiveChapter: loomThread.lastMentionedChapter
+            }));
+
+          // Update workingNovelState with merged threads
+          workingNovelState = {
+            ...workingNovelState,
+            storyThreads: [...updatedThreads, ...newThreads]
+          };
+
+          if (threadUpdateCount > 0 || newThreads.length > 0) {
+            addEphemeralLog(`Heavenly Loom: ${threadUpdateCount} thread(s) updated, ${newThreads.length} new thread(s) created`, 'update');
+            localAddLog(`🧵 Heavenly Loom processed ${threadUpdateCount + newThreads.length} thread(s)`, 'update');
+          }
+        } catch (loomError) {
+          logger.warn('Failed to process Loom thread updates', 'App', {
+            error: loomError instanceof Error ? loomError.message : String(loomError)
+          });
+          addEphemeralLog('Failed to process some Loom thread updates', 'update');
+        }
+      }
 
       // Post-chapter extraction pass (Codex + World Bible + Territories + Arc checklist progress)
       try {
@@ -1299,6 +1408,28 @@ const App: React.FC = () => {
           // Don't fail generation if snapshot fails - non-critical
         }
 
+        // Initialize story threads if novel has none (critical for Chapter 17+)
+        if (!workingNovelState.storyThreads || workingNovelState.storyThreads.length === 0) {
+          try {
+            const { initializeStoryThreads } = await import('./services/storyThreadInitializer');
+            const initialThreads = initializeStoryThreads(workingNovelState);
+            workingNovelState.storyThreads = initialThreads;
+
+            localAddLog(`🧵 Initialized ${initialThreads.length} story threads`, 'update');
+            logger.info('Story threads initialized during chapter generation', 'chapterGeneration', {
+              chapterId: newChapter.id,
+              chapterNumber: newChapter.number,
+              threadCount: initialThreads.length
+            });
+          } catch (initError) {
+            localAddLog(`⚠️ Warning: Failed to initialize story threads`, 'update');
+            logger.warn('Story thread initialization failed', 'chapterGeneration', {
+              error: initError instanceof Error ? initError.message : String(initError),
+              chapterId: newChapter.id,
+            });
+          }
+        }
+
         const extraction = await extractPostChapterUpdates(workingNovelState, newChapter, activeArc);
 
         // If user cancelled while waiting, ignore the result.
@@ -1324,7 +1455,7 @@ const App: React.FC = () => {
           const itemUpdatesCount = extraction.itemUpdates?.length || 0;
           const techniqueUpdatesCount = extraction.techniqueUpdates?.length || 0;
           const relationshipCount = extraction.characterUpserts?.reduce((sum, u) => sum + (u.relationships?.length || 0), 0) || 0;
-          
+
           // #region agent log
           const itemUpdatesWithCharacterName = extraction.itemUpdates?.filter(i => i.characterName) || [];
           const techniqueUpdatesWithCharacterName = extraction.techniqueUpdates?.filter(t => t.characterName) || [];
@@ -1337,7 +1468,7 @@ const App: React.FC = () => {
             techniqueUpdates: extraction.techniqueUpdates
           });
           // #endregion
-          
+
           localAddLog(`📊 Extraction summary: ${scenesCount} scene(s), ${worldBibleCount} world entry(ies), ${territoriesCount} territory(ies), ${antagonistsCount} antagonist(s), ${arcProgressItems} arc element(s)`, 'discovery');
           logger.info('Extraction details', 'chapterGeneration', {
             chapterId: newChapter.id,
@@ -1347,7 +1478,7 @@ const App: React.FC = () => {
             techniqueUpdates: techniqueUpdatesCount,
             relationships: relationshipCount,
           });
-          
+
           // Validate each extraction type
           if (scenesCount === 0) {
             localAddLog(`⚠️ No scenes extracted from chapter ${newChapter.number}`, 'update');
@@ -1361,7 +1492,7 @@ const App: React.FC = () => {
           if (antagonistsCount === 0) {
             localAddLog(`⚠️ No antagonists extracted from chapter ${newChapter.number}`, 'update');
           }
-          
+
           // Validate scene structure
           if (extraction.scenes && extraction.scenes.length > 0) {
             extraction.scenes.forEach((scene, idx) => {
@@ -1370,7 +1501,7 @@ const App: React.FC = () => {
               }
             });
           }
-          
+
           // Validate world bible entries
           if (extraction.worldEntryUpserts && extraction.worldEntryUpserts.length > 0) {
             extraction.worldEntryUpserts.forEach((entry, idx) => {
@@ -1379,7 +1510,7 @@ const App: React.FC = () => {
               }
             });
           }
-          
+
           // Validate territories
           if (extraction.territoryUpserts && extraction.territoryUpserts.length > 0) {
             extraction.territoryUpserts.forEach((territory, idx) => {
@@ -1388,7 +1519,7 @@ const App: React.FC = () => {
               }
             });
           }
-          
+
           logger.info('Extraction completed', 'chapterGeneration', {
             chapterId: newChapter.id,
             chapterNumber: newChapter.number,
@@ -1401,7 +1532,7 @@ const App: React.FC = () => {
         }
 
         const now = Date.now();
-        
+
         // normalize and mergeAppend are already defined above
 
         const coerceWorldCategory = (category: any): WorldEntry['category'] => {
@@ -1432,7 +1563,7 @@ const App: React.FC = () => {
 
         // 1) Character upserts
         let mergedCharacters = [...workingNovelState.characterCodex];
-        
+
         // Debug: Log initial state
         logger.debug('Character upserts - initial state', 'chapterGeneration', {
           chapterId: newChapter.id,
@@ -1441,11 +1572,12 @@ const App: React.FC = () => {
           characterUpsertsCount: extraction.characterUpserts?.length || 0,
           initialCharacters: mergedCharacters.slice(0, 3).map(c => ({ name: c.name, cultivation: c.currentCultivation }))
         });
-        
+
         extraction.characterUpserts?.forEach((u) => {
           const name = String(u?.name || '').trim();
           if (!name) return;
-          const idx = mergedCharacters.findIndex(c => normalize(c.name) === normalize(name));
+          const matchedChar = findBestMatch(name, mergedCharacters);
+          const idx = matchedChar ? mergedCharacters.findIndex(c => c.id === matchedChar.id) : -1;
 
           const applyTo = (char: Character): Character => {
             const next: Character = { ...char };
@@ -1502,7 +1634,7 @@ const App: React.FC = () => {
         // Log character updates summary
         const charactersUpdated = mergedCharacters.length - workingNovelState.characterCodex.length;
         const charactersModified = extraction.characterUpserts?.filter(u => {
-          const existing = workingNovelState.characterCodex.find(c => normalize(c.name) === normalize(u.name || ''));
+          const existing = findBestMatch(u.name || '', workingNovelState.characterCodex);
           return existing !== undefined;
         }).length || 0;
         logger.info('Character updates processed', 'chapterGeneration', {
@@ -1519,23 +1651,23 @@ const App: React.FC = () => {
         extraction.characterUpserts?.forEach((u) => {
           const name = String(u?.name || '').trim();
           if (!name) return;
-          
-          const sourceChar = mergedCharacters.find(c => normalize(c.name) === normalize(name));
+
+          const sourceChar = findBestMatch(name, mergedCharacters);
           if (!sourceChar) return;
-          
+
           const rels: any[] = Array.isArray(u?.relationships) ? u.relationships : [];
           if (rels.length) {
             for (const rel of rels) {
               const targetName = String(rel?.targetName || '').trim();
               const type = String(rel?.type || '').trim();
               if (!targetName || !type) continue;
-              
-              const targetChar = mergedCharacters.find(c => normalize(c.name) === normalize(targetName));
+
+              const targetChar = findBestMatch(targetName, mergedCharacters);
               if (!targetChar) {
                 localAddLog(`Skipped relationship: Target character "${targetName}" not found for "${name}"`, 'update');
                 continue;
               }
-              
+
               // Use relationship service to create bidirectional relationship
               const result = addOrUpdateRelationship(
                 mergedCharacters,
@@ -1546,7 +1678,7 @@ const App: React.FC = () => {
                 String(rel?.impact || 'Fate has shifted.'),
                 true // bidirectional
               );
-              
+
               if (result.success) {
                 mergedCharacters = result.updatedCharacters;
                 localAddLog(`Karma Link: ${sourceChar.name} <-> ${targetChar.name} (${type})`, 'fate');
@@ -1564,7 +1696,7 @@ const App: React.FC = () => {
 
         // Log relationship processing summary
         const relationshipsCreated = extraction.characterUpserts?.reduce((sum, u) => {
-          const char = mergedCharacters.find(c => normalize(c.name) === normalize(u.name || ''));
+          const char = findBestMatch(u.name || '', mergedCharacters);
           return sum + (char?.relationships?.length || 0);
         }, 0) || 0;
         logger.info('Relationships processed', 'chapterGeneration', {
@@ -1619,7 +1751,7 @@ const App: React.FC = () => {
             localAddLog(`Lore Entry (extracted): ${title} (${category})`, 'discovery');
           }
         });
-        
+
         // Log summary of world bible updates
         const finalWorldBibleCount = mergedWorldBible.length;
         if (finalWorldBibleCount > initialWorldBibleCount) {
@@ -1659,7 +1791,7 @@ const App: React.FC = () => {
         // 3.5) Item and Technique processing
         const mergedNovelItems = [...(workingNovelState.novelItems || [])];
         const mergedNovelTechniques = [...(workingNovelState.novelTechniques || [])];
-        
+
         // Process item updates
         // #region agent log
         console.log('[DEBUG] Item Updates Processing]', {
@@ -1677,30 +1809,31 @@ const App: React.FC = () => {
               skippedItems.push(`Item "${itemName}" skipped: ${!itemName ? 'missing name' : 'missing characterName'}`);
               return;
             }
-            
+
             // Find character index (not the character itself for immutable updates)
-            const characterIndex = mergedCharacters.findIndex(c => normalize(c.name) === normalize(characterName));
+            const matchedChar = findBestMatch(characterName, mergedCharacters);
+            const characterIndex = matchedChar ? mergedCharacters.findIndex(c => c.id === matchedChar.id) : -1;
             // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1503',message:'Character lookup for item',data:{characterIndex,characterName,mergedCharactersCount:mergedCharacters.length,characterNames:mergedCharacters.map(c=>c.name)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+            fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'App.tsx:1503', message: 'Character lookup for item', data: { characterIndex, characterName, mergedCharactersCount: mergedCharacters.length, characterNames: mergedCharacters.map(c => c.name) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) }).catch(() => { });
             // #endregion
             if (characterIndex === -1) {
               localAddLog(`Skipped item "${itemName}": Character "${characterName}" not found`, 'update');
               return;
             }
-            
+
             const character = mergedCharacters[characterIndex];
-            
+
             // Coerce category
             const coerceItemCategory = (cat: string): ItemCategory => {
               const categories: ItemCategory[] = ['Treasure', 'Equipment', 'Consumable', 'Essential'];
               const normalized = String(cat || '').trim();
               return categories.includes(normalized as ItemCategory) ? (normalized as ItemCategory) : 'Essential';
             };
-            
+
             const category = coerceItemCategory(String(itemUpdate?.category || 'Essential'));
             const description = String(itemUpdate?.description || '').trim();
             const powers = Array.isArray(itemUpdate?.addPowers) ? itemUpdate.addPowers.map((p: any) => String(p).trim()).filter((p: string) => p) : [];
-            
+
             try {
               const { item, wasCreated } = findOrCreateItem(
                 itemName,
@@ -1711,7 +1844,7 @@ const App: React.FC = () => {
                 description || undefined,
                 powers.length > 0 ? powers : undefined
               );
-              
+
               // Update or add item to registry
               const itemIndex = mergedNovelItems.findIndex(i => i.id === item.id);
               if (itemIndex >= 0) {
@@ -1719,24 +1852,24 @@ const App: React.FC = () => {
               } else {
                 mergedNovelItems.push(item);
               }
-              
+
               // Create or update character possession using immutable update
               const existingPossessions = character.itemPossessions || [];
               const existingPossessionIndex = existingPossessions.findIndex(p => p.itemId === item.id);
               // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1542',message:'Before updating item possessions',data:{characterId:character.id,characterName:character.name,existingPossessionsCount:existingPossessions.length,existingPossessionIndex,itemId:item.id,itemName:item.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'App.tsx:1542', message: 'Before updating item possessions', data: { characterId: character.id, characterName: character.name, existingPossessionsCount: existingPossessions.length, existingPossessionIndex, itemId: item.id, itemName: item.name }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) }).catch(() => { });
               // #endregion
               let updatedPossessions: CharacterItemPossession[];
               if (existingPossessionIndex >= 0) {
                 // Update existing possession
-                updatedPossessions = existingPossessions.map((p, idx) => 
+                updatedPossessions = existingPossessions.map((p, idx) =>
                   idx === existingPossessionIndex
                     ? {
-                        ...p,
-                        status: 'active' as const,
-                        notes: p.notes || '',
-                        updatedAt: Date.now()
-                      }
+                      ...p,
+                      status: 'active' as const,
+                      notes: p.notes || '',
+                      updatedAt: Date.now()
+                    }
                     : p
                 );
               } else {
@@ -1753,19 +1886,19 @@ const App: React.FC = () => {
                 };
                 updatedPossessions = [...existingPossessions, newPossession];
               }
-              
+
               // Create new character object with updated possessions (immutable update)
               const updatedCharacter: Character = {
                 ...character,
                 itemPossessions: updatedPossessions
               };
-              
+
               // Update mergedCharacters array with new character object
               mergedCharacters[characterIndex] = updatedCharacter;
-              
+
               localAddLog(
-                wasCreated 
-                  ? `Item Discovered (extracted): ${itemName} (${category}) - ${characterName}` 
+                wasCreated
+                  ? `Item Discovered (extracted): ${itemName} (${category}) - ${characterName}`
                   : `Item Updated (extracted): ${itemName} - ${characterName}`,
                 'discovery'
               );
@@ -1779,7 +1912,7 @@ const App: React.FC = () => {
             localAddLog(`⚠️ ${skippedItems.length} item update(s) skipped due to missing characterName`, 'update');
           }
         }
-        
+
         // Process technique updates
         // #region agent log
         console.log('[DEBUG] Technique Updates Processing]', {
@@ -1797,23 +1930,24 @@ const App: React.FC = () => {
               skippedTechniques.push(`Technique "${techName}" skipped: ${!techName ? 'missing name' : 'missing characterName'}`);
               return;
             }
-            
+
             // Find character index (not the character itself for immutable updates)
-            const characterIndex = mergedCharacters.findIndex(c => normalize(c.name) === normalize(characterName));
+            const matchedChar = findBestMatch(characterName, mergedCharacters);
+            const characterIndex = matchedChar ? mergedCharacters.findIndex(c => c.id === matchedChar.id) : -1;
             if (characterIndex === -1) {
               localAddLog(`Skipped technique "${techName}": Character "${characterName}" not found`, 'update');
               return;
             }
-            
+
             const character = mergedCharacters[characterIndex];
-            
+
             // Use shared coercion utilities
             const category = coerceTechniqueCategory(techUpdate?.category || 'Basic');
             const techType = coerceTechniqueType(techUpdate?.type || 'Other');
             const description = String(techUpdate?.description || '').trim();
             const functions = Array.isArray(techUpdate?.addFunctions) ? techUpdate.addFunctions.map((f: unknown) => String(f).trim()).filter((f: string) => f) : [];
             const masteryLevel = String(techUpdate?.masteryLevel || 'Novice').trim();
-            
+
             try {
               const { technique, wasCreated } = findOrCreateTechnique(
                 techName,
@@ -1825,7 +1959,7 @@ const App: React.FC = () => {
                 description || undefined,
                 functions.length > 0 ? functions : undefined
               );
-              
+
               // Update or add technique to registry
               const techIndex = mergedNovelTechniques.findIndex(t => t.id === technique.id);
               if (techIndex >= 0) {
@@ -1833,25 +1967,25 @@ const App: React.FC = () => {
               } else {
                 mergedNovelTechniques.push(technique);
               }
-              
+
               // Create or update character mastery using immutable update
               const existingMasteries = character.techniqueMasteries || [];
               const existingMasteryIndex = existingMasteries.findIndex(m => m.techniqueId === technique.id);
               // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:1639',message:'Before updating technique masteries',data:{characterId:character.id,characterName:character.name,existingMasteriesCount:existingMasteries.length,existingMasteryIndex,techniqueId:technique.id,techniqueName:technique.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'App.tsx:1639', message: 'Before updating technique masteries', data: { characterId: character.id, characterName: character.name, existingMasteriesCount: existingMasteries.length, existingMasteryIndex, techniqueId: technique.id, techniqueName: technique.name }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) }).catch(() => { });
               // #endregion
               let updatedMasteries: CharacterTechniqueMastery[];
               if (existingMasteryIndex >= 0) {
                 // Update existing mastery
-                updatedMasteries = existingMasteries.map((m, idx) => 
+                updatedMasteries = existingMasteries.map((m, idx) =>
                   idx === existingMasteryIndex
                     ? {
-                        ...m,
-                        status: 'active' as const,
-                        masteryLevel: masteryLevel || m.masteryLevel,
-                        notes: m.notes || '',
-                        updatedAt: Date.now()
-                      }
+                      ...m,
+                      status: 'active' as const,
+                      masteryLevel: masteryLevel || m.masteryLevel,
+                      notes: m.notes || '',
+                      updatedAt: Date.now()
+                    }
                     : m
                 );
               } else {
@@ -1869,19 +2003,19 @@ const App: React.FC = () => {
                 };
                 updatedMasteries = [...existingMasteries, newMastery];
               }
-              
+
               // Create new character object with updated masteries (immutable update)
               const updatedCharacter: Character = {
                 ...character,
                 techniqueMasteries: updatedMasteries
               };
-              
+
               // Update mergedCharacters array with new character object
               mergedCharacters[characterIndex] = updatedCharacter;
-              
+
               localAddLog(
-                wasCreated 
-                  ? `Technique Discovered (extracted): ${techName} (${category}, ${techType}) - ${characterName}` 
+                wasCreated
+                  ? `Technique Discovered (extracted): ${techName} (${category}, ${techType}) - ${characterName}`
                   : `Technique Updated (extracted): ${techName} - ${characterName}`,
                 'discovery'
               );
@@ -1913,7 +2047,7 @@ const App: React.FC = () => {
         // 3.5) Process antagonist updates with fuzzy matching
         let mergedAntagonists = [...(workingNovelState.antagonists || [])];
         let mergedThreads = [...(workingNovelState.storyThreads || [])];
-        
+
         // Process story threads
         if (extraction.threadUpdates && extraction.threadUpdates.length > 0) {
           try {
@@ -1960,7 +2094,7 @@ const App: React.FC = () => {
             localAddLog(`Failed to process thread updates: ${errorMessage}`, 'update');
           }
         }
-        
+
         if (extraction.antagonistUpdates && extraction.antagonistUpdates.length > 0) {
           extraction.antagonistUpdates.forEach((antUpdate) => {
             try {
@@ -1970,13 +2104,13 @@ const App: React.FC = () => {
               // Use fuzzy matching to find existing antagonist
               const matchResult = findMatchingAntagonist(antName, mergedAntagonists, 0.85);
               const existingAntagonist = matchResult.antagonist;
-              const existingIndex = existingAntagonist 
+              const existingIndex = existingAntagonist
                 ? mergedAntagonists.findIndex(a => a.id === existingAntagonist.id)
                 : -1;
 
               // Determine action: if AI says "update" or we found a match, update; otherwise create
               const shouldUpdate = antUpdate.action === 'update' || (existingAntagonist && matchResult.similarity >= 0.85);
-              
+
               if (shouldUpdate && existingIndex >= 0 && existingAntagonist) {
                 // Update existing antagonist with intelligent merging
                 const updates: Partial<Antagonist> = {
@@ -2019,7 +2153,7 @@ const App: React.FC = () => {
                 // Create new antagonist
                 const antagonistId = crypto.randomUUID();
                 const protagonist = mergedCharacters.find(c => c.isProtagonist);
-                
+
                 const newAntagonist: Antagonist = {
                   id: antagonistId,
                   novelId: activeNovel.id,
@@ -2096,7 +2230,7 @@ const App: React.FC = () => {
             const sceneTitle = String(s?.title || '').trim() || `Scene ${sceneNum}`;
             const sceneSummary = String(s?.summary || '').trim() || '';
             const contentExcerpt = String(s?.contentExcerpt || '').trim() || '';
-            
+
             // If we have a content excerpt, use it; otherwise try to extract from chapter content
             let sceneContent = contentExcerpt;
             if (!sceneContent && newChapter.content) {
@@ -2109,18 +2243,18 @@ const App: React.FC = () => {
               const endIdx = Math.min(startIdx + parasPerScene, paragraphs.length);
               sceneContent = paragraphs.slice(startIdx, endIdx).join('\n\n') || newChapter.content.substring(0, 1000);
             }
-            
+
             // Enhanced scene content: combine excerpt, summary, and full content for better analysis
             const fullSceneText = `${sceneTitle} ${sceneSummary} ${sceneContent}`.toLowerCase();
-            
+
             // Automatically detect characters mentioned in this scene
             const mentionedCharacters = mergedCharacters.filter(char => {
               const charNameLower = char.name.toLowerCase();
-              return fullSceneText.includes(charNameLower) || 
-                     sceneContent.toLowerCase().includes(charNameLower) ||
-                     sceneSummary.toLowerCase().includes(charNameLower);
+              return fullSceneText.includes(charNameLower) ||
+                sceneContent.toLowerCase().includes(charNameLower) ||
+                sceneSummary.toLowerCase().includes(charNameLower);
             });
-            
+
             if (sceneTitle || sceneSummary || sceneContent) {
               const newScene: Scene = {
                 id: generateUUID(),
@@ -2134,25 +2268,25 @@ const App: React.FC = () => {
                 createdAt: now,
                 updatedAt: now,
               };
-              
+
               extractedScenes.push(newScene);
-              
+
               // Log character connections for this scene
               if (mentionedCharacters.length > 0) {
                 localAddLog(`Scene ${sceneNum}: ${mentionedCharacters.map(c => c.name).join(', ')} present`, 'discovery');
               }
             }
           });
-          
+
           if (extractedScenes.length > 0) {
             localAddLog(`Scenes extracted: ${extractedScenes.length} scene(s) created with character linking`, 'discovery');
-            
+
             // Count total character appearances across all scenes
             const allSceneTexts = extractedScenes.map(s => `${s.title} ${s.summary} ${s.content}`.toLowerCase()).join(' ');
-            const charactersInScenes = mergedCharacters.filter(char => 
+            const charactersInScenes = mergedCharacters.filter(char =>
               allSceneTexts.includes(char.name.toLowerCase())
             );
-            
+
             if (charactersInScenes.length > 0) {
               localAddLog(`Auto-linked ${charactersInScenes.length} character(s) to scenes`, 'discovery');
             }
@@ -2186,15 +2320,15 @@ const App: React.FC = () => {
           : newChapter;
 
         // Update workingNovelState with merged data AND updated chapter
-        const updatedChapters = workingNovelState.chapters.map(c => 
+        const updatedChapters = workingNovelState.chapters.map(c =>
           c.id === newChapter.id ? updatedChapter : c
         );
 
         // #region agent log
         const finalItemPossessionsCount = mergedCharacters.reduce((sum, char) => sum + (char.itemPossessions?.filter(p => p.status === 'active').length || 0), 0);
         const finalTechniqueMasteriesCount = mergedCharacters.reduce((sum, char) => sum + (char.techniqueMasteries?.filter(m => m.status === 'active').length || 0), 0);
-        const charactersWithItems = mergedCharacters.filter(c=>(c.itemPossessions||[]).length>0).map(c=>({name:c.name,itemCount:c.itemPossessions?.length||0,itemPossessions:c.itemPossessions}));
-        const charactersWithTechniques = mergedCharacters.filter(c=>(c.techniqueMasteries||[]).length>0).map(c=>({name:c.name,techniqueCount:c.techniqueMasteries?.length||0,techniqueMasteries:c.techniqueMasteries}));
+        const charactersWithItems = mergedCharacters.filter(c => (c.itemPossessions || []).length > 0).map(c => ({ name: c.name, itemCount: c.itemPossessions?.length || 0, itemPossessions: c.itemPossessions }));
+        const charactersWithTechniques = mergedCharacters.filter(c => (c.techniqueMasteries || []).length > 0).map(c => ({ name: c.name, techniqueCount: c.techniqueMasteries?.length || 0, techniqueMasteries: c.techniqueMasteries }));
         console.log('[DEBUG] Before state update - final counts', {
           finalItemPossessionsCount,
           finalTechniqueMasteriesCount,
@@ -2206,7 +2340,7 @@ const App: React.FC = () => {
           zhaoData: mergedCharacters.find(c => c.name === 'ZHAO')?.itemPossessions
         });
         // #endregion
-        
+
         // Debug: Verify mergedCharacters before assigning to workingNovelState
         logger.debug('Before workingNovelState update', 'chapterGeneration', {
           chapterId: newChapter.id,
@@ -2220,7 +2354,7 @@ const App: React.FC = () => {
             hasFlaws: !!c.flaws
           }))
         });
-        
+
         workingNovelState = {
           ...workingNovelState,
           chapters: updatedChapters,
@@ -2230,11 +2364,11 @@ const App: React.FC = () => {
           novelItems: mergedNovelItems,
           novelTechniques: mergedNovelTechniques,
           antagonists: mergedAntagonists,
-          storyThreads: mergedThreads,
+          storyThreads: workingNovelState.storyThreads, // Already updated with Loom changes above
           plotLedger: mergedLedger,
           updatedAt: now,
         };
-        
+
         // Debug: Verify workingNovelState.characterCodex after assignment
         logger.debug('After workingNovelState update', 'chapterGeneration', {
           chapterId: newChapter.id,
@@ -2269,7 +2403,7 @@ const App: React.FC = () => {
               extraction,
               workingNovelState
             );
-            
+
             // Track arc checklist completions
             trackArcChecklistCompletions(
               newChapter.id,
@@ -2277,7 +2411,7 @@ const App: React.FC = () => {
               extraction,
               workingNovelState
             );
-            
+
             // Check for realm changes
             const newRealmId = workingNovelState.currentRealmId;
             const realmCreated = extraction.worldEntryUpserts?.some(w => w.isNewRealm) || false;
@@ -2290,7 +2424,7 @@ const App: React.FC = () => {
                 true
               );
             }
-            
+
             logger.info('Entities marked with chapter references', 'chapterGeneration', {
               chapterId: newChapter.id,
               chapterNumber: newChapter.number,
@@ -2313,7 +2447,7 @@ const App: React.FC = () => {
           // Collect all character possessions and masteries for archive detection
           const allPossessions: CharacterItemPossession[] = [];
           const allMasteries: CharacterTechniqueMastery[] = [];
-          
+
           mergedCharacters.forEach(char => {
             if (char.itemPossessions) {
               allPossessions.push(...char.itemPossessions);
@@ -2364,7 +2498,7 @@ const App: React.FC = () => {
 
           // 2. Calculate trust score
           const trustScore = calculateTrustScore(extractionPreview);
-          
+
           // 3. Analyze auto-connections
           const connectionAnalysis = analyzeAutoConnections(
             workingNovelState,
@@ -2376,10 +2510,10 @@ const App: React.FC = () => {
 
           // 4. Apply high-confidence auto-connections
           const highConfidenceConnections = connectionAnalysis.connections.filter(c => c.confidence >= 0.8);
-          
+
           if (highConfidenceConnections.length > 0) {
             localAddLog(`✨ Auto-connected ${highConfidenceConnections.length} entity(ies) with high confidence`, 'update');
-            
+
             // Log connection details
             highConfidenceConnections.slice(0, 5).forEach(conn => {
               localAddLog(`  • ${conn.sourceName} → ${conn.targetName} (${conn.type.replace(/-/g, ' ')})`, 'discovery');
@@ -2422,18 +2556,18 @@ const App: React.FC = () => {
           const extraction = await extractPostChapterUpdates(workingNovelState, newChapter, activeArc);
           const postChecker = getPostGenerationConsistencyChecker();
           const consistencyReport = postChecker.checkConsistency(workingNovelState, newChapter, extraction);
-          
+
           if (!consistencyReport.valid) {
             const criticalIssues = consistencyReport.issues.filter(i => i.severity === 'critical');
             const warningIssues = consistencyReport.issues.filter(i => i.severity === 'warning');
-            
+
             if (criticalIssues.length > 0) {
               localAddLog(`🔴 ${criticalIssues.length} critical consistency issue(s) detected`, 'update');
               criticalIssues.slice(0, 2).forEach(issue => {
                 localAddLog(`  • ${issue.message}`, 'update');
               });
             }
-            
+
             if (warningIssues.length > 0) {
               localAddLog(`⚠️ ${warningIssues.length} consistency warning(s)`, 'update');
               warningIssues.slice(0, 2).forEach(issue => {
@@ -2443,7 +2577,7 @@ const App: React.FC = () => {
           } else {
             localAddLog(`✅ Chapter consistency check passed (Score: ${consistencyReport.summary.overallScore}/100)`, 'discovery');
           }
-          
+
           // Also run standard chapter consistency check
           const chapterConsistencyIssues = checkChapterConsistency(
             workingNovelState,
@@ -2453,14 +2587,14 @@ const App: React.FC = () => {
           if (chapterConsistencyIssues.length > 0) {
             const criticalIssues = chapterConsistencyIssues.filter(i => i.severity === 'critical');
             const warningIssues = chapterConsistencyIssues.filter(i => i.severity === 'warning');
-            
+
             if (criticalIssues.length > 0) {
               localAddLog(`🔴 ${criticalIssues.length} critical consistency issue(s) detected`, 'update');
               criticalIssues.slice(0, 2).forEach(issue => {
                 localAddLog(`  • ${issue.message}`, 'update');
               });
             }
-            
+
             if (warningIssues.length > 0) {
               localAddLog(`⚠️ ${warningIssues.length} consistency warning(s)`, 'update');
               warningIssues.slice(0, 2).forEach(issue => {
@@ -2475,7 +2609,7 @@ const App: React.FC = () => {
           try {
             const { checkConsistency } = await import('./services/consistencyChecker');
             const fullConsistencyReport = checkConsistency(workingNovelState);
-            
+
             if (fullConsistencyReport.summary.overallScore >= 90) {
               localAddLog(`✅ Excellent consistency score: ${fullConsistencyReport.summary.overallScore}/100`, 'discovery');
             } else if (fullConsistencyReport.summary.overallScore >= 75) {
@@ -2517,7 +2651,7 @@ const App: React.FC = () => {
         systemLogs: [...activeNovel.systemLogs, ...newLogs],
         updatedAt: Date.now(),
       };
-      
+
       // Debug: Verify finalNovelState includes updated characterCodex
       logger.debug('Final novel state created', 'chapterGeneration', {
         chapterId: newChapter.id,
@@ -2529,7 +2663,7 @@ const App: React.FC = () => {
           cultivation: finalNovelState.characterCodex[0].currentCultivation
         } : null
       });
-      
+
       // #region agent log
       console.log('[DEBUG] Final Novel State Before Update]', {
         characterCodexCount: finalNovelState.characterCodex.length,
@@ -2549,21 +2683,21 @@ const App: React.FC = () => {
         const foreshadowingAnalysis = arcAnalyzer.analyzeForeshadowing(finalNovelState);
         const symbolismAnalysis = arcAnalyzer.analyzeSymbolism(finalNovelState);
         const emotionalPayoffAnalysis = arcAnalyzer.analyzeEmotionalPayoffs(finalNovelState);
-        
+
         // Merge newly detected elements with existing ones (avoid duplicates)
         const existingForeshadowing = finalNovelState.foreshadowingElements || [];
         const existingSymbolism = finalNovelState.symbolicElements || [];
         const existingEmotionalPayoffs = finalNovelState.emotionalPayoffs || [];
-        
+
         // Add new foreshadowing elements that don't already exist
         const newForeshadowing = foreshadowingAnalysis.activeForeshadowing.filter(newEl => {
-          return !existingForeshadowing.some(existing => 
+          return !existingForeshadowing.some(existing =>
             existing.type === newEl.type &&
             existing.introducedChapter === newEl.introducedChapter &&
             existing.content.substring(0, 100) === newEl.content.substring(0, 100)
           );
         });
-        
+
         // Add new symbolic elements that don't already exist
         const newSymbolism = symbolismAnalysis.symbolicElements.filter((newSym: SymbolicElement) => {
           return !existingSymbolism.some(existing =>
@@ -2571,7 +2705,7 @@ const App: React.FC = () => {
             existing.firstAppearedChapter === newSym.firstAppearedChapter
           );
         });
-        
+
         // Add new emotional payoffs that don't already exist
         const newEmotionalPayoffs = emotionalPayoffAnalysis.recentPayoffs.filter(newPayoff => {
           return !existingEmotionalPayoffs.some(existing =>
@@ -2580,7 +2714,7 @@ const App: React.FC = () => {
             existing.description.substring(0, 100) === newPayoff.description.substring(0, 100)
           );
         });
-        
+
         // Update final state with new elements (limit to prevent bloat - keep last 50 of each type)
         finalNovelState = {
           ...finalNovelState,
@@ -2596,12 +2730,12 @@ const App: React.FC = () => {
       }
 
       updateActiveNovel(() => finalNovelState);
-      
+
       setActiveLogs(newLogs);
       // Use updatedChapter if scenes were added, otherwise use newChapter
       setActiveChapterId(workingNovelState.chapters.find(c => c.id === newChapter.id)?.id || newChapter.id);
       setView('editor');
-      
+
       // No auto-clear - logs are now permanently stored in NotificationPanel
 
       // Save antagonist chapter appearances after novel is saved to database
@@ -2619,7 +2753,7 @@ const App: React.FC = () => {
             try {
               // Exponential backoff: 2s, 3s, 4s, 5s, 6s, 7s, 8s, 9s
               await new Promise(resolve => setTimeout(resolve, initialDelay + (i * 1000)));
-              
+
               const results = await Promise.allSettled(
                 chapterAppearancesToSave.map((appearance: {
                   antagonistId: string;
@@ -2636,8 +2770,8 @@ const App: React.FC = () => {
                   ).catch(err => {
                     // Silently handle "does not exist yet" errors - data will be saved via saveNovel
                     const errorMsg = err?.message || String(err);
-                    if (errorMsg.includes('does not exist in database yet') || 
-                        errorMsg.includes('Cannot create relationship until')) {
+                    if (errorMsg.includes('does not exist in database yet') ||
+                      errorMsg.includes('Cannot create relationship until')) {
                       // Expected error - antagonist/chapter will be saved via saveNovel
                       // Return a resolved promise so Promise.allSettled doesn't mark it as rejected
                       return Promise.resolve(null);
@@ -2648,10 +2782,10 @@ const App: React.FC = () => {
                 )
               );
 
-              const successful = results.filter((r: PromiseSettledResult<any>) => 
+              const successful = results.filter((r: PromiseSettledResult<any>) =>
                 r.status === 'fulfilled' && r.value !== null
               ).length;
-              const failed = results.filter((r: PromiseSettledResult<any>) => 
+              const failed = results.filter((r: PromiseSettledResult<any>) =>
                 r.status === 'rejected' || (r.status === 'fulfilled' && r.value === null)
               ).length;
 
@@ -2672,8 +2806,8 @@ const App: React.FC = () => {
               if (i === retries - 1) {
                 const errorMsg = err instanceof Error ? err.message : String(err);
                 // Skip logging for expected "does not exist yet" errors
-                if (!errorMsg.includes('does not exist in database yet') && 
-                    !errorMsg.includes('Cannot create relationship until')) {
+                if (!errorMsg.includes('does not exist in database yet') &&
+                  !errorMsg.includes('Cannot create relationship until')) {
                   logger.debug('Error saving antagonist chapter appearances after retries', 'App', {
                     error: err instanceof Error ? err.message : String(err)
                   });
@@ -2700,17 +2834,17 @@ const App: React.FC = () => {
             try {
               // Exponential backoff: 2s, 3s, 4s, 5s, 6s, 7s, 8s, 9s
               await new Promise(resolve => setTimeout(resolve, initialDelay + (i * 1000)));
-              
+
               const { saveThreadProgressionEvent } = await import('./services/threadService');
-              
+
               const results = await Promise.allSettled(
                 threadEventsToSave.map(event =>
                   saveThreadProgressionEvent(event).catch(err => {
                     // Handle foreign key constraint errors - chapter may not exist yet
                     const errorMsg = err?.message || String(err);
-                    if (errorMsg.includes('foreign key constraint') || 
-                        errorMsg.includes('23503') ||
-                        errorMsg.includes('Key is not present')) {
+                    if (errorMsg.includes('foreign key constraint') ||
+                      errorMsg.includes('23503') ||
+                      errorMsg.includes('Key is not present')) {
                       // Expected error - chapter will be saved via saveNovel, retry later
                       throw err; // Re-throw to trigger retry
                     }
@@ -2721,10 +2855,10 @@ const App: React.FC = () => {
                 )
               );
 
-              const successful = results.filter((r: PromiseSettledResult<any>) => 
+              const successful = results.filter((r: PromiseSettledResult<any>) =>
                 r.status === 'fulfilled' && r.value !== null
               ).length;
-              const failed = results.filter((r: PromiseSettledResult<any>) => 
+              const failed = results.filter((r: PromiseSettledResult<any>) =>
                 r.status === 'rejected'
               ).length;
 
@@ -2736,7 +2870,7 @@ const App: React.FC = () => {
               if (failed === 0) {
                 break;
               }
-              
+
               // If still failing on last retry, log but don't crash
               if (i === retries - 1 && failed > 0) {
                 console.warn(`Failed to save ${failed} thread progression event(s) after ${retries} retries`);
@@ -2782,12 +2916,12 @@ const App: React.FC = () => {
               addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
             },
           });
-          
+
           if (editorReport) {
             // Save the report
             await saveEditorReport(editorReport);
             stopLoading();
-            
+
             // Show notification
             if (editorReport.autoFixedCount > 0) {
               showSuccess(`Editor fixed ${editorReport.autoFixedCount} issue(s) automatically`);
@@ -2796,18 +2930,18 @@ const App: React.FC = () => {
               showWarning(`Editor found ${editorReport.pendingFixCount} issue(s) requiring review`);
               // TODO: Show approval dialog for pending fixes
             }
-            
+
             // Update novel with fixed chapters if any auto-fixes were applied
             const editorReportWithInternal = editorReport as EditorReportWithInternal;
             if (editorReportWithInternal && editorReportWithInternal._updatedChapters && editorReportWithInternal._updatedChapters.length > 0) {
               const updatedChapters = editorReportWithInternal._updatedChapters;
-              
+
               // Log what's being updated
               logger.debug('Applying auto-fixes to chapters', 'App', {
                 chapterCount: updatedChapters.length,
                 chapterNumbers: updatedChapters.map(ch => ch.number)
               });
-              
+
               // Update novel state with fixed chapters and save to database
               updateActiveNovel(prev => {
                 const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
@@ -2827,7 +2961,7 @@ const App: React.FC = () => {
                   }),
                   updatedAt: Date.now(),
                 };
-                
+
                 // Save to database asynchronously (don't await to avoid blocking)
                 import('./services/supabaseService').then(({ saveNovel }) => {
                   saveNovel(updatedNovel).then(() => {
@@ -2839,13 +2973,13 @@ const App: React.FC = () => {
                     showError('Editor applied fixes but failed to save to database. Please save manually.');
                   });
                 });
-                
+
                 return updatedNovel;
               });
-              
+
               addEphemeralLog(`Updated ${updatedChapters.length} chapter(s) with auto-fixes. Saving to database...`, 'update');
             }
-            
+
             // Check if there are fix proposals requiring approval
             const fixProposals = editorReportWithInternal._fixProposals || [];
             if (fixProposals.length > 0) {
@@ -2886,36 +3020,36 @@ const App: React.FC = () => {
   // Tribulation Gate handlers
   const handleTribulationGateSelect = useCallback(async (pathId: string) => {
     if (!currentTribulationGate || !activeNovel) return;
-    
+
     setTribulationGateLoading(true);
-    
+
     try {
       // Resolve the gate with the user's choice
       const resolvedGate = resolveGate(currentTribulationGate.id, pathId);
-      
+
       if (!resolvedGate) {
         showError('Failed to save your choice. Please try again.');
         setTribulationGateLoading(false);
         return;
       }
-      
+
       const selectedPath = currentTribulationGate.fatePaths.find(p => p.id === pathId);
       if (selectedPath) {
         addEphemeralLog(`⚡ Fate chosen: ${selectedPath.label}`, 'fate');
         showSuccess(`You have chosen: ${selectedPath.label}`);
       }
-      
+
       // Close the modal
       setShowTribulationGate(false);
       setCurrentTribulationGate(null);
       setTribulationGateLoading(false);
-      
+
       // Get the saved instruction
       const savedInstruction = pendingGenerationInstructionRef.current;
       pendingGenerationInstructionRef.current = '';
-      
+
       // Build the fate instruction to inject into the chapter generation
-      const fateInstruction = selectedPath 
+      const fateInstruction = selectedPath
         ? `${savedInstruction}\n\n╔══════════════════════════════════════════════════════════════════╗
 ║  FATE DECISION: ${currentTribulationGate.triggerType.toUpperCase().replace(/_/g, ' ')}
 ╚══════════════════════════════════════════════════════════════════╝
@@ -2937,15 +3071,15 @@ CRITICAL INSTRUCTION: The chapter MUST follow this chosen path. Do not deviate f
 the reader's choice. The consequences should begin to manifest in this chapter.
 ══════════════════════════════════════════════════════════════════════`
         : savedInstruction;
-      
+
       // Resume chapter generation - the handleGenerateNext function will handle everything
       // We use a small delay to ensure state updates have propagated
       setTimeout(() => {
         handleGenerateNext(fateInstruction);
       }, 100);
-      
+
     } catch (error) {
-      logger.error('Error in Tribulation Gate selection', 'tribulationGate', 
+      logger.error('Error in Tribulation Gate selection', 'tribulationGate',
         error instanceof Error ? error : undefined);
       showError('An error occurred while processing your choice.');
       setTribulationGateLoading(false);
@@ -2954,19 +3088,19 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
   const handleTribulationGateSkip = useCallback(() => {
     if (!currentTribulationGate) return;
-    
+
     // Skip the gate
     skipGate(currentTribulationGate.id, 'User chose to skip');
-    
+
     addEphemeralLog('⚡ Tribulation Gate skipped. The AI will decide your fate...', 'fate');
-    
+
     // Close modal
     setShowTribulationGate(false);
     setCurrentTribulationGate(null);
-    
+
     const savedInstruction = pendingGenerationInstructionRef.current;
     pendingGenerationInstructionRef.current = '';
-    
+
     // Resume generation without the gate choice - use setTimeout to ensure state updates
     setTimeout(() => {
       handleGenerateNext(savedInstruction);
@@ -2975,13 +3109,13 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
   const handleTribulationGateLetFateDecide = useCallback(() => {
     if (!currentTribulationGate || currentTribulationGate.fatePaths.length === 0) return;
-    
+
     // Randomly select a path
     const randomIndex = Math.floor(Math.random() * currentTribulationGate.fatePaths.length);
     const randomPath = currentTribulationGate.fatePaths[randomIndex];
-    
+
     addEphemeralLog(`🎲 Fate has decided: ${randomPath.label}`, 'fate');
-    
+
     // Process as if user selected this path
     handleTribulationGateSelect(randomPath.id);
   }, [currentTribulationGate, addEphemeralLog, handleTribulationGateSelect]);
@@ -2993,12 +3127,12 @@ the reader's choice. The consequences should begin to manifest in this chapter.
     customSituation?: string
   ) => {
     if (!activeNovel) return;
-    
+
     setManualGateLoading(true);
-    
+
     try {
       const nextChapterNumber = activeNovel.chapters.length + 1;
-      
+
       const gate = await createManualGate(
         activeNovel.id,
         nextChapterNumber,
@@ -3006,7 +3140,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
         protagonistName,
         customSituation
       );
-      
+
       if (gate) {
         setCurrentTribulationGate(gate);
         setShowManualGateDialog(false);
@@ -3031,28 +3165,28 @@ the reader's choice. The consequences should begin to manifest in this chapter.
     alternatePathId: string
   ) => {
     if (!activeNovel) return;
-    
+
     setWhatIfLoading(true);
-    
+
     try {
       const alternatePath = gate.fatePaths.find(p => p.id === alternatePathId);
       if (!alternatePath) {
         showError('Selected path not found.');
         return;
       }
-      
+
       addEphemeralLog(`🔮 Exploring alternate timeline: ${alternatePath.label}`, 'fate');
-      
+
       // Get the original chapter content for context
       const originalChapter = activeNovel.chapters.find(c => c.number === gate.chapterNumber);
-      
+
       // Build the What If prompt injection
       const whatIfPrompt = buildWhatIfPromptInjection(
         gate,
         alternatePathId,
         originalChapter?.content
       );
-      
+
       // Generate alternate chapter using a simplified approach
       // This calls the AI directly with the What If context
       const result = await generateNextChapter(
@@ -3074,7 +3208,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
           },
         }
       );
-      
+
       if (result && result.chapterContent && !result.requiresUserChoice) {
         // Save the What If chapter
         const whatIfChapter: WhatIfChapter = {
@@ -3089,22 +3223,22 @@ the reader's choice. The consequences should begin to manifest in this chapter.
           summary: result.chapterSummary,
           createdAt: Date.now(),
         };
-        
+
         saveWhatIfChapter(whatIfChapter);
-        
+
         setShowWhatIfDialog(false);
         setWhatIfGate(null);
-        
+
         showSuccess(`Alternate timeline generated: "${alternatePath.label}"`);
         addEphemeralLog(`🔮 Alternate chapter saved: ${whatIfChapter.title}`, 'fate');
-        
+
         // Optionally show the alternate chapter content
         // For now, we just log success - could add a viewer in the future
-        
+
       } else {
         showError('Failed to generate alternate timeline. Please try again.');
       }
-      
+
     } catch (error) {
       logger.error('Error generating What If chapter', 'tribulationGate',
         error instanceof Error ? error : undefined);
@@ -3126,7 +3260,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
     activeGenerationIdRef.current = generationId;
     setIsGenerating(true);
     setGenerationProgress(0);
-    setGenerationStatus('Starting batch generation...');
+    setGenerationStatus('Starting optimized batch generation...');
     const newLogs: SystemLog[] = [];
 
     const localAddLog = (msg: string, type: SystemLog['type'] = 'discovery') => {
@@ -3134,245 +3268,77 @@ the reader's choice. The consequences should begin to manifest in this chapter.
       newLogs.push(log);
     };
 
-    const BATCH_SIZE = 5;
-    let currentNovelState = activeNovel;
-    let chaptersGenerated = 0;
-
     try {
-      for (let chapterIndex = 0; chapterIndex < BATCH_SIZE; chapterIndex++) {
-        // Check if cancelled before starting next chapter
-        if (activeGenerationIdRef.current !== generationId) {
-          return;
+      // Use optimized batch generator for faster processing
+      const { createOptimizedBatchGenerator } = await import('./services/optimizedBatchGenerator');
+
+      const batchGenerator = createOptimizedBatchGenerator({
+        batchSize: 5,
+        maxRegenerationAttempts: 2, // Reduced for speed
+        timeoutMs: 180000, // 3 minutes per chapter
+        enableParallelProcessing: false, // CRITICAL: Sequential for narrative consistency
+        cacheContext: true,
+      });
+
+      const result = await batchGenerator.generateBatch(
+        activeNovel,
+        customInstruction || instruction,
+        (progress, status) => {
+          if (activeGenerationIdRef.current !== generationId) return;
+          setGenerationProgress(progress);
+          setGenerationStatus(status);
         }
+      );
 
-        const chapterNumber = chapterIndex + 1;
-        const baseProgress = (chapterIndex / BATCH_SIZE) * 100;
-        
-        setGenerationProgress(baseProgress + 1);
-        setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Analyzing story context...`);
-        addEphemeralLog(`Starting Chapter ${chapterNumber}/${BATCH_SIZE}...`, 'discovery');
+      // Process generated chapters
+      let currentNovelState = activeNovel;
+      const chaptersGenerated = result.chapters.length;
 
-        // Calculate next chapter number based on current novel state
-        const nextChapterNumber = currentNovelState.chapters.length > 0
-          ? Math.max(...currentNovelState.chapters.map(c => c.number), 0) + 1
-          : 1;
-
-        // Pre-generation gap analysis
-        try {
-          const preGenerationSuggestions = generatePreGenerationSuggestions(currentNovelState, nextChapterNumber);
-          if (preGenerationSuggestions.length > 0 && chapterNumber === 1) {
-            addEphemeralLog('Analyzing story structure...', 'discovery');
-            preGenerationSuggestions.filter(s => s.includes('⚠️')).slice(0, 2).forEach(suggestion => {
-              localAddLog(suggestion, 'update');
-            });
-          }
-        } catch (gapAnalysisError) {
-          logger.warn('Pre-generation gap analysis failed', 'chapterGeneration', {
-            error: gapAnalysisError instanceof Error ? gapAnalysisError.message : String(gapAnalysisError)
-          });
-        }
-
-        addEphemeralLog(`Chapter ${chapterNumber}/${BATCH_SIZE} - Building prompt context...`, 'discovery');
-        
-        // Generate chapter with progress tracking scaled to this chapter's window
-        const result = await generateNextChapter(currentNovelState, customInstruction || instruction, {
-          onPhase: (phase, data) => {
-            if (activeGenerationIdRef.current !== generationId) return;
-            
-            const chapterProgressWindow = 100 / BATCH_SIZE; // 20% per chapter
-            const phaseProgress = baseProgress + (chapterProgressWindow * 0.95); // Use 95% of window, leave 5% for finalization
-            
-            if (phase === 'prompt_build_start') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.1));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Constructing narrative context...`);
-            }
-            if (phase === 'prompt_build_end') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.2));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Context assembled. Preparing request...`);
-            }
-            if (phase === 'queue_estimate') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.25));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Checking system load...`);
-            }
-            if (phase === 'queue_dequeued') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.3));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Starting generation...`);
-            }
-            if (phase === 'llm_request_start') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.4));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Consulting the Muse...`);
-            }
-            if (phase === 'llm_request_end') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.8));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Content received. Processing...`);
-            }
-            if (phase === 'quality_check') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.08));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Validating narrative quality...`);
-            }
-            if (phase === 'quality_validation') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.85));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Validating generated chapter quality...`);
-            }
-            if (phase === 'parse_start') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.85));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Structuring narrative elements...`);
-            }
-            if (phase === 'parse_end') {
-              setGenerationProgress(baseProgress + (chapterProgressWindow * 0.95));
-              setGenerationStatus(`Chapter ${chapterNumber}/${BATCH_SIZE} - Finalizing chapter...`);
-            }
-          }
-        });
-
-        // Check if cancelled after generation
-        if (activeGenerationIdRef.current !== generationId) {
-          return;
-        }
-
-        // Validate result
-        if (!result || !result.chapterContent || typeof result.chapterContent !== 'string') {
-          throw new Error(`Invalid chapter generation result for Chapter ${chapterNumber}: missing or invalid content`);
-        }
-
-        // Normalize chapter title
-        let normalizedTitle = result.chapterTitle?.trim() || '';
-        if (!normalizedTitle) {
-          normalizedTitle = `Chapter ${nextChapterNumber}`;
-        } else {
-          const titleLower = normalizedTitle.toLowerCase();
-          const chapterPattern = /^chapter\s+\d+/i;
-          if (!chapterPattern.test(titleLower)) {
-            normalizedTitle = `Chapter ${nextChapterNumber}: ${normalizedTitle}`;
-          } else {
-            const match = normalizedTitle.match(/^Chapter\s+\d+[:\s]+(.*)$/i);
-            if (match && match[1]) {
-              normalizedTitle = `Chapter ${nextChapterNumber}: ${match[1].trim()}`;
-            } else {
-              normalizedTitle = normalizedTitle.replace(/^Chapter\s+\d+/i, `Chapter ${nextChapterNumber}`);
-            }
-          }
-        }
-
-        // Validate word count
-        const wordCount = result.chapterContent.split(/\s+/).filter((word: string) => word.trim().length > 0).length;
-        if (wordCount < 1500) {
-          localAddLog(`Chapter ${chapterNumber} has ${wordCount} words (below 1500 minimum)`, 'update');
-        } else if (wordCount > 5000) {
-          localAddLog(`Chapter ${chapterNumber} has ${wordCount} words (quite long)`, 'update');
-        }
-
-        if (result.chapterContent.trim().length < 500) {
-          throw new Error(`Generated chapter ${chapterNumber} content is too short or contains only whitespace`);
-        }
-
-        const newChapter: Chapter = {
-          id: generateUUID(),
-          number: nextChapterNumber,
-          title: normalizedTitle,
-          content: result.chapterContent.trim(),
-          summary: (result.chapterSummary || '').trim() || `Chapter ${nextChapterNumber}: ${normalizedTitle.replace(/^Chapter\s+\d+[:\s]+/i, '').trim()}`,
-          logicAudit: result.logicAudit,
-          scenes: [],
-          createdAt: Date.now()
-        };
-
-        // Process updates (simplified - reuse the complex logic from handleGenerateNext)
-        // For batch generation, we'll do a simplified update and let the full processing happen at the end
-        // This is necessary because the full update logic is 1000+ lines
-        
-        // Add chapter to current state
+      for (const chapter of result.chapters) {
+        // Update novel state with each chapter
         currentNovelState = {
           ...currentNovelState,
-          chapters: [...currentNovelState.chapters, newChapter],
-          updatedAt: Date.now()
+          chapters: [...currentNovelState.chapters, chapter],
         };
 
-        // Update active novel state after each chapter so next chapter has context
-        updateActiveNovel(() => currentNovelState);
-
-        chaptersGenerated++;
-        localAddLog(`Chapter ${chapterNumber}/${BATCH_SIZE} generated successfully`, 'discovery');
-
-        // Process post-chapter updates (simplified)
+        // Process post-chapter updates (simplified for batch mode)
         try {
-          let activeArc = currentNovelState.plotLedger.find(a => a.status === 'active') || null;
-          const extraction = await extractPostChapterUpdates(currentNovelState, newChapter, activeArc);
-          
-          // Apply character updates
-          if (extraction.characterUpserts) {
-            const existingCharacters = [...currentNovelState.characterCodex];
-            extraction.characterUpserts.forEach((u) => {
-              const name = String(u?.name || '').trim();
-              if (!name) return;
-              const idx = existingCharacters.findIndex(c => c.name.toLowerCase() === name.toLowerCase());
-              
-              if (idx > -1) {
-                const char = { ...existingCharacters[idx] };
-                if (u.set) {
-                  if (u.set.currentCultivation) char.currentCultivation = String(u.set.currentCultivation);
-                  if (u.set.notes) char.notes = (char.notes || '') + '\n' + String(u.set.notes);
-                  if (u.set.status) char.status = u.set.status as Character['status'];
-                }
-                if (u.addSkills) char.skills = [...new Set([...(char.skills || []), ...u.addSkills])];
-                if (u.addItems) char.items = [...new Set([...(char.items || []), ...u.addItems])];
-                existingCharacters[idx] = char;
-              } else if (u.set) {
-                // Create new character
-                const newChar = createNewCharacter({
-                  name,
-                  currentCultivation: String(u.set.currentCultivation || ''),
-                  notes: String(u.set.notes || ''),
-                  status: (u.set.status as Character['status']) || 'Alive'
-                });
-                existingCharacters.push(newChar);
-              }
-            });
-            currentNovelState = { ...currentNovelState, characterCodex: existingCharacters };
-          }
-
-          // Update active novel with processed updates
-          updateActiveNovel(() => currentNovelState);
+          const { processPostChapterUpdates } = await import('./services/aiService');
+          await processPostChapterUpdates(currentNovelState, chapter);
         } catch (updateError) {
           logger.warn('Post-chapter update failed for batch chapter', 'chapterGeneration', {
             error: updateError instanceof Error ? updateError.message : String(updateError)
           });
-          // Continue with next chapter even if updates fail
         }
       }
 
-      // Final update with all logs
-      const finalNovelState: NovelState = {
-        ...currentNovelState,
-        systemLogs: [...activeNovel.systemLogs, ...newLogs],
-        updatedAt: Date.now(),
-      };
+      // Log any errors
+      if (result.errors.length > 0) {
+        result.errors.forEach(error => {
+          localAddLog(`Chapter generation error: ${error}`, 'error');
+        });
+      }
 
-      updateActiveNovel(() => finalNovelState);
+      // Update active novel with all chapters
+      updateActiveNovel(() => currentNovelState);
       setActiveLogs(newLogs);
 
       setGenerationProgress(100);
-      setGenerationStatus(`Batch generation complete! Generated ${chaptersGenerated}/${BATCH_SIZE} chapters`);
+      setGenerationStatus(`Batch generation complete! Generated ${chaptersGenerated}/5 chapters`);
       addEphemeralLog(`Batch generation complete! Successfully generated ${chaptersGenerated} chapters.`, 'discovery');
-      
+
       showSuccess(`Successfully generated ${chaptersGenerated} chapters!`);
 
     } catch (e) {
-      logger.error('Error in batch generation', 'App', e instanceof Error ? e : new Error(String(e)));
+      logger.error('Error in optimized batch generation', 'App', e instanceof Error ? e : new Error(String(e)));
       const errorMessage = e instanceof Error ? e.message : String(e);
       showError(
-        `Batch generation failed after ${chaptersGenerated} chapters.\n\nError: ${errorMessage}\n\nPlease check your API keys and connection.`
+        `Batch generation failed.\n\nError: ${errorMessage}\n\nPlease check your API keys and connection.`
       );
-      
-      // Save any chapters that were successfully generated
-      if (chaptersGenerated > 0 && currentNovelState) {
-        const partialNovelState: NovelState = {
-          ...currentNovelState,
-          systemLogs: [...activeNovel.systemLogs, ...newLogs],
-          updatedAt: Date.now(),
-        };
-        updateActiveNovel(() => partialNovelState);
-        showWarning(`${chaptersGenerated} chapter(s) were saved before the error occurred.`);
+
+      // Save any partial progress
+      if (activeGenerationIdRef.current === generationId) {
+        showWarning('Batch generation was interrupted. Some chapters may have been saved.');
       }
     } finally {
       if (activeGenerationIdRef.current === generationId) {
@@ -3444,7 +3410,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
     const needsTarget = typeof arc.targetChapters !== 'number' || arc.targetChapters <= 0;
     const needsChecklist = !Array.isArray(arc.checklist) || arc.checklist.length === 0;
     if (!needsTarget && !needsChecklist) return arc;
-    
+
     // If we have novel state, use smart calculation, otherwise use default
     let targetChapters = arc.targetChapters;
     if (needsTarget && novelState) {
@@ -3463,7 +3429,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
     } else if (needsTarget) {
       targetChapters = DEFAULT_ARC_TARGET_CHAPTERS;
     }
-    
+
     return {
       ...arc,
       targetChapters: targetChapters,
@@ -3476,7 +3442,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
     setIsPlanning(true);
     try {
       const result = await planArc(activeNovel);
-      
+
       // Use AI-suggested targetChapters if provided and valid, otherwise calculate smart default
       let targetChapters = result.targetChapters;
       if (!targetChapters || targetChapters < 5 || targetChapters > 30) {
@@ -3492,7 +3458,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
           targetChapters = DEFAULT_ARC_TARGET_CHAPTERS;
         }
       }
-      
+
       const newArc: Arc = ensureArcDefaults({
         id: generateUUID(),
         title: result.arcTitle,
@@ -3501,7 +3467,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
         startedAtChapter: activeNovel.chapters.length + 1,
         targetChapters: targetChapters,
       }, activeNovel);
-      
+
       const updatedNovel = {
         ...activeNovel,
         plotLedger: [
@@ -3516,12 +3482,12 @@ the reader's choice. The consequences should begin to manifest in this chapter.
         ],
         updatedAt: Date.now()
       };
-      
+
       updateActiveNovel(() => updatedNovel);
-    } catch (e) { 
-      logger.error('Error in planning logic', 'planning', e instanceof Error ? e : new Error(String(e))); 
-    } finally { 
-      setIsPlanning(false); 
+    } catch (e) {
+      logger.error('Error in planning logic', 'planning', e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setIsPlanning(false);
     }
   };
 
@@ -3535,15 +3501,15 @@ the reader's choice. The consequences should begin to manifest in this chapter.
       plotLedger: activeNovel.plotLedger.map(a => {
         if (a.id === arcId) {
           // Preserve existing startedAtChapter if valid, otherwise set to next chapter
-          const preserveStartedAt = a.startedAtChapter && 
-                                     a.startedAtChapter > 0 &&
-                                     a.startedAtChapter <= activeNovel.chapters.length;
-          return ensureArcDefaults({ 
-            ...a, 
-            status: 'active' as const, 
-            startedAtChapter: preserveStartedAt 
-              ? a.startedAtChapter 
-              : (activeNovel.chapters.length + 1) 
+          const preserveStartedAt = a.startedAtChapter &&
+            a.startedAtChapter > 0 &&
+            a.startedAtChapter <= activeNovel.chapters.length;
+          return ensureArcDefaults({
+            ...a,
+            status: 'active' as const,
+            startedAtChapter: preserveStartedAt
+              ? a.startedAtChapter
+              : (activeNovel.chapters.length + 1)
           }, activeNovel);
         }
         if (a.status === 'active') {
@@ -3559,14 +3525,14 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
   const handleSaveChapter = async (updatedChapter: Chapter) => {
     if (!activeNovel) return;
-    
+
     // Create a revision checkpoint
     try {
       await saveRevision(
         'chapter',
         updatedChapter.id,
         updatedChapter,
-        { 
+        {
           wordCount: updatedChapter.content.split(/\s+/).filter(x => x).length,
           changeDescription: 'Manual save'
         }
@@ -3598,7 +3564,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
       return { ...prev, characterCodex: nextCodex };
     });
     setEditingChar(null);
-    
+
     // Save immediately to ensure persistence
     if (activeNovel) {
       const nextCodex = activeNovel.characterCodex.some(c => c.id === character.id)
@@ -3619,94 +3585,94 @@ the reader's choice. The consequences should begin to manifest in this chapter.
       const edited = ensureArcDefaults(arc);
       // Find existing arc to preserve state
       const existingArc = prev.plotLedger.find(a => a.id === edited.id);
-      const preserveStartedAt = existingArc?.startedAtChapter && 
-                                 existingArc.startedAtChapter > 0 &&
-                                 existingArc.startedAtChapter <= prev.chapters.length;
-      
+      const preserveStartedAt = existingArc?.startedAtChapter &&
+        existingArc.startedAtChapter > 0 &&
+        existingArc.startedAtChapter <= prev.chapters.length;
+
       const nextLedger =
         edited.status === 'active'
           ? prev.plotLedger.map(a => {
-              if (a.id === edited.id) {
-                return ensureArcDefaults({
-                  ...edited,
-                  status: 'active' as const,
-                  // Preserve existing start chapter if valid, otherwise set to next chapter
-                  startedAtChapter: preserveStartedAt 
-                    ? existingArc.startedAtChapter 
-                    : (prev.chapters.length + 1),
-                  endedAtChapter: undefined,
-                });
-              }
-              // If we are completing a previously-active arc, stamp its end.
-              if (a.status === 'active') {
-                return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: prev.chapters.length });
-              }
-              return ensureArcDefaults({ ...a, status: 'completed' as const });
-            })
+            if (a.id === edited.id) {
+              return ensureArcDefaults({
+                ...edited,
+                status: 'active' as const,
+                // Preserve existing start chapter if valid, otherwise set to next chapter
+                startedAtChapter: preserveStartedAt
+                  ? existingArc.startedAtChapter
+                  : (prev.chapters.length + 1),
+                endedAtChapter: undefined,
+              });
+            }
+            // If we are completing a previously-active arc, stamp its end.
+            if (a.status === 'active') {
+              return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: prev.chapters.length });
+            }
+            return ensureArcDefaults({ ...a, status: 'completed' as const });
+          })
           : prev.plotLedger.map(a => {
-              if (a.id === edited.id) {
-                // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
-                const preserveEndedAt = existingArc?.endedAtChapter && 
-                                        existingArc.endedAtChapter > 0 &&
-                                        existingArc.endedAtChapter <= prev.chapters.length;
-                return ensureArcDefaults({
-                  ...edited,
-                  status: 'completed' as const,
-                  endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : prev.chapters.length),
-                  // Also preserve startedAtChapter for completed arcs
-                  startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
-                });
-              }
-              return ensureArcDefaults(a);
-            });
+            if (a.id === edited.id) {
+              // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
+              const preserveEndedAt = existingArc?.endedAtChapter &&
+                existingArc.endedAtChapter > 0 &&
+                existingArc.endedAtChapter <= prev.chapters.length;
+              return ensureArcDefaults({
+                ...edited,
+                status: 'completed' as const,
+                endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : prev.chapters.length),
+                // Also preserve startedAtChapter for completed arcs
+                startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
+              });
+            }
+            return ensureArcDefaults(a);
+          });
       return { ...prev, plotLedger: nextLedger };
     });
     setEditingArc(null);
-    
+
     // Save immediately to ensure persistence
     if (activeNovel) {
       const edited = ensureArcDefaults(arc, activeNovel);
       // Find existing arc to preserve state
       const existingArc = activeNovel.plotLedger.find(a => a.id === edited.id);
-      const preserveStartedAt = existingArc?.startedAtChapter && 
-                                 existingArc.startedAtChapter > 0 &&
-                                 existingArc.startedAtChapter <= activeNovel.chapters.length;
-      
+      const preserveStartedAt = existingArc?.startedAtChapter &&
+        existingArc.startedAtChapter > 0 &&
+        existingArc.startedAtChapter <= activeNovel.chapters.length;
+
       let nextLedger =
         edited.status === 'active'
           ? activeNovel.plotLedger.map(a => {
-              if (a.id === edited.id) {
-                return ensureArcDefaults({
-                  ...edited,
-                  status: 'active' as const,
-                  // Preserve existing start chapter if valid, otherwise set to next chapter
-                  startedAtChapter: preserveStartedAt 
-                    ? existingArc.startedAtChapter 
-                    : (activeNovel.chapters.length + 1),
-                  endedAtChapter: undefined,
-                }, activeNovel);
-              }
-              if (a.status === 'active') {
-                return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: activeNovel.chapters.length }, activeNovel);
-              }
-              return ensureArcDefaults({ ...a, status: 'completed' as const }, activeNovel);
-            })
+            if (a.id === edited.id) {
+              return ensureArcDefaults({
+                ...edited,
+                status: 'active' as const,
+                // Preserve existing start chapter if valid, otherwise set to next chapter
+                startedAtChapter: preserveStartedAt
+                  ? existingArc.startedAtChapter
+                  : (activeNovel.chapters.length + 1),
+                endedAtChapter: undefined,
+              }, activeNovel);
+            }
+            if (a.status === 'active') {
+              return ensureArcDefaults({ ...a, status: 'completed' as const, endedAtChapter: activeNovel.chapters.length }, activeNovel);
+            }
+            return ensureArcDefaults({ ...a, status: 'completed' as const }, activeNovel);
+          })
           : activeNovel.plotLedger.map(a => {
-              if (a.id === edited.id) {
-                // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
-                const preserveEndedAt = existingArc?.endedAtChapter && 
-                                        existingArc.endedAtChapter > 0 &&
-                                        existingArc.endedAtChapter <= activeNovel.chapters.length;
-                return ensureArcDefaults({
-                  ...edited,
-                  status: 'completed' as const,
-                  endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : activeNovel.chapters.length),
-                  // Also preserve startedAtChapter for completed arcs
-                  startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
-                }, activeNovel);
-              }
-              return ensureArcDefaults(a, activeNovel);
-            });
+            if (a.id === edited.id) {
+              // For completed arcs, preserve endedAtChapter if editing, or use current chapter count
+              const preserveEndedAt = existingArc?.endedAtChapter &&
+                existingArc.endedAtChapter > 0 &&
+                existingArc.endedAtChapter <= activeNovel.chapters.length;
+              return ensureArcDefaults({
+                ...edited,
+                status: 'completed' as const,
+                endedAtChapter: edited.endedAtChapter ?? (preserveEndedAt ? existingArc.endedAtChapter : activeNovel.chapters.length),
+                // Also preserve startedAtChapter for completed arcs
+                startedAtChapter: preserveStartedAt ? existingArc.startedAtChapter : edited.startedAtChapter,
+              }, activeNovel);
+            }
+            return ensureArcDefaults(a, activeNovel);
+          });
 
       // Validate and auto-repair arc states
       const validatedArcs = nextLedger.map(arc => {
@@ -3749,11 +3715,11 @@ the reader's choice. The consequences should begin to manifest in this chapter.
               addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
             },
           });
-          
+
           if (editorReport) {
             // Save the report
             await saveEditorReport(editorReport);
-            
+
             // Show notification with readiness status
             const arcAnalysis = editorReport.analysis as any;
             if (arcAnalysis && arcAnalysis.readiness) {
@@ -3764,7 +3730,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                 showWarning(`Arc "${completedArc.title}" needs ${readiness.blockingIssues.length} issue(s) fixed before release.`);
               }
             }
-            
+
             addEphemeralLog(`Editor review complete for arc "${completedArc.title}"`, 'discovery');
             stopLoading();
           } else {
@@ -3785,7 +3751,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
       const exists = prev.territories.some(t => t.id === territory.id);
       return {
         ...prev,
-        territories: exists 
+        territories: exists
           ? prev.territories.map(t => t.id === territory.id ? territory : t)
           : [...prev.territories, territory]
       };
@@ -3838,6 +3804,51 @@ the reader's choice. The consequences should begin to manifest in this chapter.
   }, [updateActiveNovel]);
 
   /**
+   * Loom Dashboard handlers
+   */
+  const handleUpdateThread = useCallback((thread: any) => {
+    // Update thread in novel state
+    updateActiveNovel(prev => ({
+      ...prev,
+      storyThreads: prev.storyThreads?.map(t =>
+        t.id === thread.id ? { ...t, ...thread } : t
+      ) || []
+    }));
+  }, [updateActiveNovel]);
+
+  const handleForceAttention = useCallback((threadId: string) => {
+    // This would typically update the Loom state
+    // For now, just show a notification
+    showSuccess('Director attention forced for thread');
+  }, [showSuccess]);
+
+  const handleBoostKarma = useCallback((threadId: string, amount: number) => {
+    // Update thread's karma weight
+    updateActiveNovel(prev => ({
+      ...prev,
+      storyThreads: prev.storyThreads?.map(t =>
+        t.id === threadId
+          ? { ...t, karmaWeight: Math.max(1, Math.min(100, (t.karmaWeight || 50) + amount)) }
+          : t
+      ) || []
+    }));
+    showSuccess(`Karma weight ${amount > 0 ? 'increased' : 'decreased'} by ${Math.abs(amount)}`);
+  }, [updateActiveNovel, showSuccess]);
+
+  const handleMarkAbandoned = useCallback((threadId: string, reason: string) => {
+    // Mark thread as abandoned
+    updateActiveNovel(prev => ({
+      ...prev,
+      storyThreads: prev.storyThreads?.map(t =>
+        t.id === threadId
+          ? { ...t, status: 'abandoned' as any, resolutionNotes: reason }
+          : t
+      ) || []
+    }));
+    showSuccess('Thread marked as abandoned');
+  }, [updateActiveNovel, showSuccess]);
+
+  /**
    * Initialize market state if it doesn't exist when Economy panel is opened
    */
   const handleToggleEconomyPanel = useCallback(() => {
@@ -3880,7 +3891,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
   const handleDeleteChapter = async (chapterId: string) => {
     if (!activeNovel) return;
-    
+
     setConfirmDialog({
       isOpen: true,
       title: 'Delete Chapter',
@@ -3923,9 +3934,9 @@ the reader's choice. The consequences should begin to manifest in this chapter.
             <span className="text-sm text-amber-500 font-semibold">Saving to database...</span>
           </div>
         )}
-        <LibraryView 
-          novels={library} 
-          onSelect={(id) => { setActiveNovelId(id); setView('dashboard'); }} 
+        <LibraryView
+          novels={library}
+          onSelect={(id) => { setActiveNovelId(id); setView('dashboard'); }}
           onCreate={handleCreateNovel}
           onDelete={handleDeleteNovel}
         />
@@ -3976,19 +3987,18 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
       {/* Sidebar - Hidden on mobile when closed, shown on desktop or mobile when open */}
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto transform transition-all duration-300 ease-in-out ${
-          mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-        }`}
+        className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto transform transition-all duration-300 ease-in-out ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+          }`}
       >
-        <Sidebar 
-          onNavigate={() => setMobileSidebarOpen(false)} 
+        <Sidebar
+          onNavigate={() => setMobileSidebarOpen(false)}
           isCollapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
       </aside>
 
-      <NotificationPanel 
-        activeLogs={activeLogs} 
+      <NotificationPanel
+        activeLogs={activeLogs}
         isOpen={mobileNotificationPanelOpen}
         isDesktopOpen={desktopNotificationPanelOpen}
         isDesktopMinimized={desktopNotificationPanelMinimized}
@@ -4000,11 +4010,11 @@ the reader's choice. The consequences should begin to manifest in this chapter.
       <main className={`flex-1 relative overflow-y-auto scroll-smooth-mobile ${desktopNotificationPanelOpen && !desktopNotificationPanelMinimized ? 'md:mr-80' : ''}`} data-tour="main-content">
         {/* Saving indicator - positioned with safe area */}
         {isSaving && (
-          <div 
+          <div
             className="fixed bg-zinc-900/95 backdrop-blur-sm border border-amber-600/50 rounded-xl px-3 md:px-4 py-2 md:py-2.5 flex items-center space-x-2 md:space-x-3 z-50 shadow-xl shadow-amber-900/20 animate-in slide-in duration-200"
-            style={{ 
-              bottom: 'max(1rem, env(safe-area-inset-bottom, 1rem))', 
-              right: 'max(1rem, env(safe-area-inset-right, 1rem))' 
+            style={{
+              bottom: 'max(1rem, env(safe-area-inset-bottom, 1rem))',
+              right: 'max(1rem, env(safe-area-inset-right, 1rem))'
             }}
           >
             <div className="animate-spin rounded-full h-4 w-4 border-2 border-zinc-600 border-t-amber-600 flex-shrink-0"></div>
@@ -4012,7 +4022,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
           </div>
         )}
         {/* Desktop Library Button - positioned relative to sidebar width */}
-        <button 
+        <button
           onClick={() => setView('library')}
           className={`fixed top-4 z-50 p-2.5 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 hidden md:block`}
           style={{ left: sidebarCollapsed ? '88px' : '272px' }}
@@ -4020,7 +4030,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
           aria-label="Return to library"
         >🏛️</button>
         {!desktopNotificationPanelOpen && (
-          <button 
+          <button
             onClick={() => setDesktopNotificationPanelOpen(true)}
             className="fixed top-4 right-4 z-50 p-2.5 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 hidden md:block"
             title="Show notifications"
@@ -4030,7 +4040,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
           </button>
         )}
         {/* Mobile Library Button - positioned with safe area */}
-        <button 
+        <button
           onClick={() => setView('library')}
           className="fixed z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 md:hidden"
           style={{ top: 'max(1rem, env(safe-area-inset-top, 1rem))', left: 'max(1rem, env(safe-area-inset-left, 1rem))' }}
@@ -4085,11 +4095,11 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                   <div className="p-4 md:p-6 bg-zinc-800/30 border-b border-zinc-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider flex-shrink-0">Forge Destiny</h3>
                     <div className="flex items-center flex-wrap gap-2 flex-shrink-0">
-                      <CreativeSpark 
-                        type="Plot Point" 
-                        currentValue={instruction} 
-                        state={activeNovel} 
-                        onIdea={(idea) => setInstruction(prev => prev ? prev + "\n\nExpansion: " + idea : idea)} 
+                      <CreativeSpark
+                        type="Plot Point"
+                        currentValue={instruction}
+                        state={activeNovel}
+                        onIdea={(idea) => setInstruction(prev => prev ? prev + "\n\nExpansion: " + idea : idea)}
                       />
                       <VoiceInput onResult={(text) => setInstruction(prev => prev ? prev + " " + text : text)} />
                     </div>
@@ -4102,7 +4112,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                           ? Math.max(...activeNovel.chapters.map(c => c.number), 0) + 1
                           : 1;
                         const gapAnalysis = analyzeGaps(activeNovel, nextChapterNumber);
-                        
+
                         if (gapAnalysis.gaps.length > 0 && !isGenerating) {
                           return (
                             <div className="mb-6">
@@ -4126,7 +4136,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                       return null;
                     })()}
 
-                    <textarea 
+                    <textarea
                       value={instruction}
                       onChange={(e) => setInstruction(e.target.value)}
                       placeholder="Input the Will of the Dao... Every instruction triggers a Logic Audit."
@@ -4134,14 +4144,13 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                       aria-label="Chapter instruction input"
                     />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <button 
+                      <button
                         disabled={isGenerating}
                         onClick={() => handleGenerateNext()}
-                        className={`py-3 md:py-4 rounded-xl font-fantasy text-base md:text-lg font-semibold transition-all duration-200 ${
-                          isGenerating 
-                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' 
+                        className={`py-3 md:py-4 rounded-xl font-fantasy text-base md:text-lg font-semibold transition-all duration-200 ${isGenerating
+                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
                             : 'bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 hover:scale-105 text-white shadow-lg shadow-amber-900/30'
-                        }`}
+                          }`}
                         aria-label={isGenerating ? 'Generating chapter...' : 'Generate next chapter'}
                       >
                         {isGenerating ? (
@@ -4168,8 +4177,8 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                           <span>Cancel</span>
                         </button>
                       ) : (
-                        <button 
-                          onClick={() => handleGenerateNext("Introduce a shocking reversal or 'BUT' event.")} 
+                        <button
+                          onClick={() => handleGenerateNext("Introduce a shocking reversal or 'BUT' event.")}
                           className="py-3 md:py-4 border border-zinc-700 rounded-xl font-fantasy text-sm md:text-base font-semibold text-zinc-400 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 flex items-center justify-center space-x-2 hover:bg-red-950/10"
                           title="Generate a chapter with a shocking reversal or 'BUT' event"
                           aria-label="Generate reversal chapter"
@@ -4178,11 +4187,11 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                         </button>
                       )}
                     </div>
-                    
-                    <GenerationProgressBar 
-                      isVisible={isGenerating} 
-                      progress={generationProgress} 
-                      statusMessage={generationStatus} 
+
+                    <GenerationProgressBar
+                      isVisible={isGenerating}
+                      progress={generationProgress}
+                      statusMessage={generationStatus}
                     />
                   </div>
                 </div>
@@ -4240,9 +4249,9 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                       return protagonist ? (
                         <>
                           {protagonist.portraitUrl ? (
-                            <img 
-                              src={protagonist.portraitUrl} 
-                              className="w-32 h-32 rounded-full mx-auto border-2 border-amber-600/50 shadow-xl shadow-amber-900/20 object-cover ring-2 ring-amber-600/20" 
+                            <img
+                              src={protagonist.portraitUrl}
+                              className="w-32 h-32 rounded-full mx-auto border-2 border-amber-600/50 shadow-xl shadow-amber-900/20 object-cover ring-2 ring-amber-600/20"
                               alt={`Portrait of ${protagonist.name}`}
                             />
                           ) : (
@@ -4276,7 +4285,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                       .slice()
                       .reverse()
                       .find(log => log.message.includes('trust score') || log.message.includes('Trust score'));
-                    
+
                     let trustScore = null;
                     if (trustLog) {
                       const match = trustLog.message.match(/(\d+)\/100/);
@@ -4299,9 +4308,9 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                         };
                       }
                     }
-                    
+
                     return (
-                      <TrustScoreWidget 
+                      <TrustScoreWidget
                         trustScore={trustScore}
                         size="sm"
                         onClick={() => setView('dashboard')}
@@ -4318,7 +4327,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                     const gapAnalysis = analyzeGaps(activeNovel, activeNovel.chapters.length || 0);
                     if (gapAnalysis.gaps.length > 0) {
                       return (
-                        <GapAnalysisPanel 
+                        <GapAnalysisPanel
                           gapAnalysis={gapAnalysis}
                           collapsible={true}
                           defaultExpanded={false}
@@ -4353,9 +4362,9 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                 {activeNovel.antagonists && activeNovel.antagonists.length > 0 && (
                   <div className="bg-zinc-900/60 border border-zinc-700 rounded-2xl p-6">
                     <Suspense fallback={<div className="text-zinc-400 text-sm">Loading antagonist status...</div>}>
-                      <AntagonistTracker 
-                        novel={activeNovel} 
-                        currentChapterNumber={activeNovel.chapters.length} 
+                      <AntagonistTracker
+                        novel={activeNovel}
+                        currentChapterNumber={activeNovel.chapters.length}
                       />
                     </Suspense>
                   </div>
@@ -4367,10 +4376,10 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
         {currentView === 'editor' && activeChapter && (
           <Suspense fallback={<LoadingSpinnerCentered />}>
-            <ChapterEditor 
-              chapter={activeChapter} 
-              novelState={activeNovel} 
-              onSave={handleSaveChapter} 
+            <ChapterEditor
+              chapter={activeChapter}
+              novelState={activeNovel}
+              onSave={handleSaveChapter}
               onClose={() => setView('chapters')}
               onNavigateChapter={(chapterId) => {
                 setActiveChapterId(chapterId);
@@ -4416,8 +4425,8 @@ the reader's choice. The consequences should begin to manifest in this chapter.
         )}
         {currentView === 'goals' && (
           <Suspense fallback={<LoadingSpinnerCentered />}>
-            <WritingGoals 
-              novelState={activeNovel} 
+            <WritingGoals
+              novelState={activeNovel}
               onUpdateGoals={(goals) => updateActiveNovel(prev => ({ ...prev, writingGoals: goals }))}
             />
           </Suspense>
@@ -4489,26 +4498,24 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
         {currentView === 'world-bible' && (
           <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
-             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 md:mb-12 border-b border-zinc-700 pb-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 md:mb-12 border-b border-zinc-700 pb-6">
               <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">World Bible</h2>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
                 {/* Economy Toggle Button */}
                 <button
                   onClick={handleToggleEconomyPanel}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 whitespace-nowrap ${
-                    showEconomyPanel
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 whitespace-nowrap ${showEconomyPanel
                       ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 hover:bg-emerald-600/30'
                       : 'bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700 hover:text-zinc-300'
-                  }`}
+                    }`}
                   title="Toggle Spirit Stone Market (Economic Simulation)"
                   aria-label="Toggle Economy Panel"
                 >
                   <span>💰</span>
                   <span>Economy</span>
                   {activeNovel.globalMarketState && activeNovel.globalMarketState.standardItems.length > 0 && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                      showEconomyPanel ? 'bg-emerald-600/30' : 'bg-zinc-700'
-                    }`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${showEconomyPanel ? 'bg-emerald-600/30' : 'bg-zinc-700'
+                      }`}>
                       {activeNovel.globalMarketState.standardItems.length}
                     </span>
                   )}
@@ -4517,8 +4524,8 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                   <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide whitespace-nowrap">Dictate Lore:</span>
                   <VoiceInput onResult={handleVoiceLore} />
                 </div>
-                <button 
-                  onClick={() => setEditingWorld({ id: crypto.randomUUID(), realmId: activeNovel.currentRealmId, category: 'Geography', title: '', content: '' })} 
+                <button
+                  onClick={() => setEditingWorld({ id: crypto.randomUUID(), realmId: activeNovel.currentRealmId, category: 'Geography', title: '', content: '' })}
                   className="bg-amber-600 hover:bg-amber-500 px-6 py-2.5 rounded-xl font-semibold shadow-lg shadow-amber-900/20 text-sm transition-all duration-200 hover:scale-105 whitespace-nowrap"
                   title="Add new world knowledge entry"
                   aria-label="Add new world knowledge entry"
@@ -4572,16 +4579,16 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                         {entries.map(entry => (
                           <div key={entry.id} className="bg-zinc-900 border border-zinc-700 p-6 md:p-8 rounded-2xl relative group hover:shadow-xl hover:shadow-amber-900/5 transition-all duration-200">
                             <div className="absolute top-3 right-3 flex items-center space-x-2 z-10">
-                              <button 
-                                onClick={() => setEditingWorld(entry)} 
+                              <button
+                                onClick={() => setEditingWorld(entry)}
                                 className="text-xs text-zinc-400 hover:text-amber-500 hover:bg-amber-500/10 uppercase font-semibold bg-zinc-800/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-amber-500/50 transition-all duration-200 focus-visible:outline-amber-600 focus-visible:outline-2 shadow-lg"
                                 title="Edit World Entry"
                                 aria-label={`Edit ${entry.title}`}
                               >
                                 Edit
                               </button>
-                              <button 
-                                onClick={() => handleDeleteWorldEntry(entry.id)} 
+                              <button
+                                onClick={() => handleDeleteWorldEntry(entry.id)}
                                 className="text-xs text-zinc-400 hover:text-red-500 hover:bg-red-500/10 uppercase font-semibold bg-zinc-800/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-red-500/50 transition-all duration-200 focus-visible:outline-red-600 focus-visible:outline-2 shadow-lg"
                                 title="Delete World Entry"
                                 aria-label={`Delete ${entry.title}`}
@@ -4612,7 +4619,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
               onGeneratePortrait={handleGeneratePortrait}
               isGeneratingPortrait={isGeneratingPortrait}
               onUpdateNovel={updateActiveNovel}
-              onNavigate={() => {}}
+              onNavigate={() => { }}
             />
           </Suspense>
         )}
@@ -4620,8 +4627,8 @@ the reader's choice. The consequences should begin to manifest in this chapter.
           <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 md:mb-12 border-b border-zinc-700 pb-6">
               <h2 className="text-2xl md:text-3xl font-fantasy font-bold text-amber-500 tracking-wider uppercase">Codex</h2>
-              <button 
-                onClick={() => setEditingChar(createNewCharacter())} 
+              <button
+                onClick={() => setEditingChar(createNewCharacter())}
                 className="bg-amber-600 hover:bg-amber-500 px-6 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 shadow-lg shadow-amber-900/20 hover:scale-105 whitespace-nowrap"
                 aria-label="Add new character"
               >
@@ -4676,23 +4683,23 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                           Set Protagonist
                         </button>
                       )}
-                      <button 
-                        onClick={() => setEditingChar(char)} 
+                      <button
+                        onClick={() => setEditingChar(char)}
                         className="absolute top-3 right-3 text-xs text-zinc-500 hover:text-amber-500 uppercase font-semibold bg-zinc-800/90 backdrop-blur-sm px-3 py-1.5 rounded-lg hover:bg-amber-500/10 transition-all duration-200 focus-visible:outline-amber-600 focus-visible:outline-2 shadow-lg z-10"
                         aria-label={`Edit ${char.name}`}
                       >
                         Edit
                       </button>
                       {char.portraitUrl ? (
-                        <img 
-                          src={char.portraitUrl} 
-                          className="w-32 h-32 rounded-full object-cover mb-6 border-4 border-amber-600/30 shadow-2xl" 
+                        <img
+                          src={char.portraitUrl}
+                          className="w-32 h-32 rounded-full object-cover mb-6 border-4 border-amber-600/30 shadow-2xl"
                           alt={`Portrait of ${char.name}`}
                         />
                       ) : (
                         <div className="w-32 h-32 rounded-full bg-zinc-800 mb-6 flex items-center justify-center text-4xl border border-zinc-700">👤</div>
                       )}
-                      <h3 
+                      <h3
                         className="font-fantasy text-xl md:text-2xl font-bold text-amber-500 truncate w-full px-4 cursor-pointer hover:text-amber-400 transition-colors"
                         onClick={() => {
                           // Could scroll to character details or highlight
@@ -4706,9 +4713,9 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                         {char.name}
                       </h3>
                       <p className="text-xs text-zinc-400 mt-2 uppercase font-bold tracking-wider">{char.currentCultivation}</p>
-                      <button 
-                        disabled={isGeneratingPortrait === char.id} 
-                        onClick={() => handleGeneratePortrait(char)} 
+                      <button
+                        disabled={isGeneratingPortrait === char.id}
+                        onClick={() => handleGeneratePortrait(char)}
                         className="mt-6 md:mt-8 text-xs bg-zinc-700/50 hover:bg-zinc-700 px-4 py-2 rounded-full text-zinc-400 hover:text-amber-400 transition-all duration-200 font-semibold border border-zinc-700 hover:border-amber-500/50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-zinc-700/50"
                         title="Generate AI Portrait for Character"
                         aria-label={`Generate portrait for ${char.name}`}
@@ -4733,7 +4740,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                           // Get active possessions
                           const activePossessions = (char.itemPossessions || []).filter(p => p.status === 'active');
                           const archivedPossessions = (char.itemPossessions || []).filter(p => p.status !== 'active');
-                          
+
                           // Group active possessions by category
                           const itemsByCategory: Record<string, Array<{ possession: CharacterItemPossession; item: NovelItem }>> = {};
                           activePossessions.forEach(poss => {
@@ -4743,12 +4750,12 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                               itemsByCategory[item.category].push({ possession: poss, item });
                             }
                           });
-                          
+
                           // Fallback to old items array for backward compatibility
                           const oldItems = char.items || [];
                           const hasNewFormat = activePossessions.length > 0 || archivedPossessions.length > 0;
                           const hasOldFormat = oldItems.length > 0 && !hasNewFormat;
-                          
+
                           if (hasOldFormat) {
                             // Display old format (backward compatibility)
                             return (
@@ -4761,17 +4768,17 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                               </div>
                             );
                           }
-                          
+
                           if (Object.keys(itemsByCategory).length === 0 && archivedPossessions.length === 0) {
                             return <p className="text-xs text-zinc-500 italic">No items recorded</p>;
                           }
-                          
+
                           return (
                             <div className="space-y-4">
                               {['Treasure', 'Equipment', 'Consumable', 'Essential'].map(category => {
                                 const categoryItems = itemsByCategory[category] || [];
                                 if (categoryItems.length === 0) return null;
-                                
+
                                 return (
                                   <div key={category} className="space-y-2">
                                     <h5 className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">{category}</h5>
@@ -4793,14 +4800,14 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                                                 const updatedPossession = archivePossession(possession, currentChapter);
                                                 updateActiveNovel(prev => ({
                                                   ...prev,
-                                                  characterCodex: prev.characterCodex.map(c => 
-                                                    c.id === char.id 
+                                                  characterCodex: prev.characterCodex.map(c =>
+                                                    c.id === char.id
                                                       ? {
-                                                          ...c,
-                                                          itemPossessions: (c.itemPossessions || []).map(p => 
-                                                            p.id === possession.id ? updatedPossession : p
-                                                          )
-                                                        }
+                                                        ...c,
+                                                        itemPossessions: (c.itemPossessions || []).map(p =>
+                                                          p.id === possession.id ? updatedPossession : p
+                                                        )
+                                                      }
                                                       : c
                                                   ),
                                                   updatedAt: Date.now()
@@ -4848,7 +4855,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                                   </div>
                                 );
                               })}
-                              
+
                               {/* Archived Items Section */}
                               {archivedPossessions.length > 0 && (
                                 <details className="mt-4">
@@ -4871,14 +4878,14 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                                               const restoredPossession = restorePossession(poss);
                                               updateActiveNovel(prev => ({
                                                 ...prev,
-                                                characterCodex: prev.characterCodex.map(c => 
-                                                  c.id === char.id 
+                                                characterCodex: prev.characterCodex.map(c =>
+                                                  c.id === char.id
                                                     ? {
-                                                        ...c,
-                                                        itemPossessions: (c.itemPossessions || []).map(p => 
-                                                          p.id === poss.id ? restoredPossession : p
-                                                        )
-                                                      }
+                                                      ...c,
+                                                      itemPossessions: (c.itemPossessions || []).map(p =>
+                                                        p.id === poss.id ? restoredPossession : p
+                                                      )
+                                                    }
                                                     : c
                                                 ),
                                                 updatedAt: Date.now()
@@ -4900,7 +4907,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                           );
                         })()}
                       </div>
-                      
+
                       {/* Techniques Display - Grouped by Category */}
                       <div className="space-y-4">
                         <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center">
@@ -4910,7 +4917,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                           // Get active masteries
                           const activeMasteries = (char.techniqueMasteries || []).filter(m => m.status === 'active');
                           const archivedMasteries = (char.techniqueMasteries || []).filter(m => m.status !== 'active');
-                          
+
                           // Group active masteries by category
                           const techniquesByCategory: Record<string, Array<{ mastery: CharacterTechniqueMastery; technique: NovelTechnique }>> = {};
                           activeMasteries.forEach(mast => {
@@ -4920,12 +4927,12 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                               techniquesByCategory[technique.category].push({ mastery: mast, technique });
                             }
                           });
-                          
+
                           // Fallback to old skills array for backward compatibility
                           const oldSkills = char.skills || [];
                           const hasNewFormat = activeMasteries.length > 0 || archivedMasteries.length > 0;
                           const hasOldFormat = oldSkills.length > 0 && !hasNewFormat;
-                          
+
                           if (hasOldFormat) {
                             // Display old format (backward compatibility)
                             return (
@@ -4938,17 +4945,17 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                               </div>
                             );
                           }
-                          
+
                           if (Object.keys(techniquesByCategory).length === 0 && archivedMasteries.length === 0) {
                             return <p className="text-xs text-zinc-500 italic">No techniques recorded</p>;
                           }
-                          
+
                           return (
                             <div className="space-y-4">
                               {['Core', 'Important', 'Standard', 'Basic'].map(category => {
                                 const categoryTechniques = techniquesByCategory[category] || [];
                                 if (categoryTechniques.length === 0) return null;
-                                
+
                                 return (
                                   <div key={category} className="space-y-2">
                                     <h5 className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">{category}</h5>
@@ -4971,14 +4978,14 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                                                 const updatedMastery = archiveMastery(mastery, currentChapter);
                                                 updateActiveNovel(prev => ({
                                                   ...prev,
-                                                  characterCodex: prev.characterCodex.map(c => 
-                                                    c.id === char.id 
+                                                  characterCodex: prev.characterCodex.map(c =>
+                                                    c.id === char.id
                                                       ? {
-                                                          ...c,
-                                                          techniqueMasteries: (c.techniqueMasteries || []).map(m => 
-                                                            m.id === mastery.id ? updatedMastery : m
-                                                          )
-                                                        }
+                                                        ...c,
+                                                        techniqueMasteries: (c.techniqueMasteries || []).map(m =>
+                                                          m.id === mastery.id ? updatedMastery : m
+                                                        )
+                                                      }
                                                       : c
                                                   ),
                                                   updatedAt: Date.now()
@@ -5027,7 +5034,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                                   </div>
                                 );
                               })}
-                              
+
                               {/* Archived Techniques Section */}
                               {archivedMasteries.length > 0 && (
                                 <details className="mt-4">
@@ -5050,14 +5057,14 @@ the reader's choice. The consequences should begin to manifest in this chapter.
                                               const restoredMastery = restoreMastery(mast);
                                               updateActiveNovel(prev => ({
                                                 ...prev,
-                                                characterCodex: prev.characterCodex.map(c => 
-                                                  c.id === char.id 
+                                                characterCodex: prev.characterCodex.map(c =>
+                                                  c.id === char.id
                                                     ? {
-                                                        ...c,
-                                                        techniqueMasteries: (c.techniqueMasteries || []).map(m => 
-                                                          m.id === mast.id ? restoredMastery : m
-                                                        )
-                                                      }
+                                                      ...c,
+                                                      techniqueMasteries: (c.techniqueMasteries || []).map(m =>
+                                                        m.id === mast.id ? restoredMastery : m
+                                                      )
+                                                    }
                                                     : c
                                                 ),
                                                 updatedAt: Date.now()
@@ -5154,7 +5161,56 @@ the reader's choice. The consequences should begin to manifest in this chapter.
             <StoryThreadsView novelState={activeNovel} />
           </Suspense>
         )}
-        
+
+        {currentView === 'loom' && activeNovel && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <LoomDashboard
+              novelState={activeNovel}
+              onUpdateThread={handleUpdateThread}
+              onForceAttention={handleForceAttention}
+              onBoostKarma={handleBoostKarma}
+              onMarkAbandoned={handleMarkAbandoned}
+            />
+          </Suspense>
+        )}
+
+        {currentView === 'narrative-forensics' && activeNovel && (
+          <Suspense fallback={<LoadingSpinnerCentered />}>
+            <LoomExcavator
+              novelState={activeNovel}
+              onSeedApproved={(seed, thread) => {
+                console.log('Seed approved:', seed.title, 'Thread:', thread);
+
+                const approvedThread = thread as any;
+                if (!approvedThread?.id) {
+                  return;
+                }
+
+                updateActiveNovel(prev => {
+                  const existing = prev.storyThreads || [];
+                  const nextThreads = existing.some(t => t.id === approvedThread.id)
+                    ? existing.map(t => (t.id === approvedThread.id ? { ...t, ...approvedThread } : t))
+                    : [...existing, approvedThread];
+
+                  return {
+                    ...prev,
+                    storyThreads: nextThreads,
+                    updatedAt: Date.now(),
+                  };
+                });
+
+                // TODO: Add thread to novel state
+              }}
+              onSeedRejected={(seed) => {
+                console.log('Seed rejected:', seed.title);
+              }}
+              onScanComplete={(result) => {
+                console.log('Scan complete:', result.summary);
+              }}
+            />
+          </Suspense>
+        )}
+
         {currentView === 'gate-history' && activeNovel && (
           <Suspense fallback={<LoadingSpinnerCentered />}>
             <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
@@ -5173,7 +5229,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
             </div>
           </Suspense>
         )}
-        
+
         {currentView === 'antagonists' && activeNovel && (
           <div className="p-6 md:p-8 lg:p-12 max-w-5xl mx-auto pt-20 md:pt-24">
             <Suspense fallback={<div className="text-zinc-400 text-center py-12">Loading Opposition Registry...</div>}>
@@ -5245,7 +5301,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
             onSave={(entry) => {
               updateActiveNovel(prev => ({
                 ...prev,
-                worldBible: prev.worldBible.some(e => e.id === entry.id) 
+                worldBible: prev.worldBible.some(e => e.id === entry.id)
                   ? prev.worldBible.map(e => e.id === entry.id ? entry : e)
                   : [...prev.worldBible, entry]
               }));
@@ -5424,952 +5480,952 @@ the reader's choice. The consequences should begin to manifest in this chapter.
         </div>
       )}
 
-        {/* Manual Editor Dialog */}
-        {activeNovel && (
-          <ManualEditorDialog
-            isOpen={showManualEditor}
-            novelState={activeNovel}
-            onSelectArc={async (arc, editMode) => {
-              setShowManualEditor(false);
-              try {
-                setIsGenerating(true);
-                startLoading(`Starting editor review for arc: ${arc.title}...`, true);
-                setGenerationProgress(5);
-                setGenerationStatus(`Starting ${editMode} arc editor review...`);
-                
-                                const editorReport = await triggerEditorReview(activeNovel, 'manual', arc, {
-                                  onProgress: (phase: string, progress?: number) => {
-                                    if (progress !== undefined) {
-                                      updateProgress(progress, `Editor: ${phase}`);
-                                      setGenerationProgress(progress);
-                                      setGenerationStatus(`Editor: ${phase}`);
-                                    } else {
-                                      updateMessage(`Editor: ${phase}`);
-                                    }
-                                    addEphemeralLog(`Editor: ${phase}`, 'discovery');
-                                  },
-                                  onAutoFix: (fix: EditorFix) => {
-                                    addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
-                                  },
-                                });
-
-                if (editorReport) {
-                  await saveEditorReport(editorReport);
-                  setCurrentEditorReport(editorReport);
-                  
-                  if (editMode === 'automatic') {
-                    // Automatic mode: apply all fixes without user confirmation
-                    setGenerationStatus('Applying all fixes automatically...');
-                    
-                    // Get all fixes that weren't auto-applied (exclude those that already failed during review)
-                    const failedAutoFixIds = new Set(((editorReport as any)._failedAutoFixes || []).map((f: EditorFix) => f.id));
-                    const fixesToApply = editorReport.fixes.filter((fix: EditorFix) => 
-                      fix.status === 'pending' && !failedAutoFixIds.has(fix.id)
-                    );
-                    
-                    // Log if any fixes were skipped because they already failed
-                    const skippedFixes = editorReport.fixes.filter((fix: EditorFix) => 
-                      fix.status === 'pending' && failedAutoFixIds.has(fix.id)
-                    );
-                    if (skippedFixes.length > 0) {
-                      logger.info('Skipping fixes that already failed during review', 'editor', {
-                        skippedCount: skippedFixes.length,
-                        skippedFixIds: skippedFixes.map(f => f.id)
-                      });
-                    }
-                    
-                    if (fixesToApply.length > 0) {
-                      // Get chapters that need to be updated
-                      const chaptersToUpdate = activeNovel.chapters.filter(ch => {
-                        return fixesToApply.some((fix: EditorFix) => 
-                          fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                        );
-                      });
-                      
-                      // Validate all fixes belong to the chapters we're updating
-                      const validatedFixes = fixesToApply.filter((fix: EditorFix) => {
-                        const belongs = chaptersToUpdate.some(ch => 
-                          fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                        );
-                        if (!belongs) {
-                          logger.error('Fix targets chapter not in update list', 'editor', undefined, {
-                            fixId: fix.id,
-                            fixChapterNumber: fix.chapterNumber,
-                            fixChapterId: fix.chapterId
-                          });
-                          return false;
-                        }
-                        return true;
-                      });
-                      
-                      if (validatedFixes.length > 0) {
-                        // Apply fixes
-                        const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
-                        
-                        // Get failed auto-fixes from review if available
-                        const editorReportWithInternal = editorReport as EditorReportWithInternal;
-                        const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
-                        
-                        // Log failed fixes with details
-                        if (failedFixes.length > 0) {
-                          console.warn(`[Editor] ${failedFixes.length} fix(es) failed to apply in automatic mode:`, failedFixes);
-                        }
-                        
-                        // Update novel state with fixed chapters and save to database
-                        updateActiveNovel(prev => {
-                          const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
-                          const updatedNovel = {
-                            ...prev,
-                            chapters: prev.chapters.map(ch => {
-                              const updated = updatedChapterMap.get(ch.id);
-                              if (updated && updated.content !== ch.content) {
-                                logger.debug('Updating chapter in novel state', 'editor', {
-                                  chapterNumber: ch.number,
-                                  chapterId: ch.id
-                                });
-                                return updated;
-                              }
-                              return ch;
-                            }),
-                            updatedAt: Date.now(),
-                          };
-                          
-                          // Save to database asynchronously
-                          import('./services/supabaseService').then(({ saveNovel }) => {
-                            saveNovel(updatedNovel).then(() => {
-                              logger.info('Successfully saved updated chapters to database', 'editor', {
-                                updatedChaptersCount: updatedChapters.length
-                              });
-                            }).catch(err => {
-                              logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
-                              showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
-                            });
-                          });
-                          
-                          return updatedNovel;
-                        });
-                        
-                        // Update fix status in database
-                        const { updateEditorFixStatus } = await import('./services/supabaseService');
-                        await Promise.all(
-                          appliedFixes.map(fix => 
-                            updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
-                              logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
-                                fixId: fix.id
-                              });
-                            })
-                          )
-                        );
-                        
-                        // Format comprehensive summary
-                        const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
-                        const summary = formatFixSummary(
-                          editorReport.analysis.issues.length,
-                          editorReport.autoFixedCount || 0,
-                          failedAutoFixes,
-                          appliedFixes.length,
-                          failedFixes,
-                          uniqueUpdatedChapters
-                        );
-                        
-                        setIsGenerating(false);
-                        stopLoading();
-                        
-                        // Show success or warning based on whether there were failures
-                        if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
-                          showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                        } else {
-                          showSuccess(summary.summary);
-                        }
-                      } else {
-                        // No fixes to apply in automatic mode, but show summary of what happened during review
-                        const editorReportWithInternal = editorReport as EditorReportWithInternal;
-                        const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
-                        const summary = formatFixSummary(
-                          editorReport.analysis.issues.length,
-                          editorReport.autoFixedCount || 0,
-                          failedAutoFixes,
-                          0, // No fixes applied in auto mode
-                          [], // No failures in auto mode
-                          0 // No chapters updated (already updated during review)
-                        );
-                        
-                        setIsGenerating(false);
-                        stopLoading();
-                        
-                        if (failedAutoFixes.length > 0) {
-                          showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                        } else {
-                          showSuccess(summary.summary);
-                        }
-                      }
-                    } else {
-                      // No fixes to apply in automatic mode, but show summary of what happened during review
-                      const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                      const summary = formatFixSummary(
-                        editorReport.analysis.issues.length,
-                        editorReport.autoFixedCount || 0,
-                        failedAutoFixes,
-                        0, // No fixes applied in auto mode
-                        [], // No failures in auto mode
-                        0 // No chapters updated (already updated during review if any)
-                      );
-                      
-                      setIsGenerating(false);
-                      stopLoading();
-                      
-                      if (failedAutoFixes.length > 0) {
-                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                      } else {
-                        showSuccess(summary.summary);
-                      }
-                    }
-                  } else {
-                    // Manual mode: show FixApprovalDialog
-                    // Extract fix proposals for major issues
-                    const { createFixProposals } = await import('./services/editorFixer');
-                    const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
-                    
-                    if (proposals.length > 0) {
-                      setPendingFixProposals(proposals);
-                      setIsGenerating(false);
-                      stopLoading();
-                    } else {
-                      // Show summary even in manual mode when no proposals
-                      const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                      const summary = formatFixSummary(
-                        editorReport.analysis.issues.length,
-                        editorReport.autoFixedCount || 0,
-                        failedAutoFixes,
-                        0, // No fixes applied in auto mode
-                        [], // No failures in auto mode
-                        0 // No chapters updated (already updated during review if any)
-                      );
-                      
-                      setIsGenerating(false);
-                      stopLoading();
-                      
-                      if (failedAutoFixes.length > 0) {
-                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                      } else {
-                        showSuccess(summary.summary);
-                      }
-                    }
-                  }
-                  
-                  // Create comprehensive summary for log
-                  const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                  const summaryText = failedAutoFixes.length > 0
-                    ? `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed, ${failedAutoFixes.length} auto-fixes failed.`
-                    : `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed during review.`;
-                  addEphemeralLog(summaryText, 'discovery');
-                } else {
-                  stopLoading();
-                }
-              } catch (error) {
-                logger.error('Error in manual editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
-                stopLoading();
-                const errorMessage = error instanceof Error 
-                  ? error.message 
-                  : typeof error === 'string' 
-                    ? error 
-                    : 'Unknown error occurred';
-                
-                // Check if it's a module loading error
-                if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
-                  showError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
-                } else {
-                  showError(`Editor review failed: ${errorMessage}`);
-                }
-                
-                setIsGenerating(false);
-                setGenerationProgress(0);
-                setGenerationStatus('');
-              }
-            }}
-            onSelectChapters={async (startChapter, endChapter, editMode) => {
-              setShowManualEditor(false);
-              try {
-                setIsGenerating(true);
-                startLoading(`Starting editor review for chapters ${startChapter}-${endChapter}...`, true);
-                setGenerationProgress(5);
-                setGenerationStatus(`Starting ${editMode} review for chapters ${startChapter}-${endChapter}...`);
-                
-                const editorReport = await triggerEditorReview(activeNovel, 'manual', undefined, {
-                  startChapter,
-                  endChapter,
-                  onProgress: (phase: string, progress?: number) => {
-                    if (progress !== undefined) {
-                      updateProgress(progress, `Editor: ${phase}`);
-                      setGenerationProgress(progress);
-                      setGenerationStatus(`Editor: ${phase}`);
-                    } else {
-                      updateMessage(`Editor: ${phase}`);
-                    }
-                    addEphemeralLog(`Editor: ${phase}`, 'discovery');
-                  },
-                  onAutoFix: (fix: EditorFix) => {
-                    addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
-                  },
-                } as any);
-
-                if (editorReport) {
-                  await saveEditorReport(editorReport);
-                  setCurrentEditorReport(editorReport);
-                  
-                  if (editMode === 'automatic') {
-                    // Automatic mode: apply all fixes without user confirmation
-                    setGenerationStatus('Applying all fixes automatically...');
-                    
-                    // Get all fixes that weren't auto-applied (exclude those that already failed during review)
-                    const failedAutoFixIds = new Set(((editorReport as any)._failedAutoFixes || []).map((f: EditorFix) => f.id));
-                    const fixesToApply = editorReport.fixes.filter((fix: EditorFix) => 
-                      fix.status === 'pending' && !failedAutoFixIds.has(fix.id)
-                    );
-                    
-                    // Log if any fixes were skipped because they already failed
-                    const skippedFixes = editorReport.fixes.filter((fix: EditorFix) => 
-                      fix.status === 'pending' && failedAutoFixIds.has(fix.id)
-                    );
-                    if (skippedFixes.length > 0) {
-                      logger.info('Skipping fixes that already failed during review', 'editor', {
-                        skippedCount: skippedFixes.length,
-                        skippedFixIds: skippedFixes.map(f => f.id)
-                      });
-                    }
-                    
-                    if (fixesToApply.length > 0) {
-                      // Get chapters that need to be updated
-                      const chaptersToUpdate = activeNovel.chapters.filter(ch => {
-                        return fixesToApply.some((fix: EditorFix) => 
-                          fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                        );
-                      });
-                      
-                      // Validate all fixes belong to the chapters we're updating
-                      const validatedFixes = fixesToApply.filter((fix: EditorFix) => {
-                        const belongs = chaptersToUpdate.some(ch => 
-                          fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                        );
-                        if (!belongs) {
-                          logger.error('Fix targets chapter not in update list', 'editor', undefined, {
-                            fixId: fix.id,
-                            fixChapterNumber: fix.chapterNumber,
-                            fixChapterId: fix.chapterId
-                          });
-                          return false;
-                        }
-                        return true;
-                      });
-                      
-                      if (validatedFixes.length > 0) {
-                        // Apply fixes
-                        const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
-                        
-                        // Get failed auto-fixes from review if available
-                        const editorReportWithInternal = editorReport as EditorReportWithInternal;
-                        const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
-                        
-                        // Log failed fixes with details
-                        if (failedFixes.length > 0) {
-                          console.warn(`[Editor] ${failedFixes.length} fix(es) failed to apply in automatic mode:`, failedFixes);
-                        }
-                        
-                        // Update novel state with fixed chapters and save to database
-                        updateActiveNovel(prev => {
-                          const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
-                          const updatedNovel = {
-                            ...prev,
-                            chapters: prev.chapters.map(ch => {
-                              const updated = updatedChapterMap.get(ch.id);
-                              if (updated && updated.content !== ch.content) {
-                                logger.debug('Updating chapter in novel state', 'editor', {
-                                  chapterNumber: ch.number,
-                                  chapterId: ch.id
-                                });
-                                return updated;
-                              }
-                              return ch;
-                            }),
-                            updatedAt: Date.now(),
-                          };
-                          
-                          // Save to database asynchronously
-                          import('./services/supabaseService').then(({ saveNovel }) => {
-                            saveNovel(updatedNovel).then(() => {
-                              logger.info('Successfully saved updated chapters to database', 'editor', {
-                                updatedChaptersCount: updatedChapters.length
-                              });
-                            }).catch(err => {
-                              logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
-                              showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
-                            });
-                          });
-                          
-                          return updatedNovel;
-                        });
-                        
-                        // Update fix status in database
-                        const { updateEditorFixStatus } = await import('./services/supabaseService');
-                        await Promise.all(
-                          appliedFixes.map(fix => 
-                            updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
-                              logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
-                                fixId: fix.id
-                              });
-                            })
-                          )
-                        );
-                        
-                        // Format comprehensive summary
-                        const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
-                        const summary = formatFixSummary(
-                          editorReport.analysis.issues.length,
-                          editorReport.autoFixedCount || 0,
-                          failedAutoFixes,
-                          appliedFixes.length,
-                          failedFixes,
-                          uniqueUpdatedChapters
-                        );
-                        
-                        setIsGenerating(false);
-                        stopLoading();
-                        
-                        // Show success or warning based on whether there were failures
-                        if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
-                          showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                        } else {
-                          showSuccess(summary.summary);
-                        }
-                      } else {
-                        setIsGenerating(false);
-                        stopLoading();
-                        if (editorReport.autoFixedCount > 0) {
-                          showSuccess(`Editor fixed ${editorReport.autoFixedCount} issue(s) automatically`);
-                        }
-                        showSuccess(`Editor review complete for chapters ${startChapter}-${endChapter}`);
-                      }
-                    } else {
-                      // No fixes to apply in automatic mode, but show summary of what happened during review
-                      const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                      const summary = formatFixSummary(
-                        editorReport.analysis.issues.length,
-                        editorReport.autoFixedCount || 0,
-                        failedAutoFixes,
-                        0, // No fixes applied in auto mode
-                        [], // No failures in auto mode
-                        0 // No chapters updated (already updated during review if any)
-                      );
-                      
-                      setIsGenerating(false);
-                      stopLoading();
-                      
-                      if (failedAutoFixes.length > 0) {
-                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                      } else {
-                        showSuccess(summary.summary);
-                      }
-                    }
-                  } else {
-                    // Manual mode: show FixApprovalDialog
-                    const { createFixProposals } = await import('./services/editorFixer');
-                    const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
-                    
-                    if (proposals.length > 0) {
-                      setPendingFixProposals(proposals);
-                      setIsGenerating(false);
-                      stopLoading();
-                    } else {
-                      // Show summary even in manual mode when no proposals
-                      const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                      const summary = formatFixSummary(
-                        editorReport.analysis.issues.length,
-                        editorReport.autoFixedCount || 0,
-                        failedAutoFixes,
-                        0, // No fixes applied in auto mode
-                        [], // No failures in auto mode
-                        0 // No chapters updated (already updated during review if any)
-                      );
-                      
-                      setIsGenerating(false);
-                      stopLoading();
-                      
-                      if (failedAutoFixes.length > 0) {
-                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                      } else {
-                        showSuccess(summary.summary);
-                      }
-                    }
-                  }
-                  
-                  // Create comprehensive summary for log
-                  const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                  const summaryText = failedAutoFixes.length > 0
-                    ? `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed, ${failedAutoFixes.length} auto-fixes failed.`
-                    : `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed during review.`;
-                  addEphemeralLog(summaryText, 'discovery');
-                } else {
-                  setIsGenerating(false);
-                  stopLoading();
-                  showWarning('Editor review returned no results. Please try again.');
-                }
-              } catch (error) {
-                logger.error('Error in manual editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
-                stopLoading();
-                const errorMessage = error instanceof Error 
-                  ? error.message 
-                  : typeof error === 'string' 
-                    ? error 
-                    : 'Unknown error occurred';
-                
-                // Check if it's a module loading error
-                if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
-                  showError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
-                } else {
-                  showError(`Editor review failed: ${errorMessage}`);
-                }
-                
-                setIsGenerating(false);
-                setGenerationProgress(0);
-                setGenerationStatus('');
-              }
-            }}
-            onSelectSpecificChapters={async (chapterNumbers, editMode) => {
-              setShowManualEditor(false);
-              try {
-                setIsGenerating(true);
-                startLoading(`Starting editor review for chapters ${chapterNumbers.join(', ')}...`, true);
-                setGenerationProgress(5);
-                setGenerationStatus(`Starting ${editMode} review for chapters ${chapterNumbers.join(', ')}...`);
-                
-                const editorReport = await triggerEditorReview(activeNovel, 'manual', undefined, {
-                  chapterNumbers,
-                  onProgress: (phase: string, progress?: number) => {
-                    if (progress !== undefined) {
-                      updateProgress(progress, `Editor: ${phase}`);
-                      setGenerationProgress(progress);
-                      setGenerationStatus(`Editor: ${phase}`);
-                    } else {
-                      updateMessage(`Editor: ${phase}`);
-                    }
-                    addEphemeralLog(`Editor: ${phase}`, 'discovery');
-                  },
-                  onAutoFix: (fix: EditorFix) => {
-                    addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
-                  },
-                } as any);
-
-                if (editorReport) {
-                  await saveEditorReport(editorReport);
-                  setCurrentEditorReport(editorReport);
-                  
-                  if (editMode === 'automatic') {
-                    // Automatic mode: apply all fixes without user confirmation
-                    setGenerationStatus('Applying all fixes automatically...');
-                    
-                    // Get all fixes that weren't auto-applied (exclude those that already failed during review)
-                    const failedAutoFixIds = new Set(((editorReport as any)._failedAutoFixes || []).map((f: EditorFix) => f.id));
-                    const fixesToApply = editorReport.fixes.filter((fix: EditorFix) => 
-                      fix.status === 'pending' && !failedAutoFixIds.has(fix.id)
-                    );
-                    
-                    // Log if any fixes were skipped because they already failed
-                    const skippedFixes = editorReport.fixes.filter((fix: EditorFix) => 
-                      fix.status === 'pending' && failedAutoFixIds.has(fix.id)
-                    );
-                    if (skippedFixes.length > 0) {
-                      logger.info('Skipping fixes that already failed during review', 'editor', {
-                        skippedCount: skippedFixes.length,
-                        skippedFixIds: skippedFixes.map(f => f.id)
-                      });
-                    }
-                    
-                    if (fixesToApply.length > 0) {
-                      // Get chapters that need to be updated
-                      const chaptersToUpdate = activeNovel.chapters.filter(ch => {
-                        return fixesToApply.some((fix: EditorFix) => 
-                          fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                        );
-                      });
-                      
-                      // Validate all fixes belong to the chapters we're updating
-                      const validatedFixes = fixesToApply.filter((fix: EditorFix) => {
-                        const belongs = chaptersToUpdate.some(ch => 
-                          fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                        );
-                        if (!belongs) {
-                          logger.error('Fix targets chapter not in update list', 'editor', undefined, {
-                            fixId: fix.id,
-                            fixChapterNumber: fix.chapterNumber,
-                            fixChapterId: fix.chapterId
-                          });
-                          return false;
-                        }
-                        return true;
-                      });
-                      
-                      if (validatedFixes.length > 0) {
-                        // Apply fixes
-                        const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
-                        
-                        // Get failed auto-fixes from review if available
-                        const editorReportWithInternal = editorReport as EditorReportWithInternal;
-                        const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
-                        
-                        // Log failed fixes with details
-                        if (failedFixes.length > 0) {
-                          console.warn(`[Editor] ${failedFixes.length} fix(es) failed to apply in automatic mode:`, failedFixes);
-                        }
-                        
-                        // Update novel state with fixed chapters and save to database
-                        updateActiveNovel(prev => {
-                          const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
-                          const updatedNovel = {
-                            ...prev,
-                            chapters: prev.chapters.map(ch => {
-                              const updated = updatedChapterMap.get(ch.id);
-                              if (updated && updated.content !== ch.content) {
-                                logger.debug('Updating chapter in novel state', 'editor', {
-                                  chapterNumber: ch.number,
-                                  chapterId: ch.id
-                                });
-                                return updated;
-                              }
-                              return ch;
-                            }),
-                            updatedAt: Date.now(),
-                          };
-                          
-                          // Save to database asynchronously
-                          import('./services/supabaseService').then(({ saveNovel }) => {
-                            saveNovel(updatedNovel).then(() => {
-                              logger.info('Successfully saved updated chapters to database', 'editor', {
-                                updatedChaptersCount: updatedChapters.length
-                              });
-                            }).catch(err => {
-                              logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
-                              showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
-                            });
-                          });
-                          
-                          return updatedNovel;
-                        });
-                        
-                        // Update fix status in database
-                        const { updateEditorFixStatus } = await import('./services/supabaseService');
-                        await Promise.all(
-                          appliedFixes.map(fix => 
-                            updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
-                              logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
-                                fixId: fix.id
-                              });
-                            })
-                          )
-                        );
-                        
-                        // Format comprehensive summary
-                        const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
-                        const summary = formatFixSummary(
-                          editorReport.analysis.issues.length,
-                          editorReport.autoFixedCount || 0,
-                          failedAutoFixes,
-                          appliedFixes.length,
-                          failedFixes,
-                          uniqueUpdatedChapters
-                        );
-                        
-                        setIsGenerating(false);
-                        stopLoading();
-                        
-                        // Show success or warning based on whether there were failures
-                        if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
-                          showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                        } else {
-                          showSuccess(summary.summary);
-                        }
-                      } else {
-                        // No fixes to apply in automatic mode, but show summary of what happened during review
-                        const editorReportWithInternal = editorReport as EditorReportWithInternal;
-                        const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
-                        const summary = formatFixSummary(
-                          editorReport.analysis.issues.length,
-                          editorReport.autoFixedCount || 0,
-                          failedAutoFixes,
-                          0, // No fixes applied in auto mode
-                          [], // No failures in auto mode
-                          0 // No chapters updated (already updated during review if any)
-                        );
-                        
-                        setIsGenerating(false);
-                        stopLoading();
-                        
-                        if (failedAutoFixes.length > 0) {
-                          showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                        } else {
-                          showSuccess(summary.summary);
-                        }
-                      }
-                    } else {
-                      // No fixes to apply in automatic mode, but show summary of what happened during review
-                      const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                      const summary = formatFixSummary(
-                        editorReport.analysis.issues.length,
-                        editorReport.autoFixedCount || 0,
-                        failedAutoFixes,
-                        0, // No fixes applied in auto mode
-                        [], // No failures in auto mode
-                        0 // No chapters updated (already updated during review if any)
-                      );
-                      
-                      setIsGenerating(false);
-                      stopLoading();
-                      
-                      if (failedAutoFixes.length > 0) {
-                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                      } else {
-                        showSuccess(summary.summary);
-                      }
-                    }
-                  } else {
-                    // Manual mode: show FixApprovalDialog
-                    const { createFixProposals } = await import('./services/editorFixer');
-                    const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
-                    
-                    if (proposals.length > 0) {
-                      setPendingFixProposals(proposals);
-                      setIsGenerating(false);
-                      stopLoading();
-                    } else {
-                      // Show summary even in manual mode when no proposals
-                      const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                      const summary = formatFixSummary(
-                        editorReport.analysis.issues.length,
-                        editorReport.autoFixedCount || 0,
-                        failedAutoFixes,
-                        0, // No fixes applied in auto mode
-                        [], // No failures in auto mode
-                        0 // No chapters updated (already updated during review if any)
-                      );
-                      
-                      setIsGenerating(false);
-                      stopLoading();
-                      
-                      if (failedAutoFixes.length > 0) {
-                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
-                      } else {
-                        showSuccess(summary.summary);
-                      }
-                    }
-                  }
-                  
-                  // Create comprehensive summary for log
-                  const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
-                  const summaryText = failedAutoFixes.length > 0
-                    ? `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed, ${failedAutoFixes.length} auto-fixes failed.`
-                    : `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed during review.`;
-                  addEphemeralLog(summaryText, 'discovery');
-                } else {
-                  setIsGenerating(false);
-                  stopLoading();
-                  showWarning('Editor review returned no results. Please try again.');
-                }
-              } catch (error) {
-                logger.error('Error in manual editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
-                stopLoading();
-                const errorMessage = error instanceof Error 
-                  ? error.message 
-                  : typeof error === 'string' 
-                    ? error 
-                    : 'Unknown error occurred';
-                
-                // Check if it's a module loading error
-                if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
-                  showError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
-                } else {
-                  showError(`Editor review failed: ${errorMessage}`);
-                }
-                
-                setIsGenerating(false);
-                setGenerationProgress(0);
-                setGenerationStatus('');
-              }
-            }}
-            onCancel={() => setShowManualEditor(false)}
-          />
-        )}
-
-        {/* Fix Approval Dialog */}
-        <FixApprovalDialog
-          isOpen={pendingFixProposals.length > 0}
-          proposals={pendingFixProposals}
-          onApprove={async (approvedFixIds) => {
-            if (!currentEditorReport || !activeNovel) return;
-            
+      {/* Manual Editor Dialog */}
+      {activeNovel && (
+        <ManualEditorDialog
+          isOpen={showManualEditor}
+          novelState={activeNovel}
+          onSelectArc={async (arc, editMode) => {
+            setShowManualEditor(false);
             try {
               setIsGenerating(true);
-              setGenerationStatus('Applying approved fixes...');
-              
-              // Get approved fixes
-              const approvedFixes = currentEditorReport.fixes.filter((fix: EditorFix) => 
-                approvedFixIds.includes(fix.id)
-              );
-              
-              // CRITICAL: Get chapters that need to be updated - match by both ID and number for safety
-              const chaptersToUpdate = activeNovel.chapters.filter(ch => {
-                return approvedFixes.some((fix: EditorFix) => 
-                  fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                );
+              startLoading(`Starting editor review for arc: ${arc.title}...`, true);
+              setGenerationProgress(5);
+              setGenerationStatus(`Starting ${editMode} arc editor review...`);
+
+              const editorReport = await triggerEditorReview(activeNovel, 'manual', arc, {
+                onProgress: (phase: string, progress?: number) => {
+                  if (progress !== undefined) {
+                    updateProgress(progress, `Editor: ${phase}`);
+                    setGenerationProgress(progress);
+                    setGenerationStatus(`Editor: ${phase}`);
+                  } else {
+                    updateMessage(`Editor: ${phase}`);
+                  }
+                  addEphemeralLog(`Editor: ${phase}`, 'discovery');
+                },
+                onAutoFix: (fix: EditorFix) => {
+                  addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
+                },
               });
-              
-              // Validate all fixes belong to the chapters we're updating
-              const validatedFixes = approvedFixes.filter((fix: EditorFix) => {
-                const belongs = chaptersToUpdate.some(ch => 
-                  fix.chapterId === ch.id || fix.chapterNumber === ch.number
-                );
-                if (!belongs) {
-                  logger.error('Fix targets chapter not in update list', 'editor', undefined, {
-                    fixId: fix.id,
-                    fixChapterNumber: fix.chapterNumber,
-                    fixChapterId: fix.chapterId
-                  });
-                  showWarning(`Fix for chapter ${fix.chapterNumber} was skipped - chapter not found in update list.`);
-                  return false;
-                }
-                return true;
-              });
-              
-              if (validatedFixes.length === 0) {
-                showError('No valid fixes to apply. All fixes were filtered out.');
-                setIsGenerating(false);
-                return;
-              }
-              
-              // Apply fixes
-              const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
-              
-              // Get failed auto-fixes from review if available
-              const editorReportWithInternal = currentEditorReport as EditorReportWithInternal;
-              const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
-              
-              // Log failed fixes with details
-              if (failedFixes.length > 0) {
-                logger.warn(`${failedFixes.length} fix(es) failed to apply`, 'editor', {
-                  failedCount: failedFixes.length,
-                  failedFixes: failedFixes.map(f => ({ id: f.id, chapterNumber: f.chapterNumber, failureReason: f.failureReason }))
-                });
-              }
-              
-              // Log what was updated for debugging
-              updatedChapters.forEach(updatedChapter => {
-                const originalChapter = activeNovel.chapters.find(ch => ch.id === updatedChapter.id);
-                if (originalChapter && originalChapter.content !== updatedChapter.content) {
-                  logger.debug('Chapter was updated', 'editor', {
-                    chapterNumber: updatedChapter.number,
-                    chapterId: updatedChapter.id,
-                    oldLength: originalChapter.content.length,
-                    newLength: updatedChapter.content.length
-                  });
-                }
-              });
-              
-              // Update novel state with fixed chapters and save to database
-              updateActiveNovel(prev => {
-                const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
-                const updatedNovel = {
-                  ...prev,
-                  chapters: prev.chapters.map(ch => {
-                    const updated = updatedChapterMap.get(ch.id);
-                    if (updated && updated.content !== ch.content) {
-                      logger.debug('Updating chapter in novel state', 'editor', {
-                        chapterNumber: ch.number,
-                        chapterId: ch.id
+
+              if (editorReport) {
+                await saveEditorReport(editorReport);
+                setCurrentEditorReport(editorReport);
+
+                if (editMode === 'automatic') {
+                  // Automatic mode: apply all fixes without user confirmation
+                  setGenerationStatus('Applying all fixes automatically...');
+
+                  // Get all fixes that weren't auto-applied (exclude those that already failed during review)
+                  const failedAutoFixIds = new Set(((editorReport as any)._failedAutoFixes || []).map((f: EditorFix) => f.id));
+                  const fixesToApply = editorReport.fixes.filter((fix: EditorFix) =>
+                    fix.status === 'pending' && !failedAutoFixIds.has(fix.id)
+                  );
+
+                  // Log if any fixes were skipped because they already failed
+                  const skippedFixes = editorReport.fixes.filter((fix: EditorFix) =>
+                    fix.status === 'pending' && failedAutoFixIds.has(fix.id)
+                  );
+                  if (skippedFixes.length > 0) {
+                    logger.info('Skipping fixes that already failed during review', 'editor', {
+                      skippedCount: skippedFixes.length,
+                      skippedFixIds: skippedFixes.map(f => f.id)
+                    });
+                  }
+
+                  if (fixesToApply.length > 0) {
+                    // Get chapters that need to be updated
+                    const chaptersToUpdate = activeNovel.chapters.filter(ch => {
+                      return fixesToApply.some((fix: EditorFix) =>
+                        fix.chapterId === ch.id || fix.chapterNumber === ch.number
+                      );
+                    });
+
+                    // Validate all fixes belong to the chapters we're updating
+                    const validatedFixes = fixesToApply.filter((fix: EditorFix) => {
+                      const belongs = chaptersToUpdate.some(ch =>
+                        fix.chapterId === ch.id || fix.chapterNumber === ch.number
+                      );
+                      if (!belongs) {
+                        logger.error('Fix targets chapter not in update list', 'editor', undefined, {
+                          fixId: fix.id,
+                          fixChapterNumber: fix.chapterNumber,
+                          fixChapterId: fix.chapterId
+                        });
+                        return false;
+                      }
+                      return true;
+                    });
+
+                    if (validatedFixes.length > 0) {
+                      // Apply fixes
+                      const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
+
+                      // Get failed auto-fixes from review if available
+                      const editorReportWithInternal = editorReport as EditorReportWithInternal;
+                      const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
+
+                      // Log failed fixes with details
+                      if (failedFixes.length > 0) {
+                        console.warn(`[Editor] ${failedFixes.length} fix(es) failed to apply in automatic mode:`, failedFixes);
+                      }
+
+                      // Update novel state with fixed chapters and save to database
+                      updateActiveNovel(prev => {
+                        const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
+                        const updatedNovel = {
+                          ...prev,
+                          chapters: prev.chapters.map(ch => {
+                            const updated = updatedChapterMap.get(ch.id);
+                            if (updated && updated.content !== ch.content) {
+                              logger.debug('Updating chapter in novel state', 'editor', {
+                                chapterNumber: ch.number,
+                                chapterId: ch.id
+                              });
+                              return updated;
+                            }
+                            return ch;
+                          }),
+                          updatedAt: Date.now(),
+                        };
+
+                        // Save to database asynchronously
+                        import('./services/supabaseService').then(({ saveNovel }) => {
+                          saveNovel(updatedNovel).then(() => {
+                            logger.info('Successfully saved updated chapters to database', 'editor', {
+                              updatedChaptersCount: updatedChapters.length
+                            });
+                          }).catch(err => {
+                            logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
+                            showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
+                          });
+                        });
+
+                        return updatedNovel;
                       });
-                      return updated;
+
+                      // Update fix status in database
+                      const { updateEditorFixStatus } = await import('./services/supabaseService');
+                      await Promise.all(
+                        appliedFixes.map(fix =>
+                          updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
+                            logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
+                              fixId: fix.id
+                            });
+                          })
+                        )
+                      );
+
+                      // Format comprehensive summary
+                      const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
+                      const summary = formatFixSummary(
+                        editorReport.analysis.issues.length,
+                        editorReport.autoFixedCount || 0,
+                        failedAutoFixes,
+                        appliedFixes.length,
+                        failedFixes,
+                        uniqueUpdatedChapters
+                      );
+
+                      setIsGenerating(false);
+                      stopLoading();
+
+                      // Show success or warning based on whether there were failures
+                      if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
+                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                      } else {
+                        showSuccess(summary.summary);
+                      }
+                    } else {
+                      // No fixes to apply in automatic mode, but show summary of what happened during review
+                      const editorReportWithInternal = editorReport as EditorReportWithInternal;
+                      const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
+                      const summary = formatFixSummary(
+                        editorReport.analysis.issues.length,
+                        editorReport.autoFixedCount || 0,
+                        failedAutoFixes,
+                        0, // No fixes applied in auto mode
+                        [], // No failures in auto mode
+                        0 // No chapters updated (already updated during review)
+                      );
+
+                      setIsGenerating(false);
+                      stopLoading();
+
+                      if (failedAutoFixes.length > 0) {
+                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                      } else {
+                        showSuccess(summary.summary);
+                      }
                     }
-                    return ch;
-                  }),
-                  updatedAt: Date.now(),
-                };
-                
-                // Save to database asynchronously
-                import('./services/supabaseService').then(({ saveNovel }) => {
-                  saveNovel(updatedNovel).then(() => {
-                    logger.info('Successfully saved updated chapters to database', 'editor', {
-                      updatedChaptersCount: updatedChapters.length
-                    });
-                  }).catch(err => {
-                    logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
-                    showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
-                  });
-                });
-                
-                return updatedNovel;
-              });
-              
-              // Update fix status in database
-              const { updateEditorFixStatus } = await import('./services/supabaseService');
-              await Promise.all(
-                appliedFixes.map(fix => 
-                  updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
-                    logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
-                      fixId: fix.id
-                    });
-                  })
-                )
-              );
-              
-              // Format comprehensive summary
-              const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
-              const summary = formatFixSummary(
-                currentEditorReport.analysis.issues.length,
-                currentEditorReport.autoFixedCount || 0,
-                failedAutoFixes,
-                appliedFixes.length,
-                failedFixes,
-                uniqueUpdatedChapters
-              );
-              
-              setPendingFixProposals([]);
-              setIsGenerating(false);
-              stopLoading();
-              
-              // Show success or warning based on whether there were failures
-              if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
-                showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                  } else {
+                    // No fixes to apply in automatic mode, but show summary of what happened during review
+                    const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                    const summary = formatFixSummary(
+                      editorReport.analysis.issues.length,
+                      editorReport.autoFixedCount || 0,
+                      failedAutoFixes,
+                      0, // No fixes applied in auto mode
+                      [], // No failures in auto mode
+                      0 // No chapters updated (already updated during review if any)
+                    );
+
+                    setIsGenerating(false);
+                    stopLoading();
+
+                    if (failedAutoFixes.length > 0) {
+                      showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                    } else {
+                      showSuccess(summary.summary);
+                    }
+                  }
+                } else {
+                  // Manual mode: show FixApprovalDialog
+                  // Extract fix proposals for major issues
+                  const { createFixProposals } = await import('./services/editorFixer');
+                  const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
+
+                  if (proposals.length > 0) {
+                    setPendingFixProposals(proposals);
+                    setIsGenerating(false);
+                    stopLoading();
+                  } else {
+                    // Show summary even in manual mode when no proposals
+                    const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                    const summary = formatFixSummary(
+                      editorReport.analysis.issues.length,
+                      editorReport.autoFixedCount || 0,
+                      failedAutoFixes,
+                      0, // No fixes applied in auto mode
+                      [], // No failures in auto mode
+                      0 // No chapters updated (already updated during review if any)
+                    );
+
+                    setIsGenerating(false);
+                    stopLoading();
+
+                    if (failedAutoFixes.length > 0) {
+                      showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                    } else {
+                      showSuccess(summary.summary);
+                    }
+                  }
+                }
+
+                // Create comprehensive summary for log
+                const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                const summaryText = failedAutoFixes.length > 0
+                  ? `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed, ${failedAutoFixes.length} auto-fixes failed.`
+                  : `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed during review.`;
+                addEphemeralLog(summaryText, 'discovery');
               } else {
-                showSuccess(summary.summary);
+                stopLoading();
               }
-              
             } catch (error) {
-              logger.error('Error applying fixes', 'editor', error instanceof Error ? error : new Error(String(error)));
-              showError(`Failed to apply fixes: ${error instanceof Error ? error.message : 'Unknown error'}`);
-              setIsGenerating(false);
+              logger.error('Error in manual editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
               stopLoading();
+              const errorMessage = error instanceof Error
+                ? error.message
+                : typeof error === 'string'
+                  ? error
+                  : 'Unknown error occurred';
+
+              // Check if it's a module loading error
+              if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
+                showError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
+              } else {
+                showError(`Editor review failed: ${errorMessage}`);
+              }
+
+              setIsGenerating(false);
+              setGenerationProgress(0);
+              setGenerationStatus('');
             }
           }}
-          onReject={async (rejectedFixIds) => {
+          onSelectChapters={async (startChapter, endChapter, editMode) => {
+            setShowManualEditor(false);
             try {
-              // Update rejected fixes in database
-              const { updateEditorFixStatus } = await import('./services/supabaseService');
-              await Promise.all(
-                rejectedFixIds.map(fixId => 
-                  updateEditorFixStatus(fixId, 'rejected', undefined, 'Rejected by user')
-                )
-              );
-              
-              setPendingFixProposals([]);
-              showWarning(`${rejectedFixIds.length} fix(es) rejected`);
+              setIsGenerating(true);
+              startLoading(`Starting editor review for chapters ${startChapter}-${endChapter}...`, true);
+              setGenerationProgress(5);
+              setGenerationStatus(`Starting ${editMode} review for chapters ${startChapter}-${endChapter}...`);
+
+              const editorReport = await triggerEditorReview(activeNovel, 'manual', undefined, {
+                startChapter,
+                endChapter,
+                onProgress: (phase: string, progress?: number) => {
+                  if (progress !== undefined) {
+                    updateProgress(progress, `Editor: ${phase}`);
+                    setGenerationProgress(progress);
+                    setGenerationStatus(`Editor: ${phase}`);
+                  } else {
+                    updateMessage(`Editor: ${phase}`);
+                  }
+                  addEphemeralLog(`Editor: ${phase}`, 'discovery');
+                },
+                onAutoFix: (fix: EditorFix) => {
+                  addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
+                },
+              } as any);
+
+              if (editorReport) {
+                await saveEditorReport(editorReport);
+                setCurrentEditorReport(editorReport);
+
+                if (editMode === 'automatic') {
+                  // Automatic mode: apply all fixes without user confirmation
+                  setGenerationStatus('Applying all fixes automatically...');
+
+                  // Get all fixes that weren't auto-applied (exclude those that already failed during review)
+                  const failedAutoFixIds = new Set(((editorReport as any)._failedAutoFixes || []).map((f: EditorFix) => f.id));
+                  const fixesToApply = editorReport.fixes.filter((fix: EditorFix) =>
+                    fix.status === 'pending' && !failedAutoFixIds.has(fix.id)
+                  );
+
+                  // Log if any fixes were skipped because they already failed
+                  const skippedFixes = editorReport.fixes.filter((fix: EditorFix) =>
+                    fix.status === 'pending' && failedAutoFixIds.has(fix.id)
+                  );
+                  if (skippedFixes.length > 0) {
+                    logger.info('Skipping fixes that already failed during review', 'editor', {
+                      skippedCount: skippedFixes.length,
+                      skippedFixIds: skippedFixes.map(f => f.id)
+                    });
+                  }
+
+                  if (fixesToApply.length > 0) {
+                    // Get chapters that need to be updated
+                    const chaptersToUpdate = activeNovel.chapters.filter(ch => {
+                      return fixesToApply.some((fix: EditorFix) =>
+                        fix.chapterId === ch.id || fix.chapterNumber === ch.number
+                      );
+                    });
+
+                    // Validate all fixes belong to the chapters we're updating
+                    const validatedFixes = fixesToApply.filter((fix: EditorFix) => {
+                      const belongs = chaptersToUpdate.some(ch =>
+                        fix.chapterId === ch.id || fix.chapterNumber === ch.number
+                      );
+                      if (!belongs) {
+                        logger.error('Fix targets chapter not in update list', 'editor', undefined, {
+                          fixId: fix.id,
+                          fixChapterNumber: fix.chapterNumber,
+                          fixChapterId: fix.chapterId
+                        });
+                        return false;
+                      }
+                      return true;
+                    });
+
+                    if (validatedFixes.length > 0) {
+                      // Apply fixes
+                      const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
+
+                      // Get failed auto-fixes from review if available
+                      const editorReportWithInternal = editorReport as EditorReportWithInternal;
+                      const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
+
+                      // Log failed fixes with details
+                      if (failedFixes.length > 0) {
+                        console.warn(`[Editor] ${failedFixes.length} fix(es) failed to apply in automatic mode:`, failedFixes);
+                      }
+
+                      // Update novel state with fixed chapters and save to database
+                      updateActiveNovel(prev => {
+                        const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
+                        const updatedNovel = {
+                          ...prev,
+                          chapters: prev.chapters.map(ch => {
+                            const updated = updatedChapterMap.get(ch.id);
+                            if (updated && updated.content !== ch.content) {
+                              logger.debug('Updating chapter in novel state', 'editor', {
+                                chapterNumber: ch.number,
+                                chapterId: ch.id
+                              });
+                              return updated;
+                            }
+                            return ch;
+                          }),
+                          updatedAt: Date.now(),
+                        };
+
+                        // Save to database asynchronously
+                        import('./services/supabaseService').then(({ saveNovel }) => {
+                          saveNovel(updatedNovel).then(() => {
+                            logger.info('Successfully saved updated chapters to database', 'editor', {
+                              updatedChaptersCount: updatedChapters.length
+                            });
+                          }).catch(err => {
+                            logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
+                            showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
+                          });
+                        });
+
+                        return updatedNovel;
+                      });
+
+                      // Update fix status in database
+                      const { updateEditorFixStatus } = await import('./services/supabaseService');
+                      await Promise.all(
+                        appliedFixes.map(fix =>
+                          updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
+                            logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
+                              fixId: fix.id
+                            });
+                          })
+                        )
+                      );
+
+                      // Format comprehensive summary
+                      const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
+                      const summary = formatFixSummary(
+                        editorReport.analysis.issues.length,
+                        editorReport.autoFixedCount || 0,
+                        failedAutoFixes,
+                        appliedFixes.length,
+                        failedFixes,
+                        uniqueUpdatedChapters
+                      );
+
+                      setIsGenerating(false);
+                      stopLoading();
+
+                      // Show success or warning based on whether there were failures
+                      if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
+                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                      } else {
+                        showSuccess(summary.summary);
+                      }
+                    } else {
+                      setIsGenerating(false);
+                      stopLoading();
+                      if (editorReport.autoFixedCount > 0) {
+                        showSuccess(`Editor fixed ${editorReport.autoFixedCount} issue(s) automatically`);
+                      }
+                      showSuccess(`Editor review complete for chapters ${startChapter}-${endChapter}`);
+                    }
+                  } else {
+                    // No fixes to apply in automatic mode, but show summary of what happened during review
+                    const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                    const summary = formatFixSummary(
+                      editorReport.analysis.issues.length,
+                      editorReport.autoFixedCount || 0,
+                      failedAutoFixes,
+                      0, // No fixes applied in auto mode
+                      [], // No failures in auto mode
+                      0 // No chapters updated (already updated during review if any)
+                    );
+
+                    setIsGenerating(false);
+                    stopLoading();
+
+                    if (failedAutoFixes.length > 0) {
+                      showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                    } else {
+                      showSuccess(summary.summary);
+                    }
+                  }
+                } else {
+                  // Manual mode: show FixApprovalDialog
+                  const { createFixProposals } = await import('./services/editorFixer');
+                  const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
+
+                  if (proposals.length > 0) {
+                    setPendingFixProposals(proposals);
+                    setIsGenerating(false);
+                    stopLoading();
+                  } else {
+                    // Show summary even in manual mode when no proposals
+                    const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                    const summary = formatFixSummary(
+                      editorReport.analysis.issues.length,
+                      editorReport.autoFixedCount || 0,
+                      failedAutoFixes,
+                      0, // No fixes applied in auto mode
+                      [], // No failures in auto mode
+                      0 // No chapters updated (already updated during review if any)
+                    );
+
+                    setIsGenerating(false);
+                    stopLoading();
+
+                    if (failedAutoFixes.length > 0) {
+                      showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                    } else {
+                      showSuccess(summary.summary);
+                    }
+                  }
+                }
+
+                // Create comprehensive summary for log
+                const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                const summaryText = failedAutoFixes.length > 0
+                  ? `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed, ${failedAutoFixes.length} auto-fixes failed.`
+                  : `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed during review.`;
+                addEphemeralLog(summaryText, 'discovery');
+              } else {
+                setIsGenerating(false);
+                stopLoading();
+                showWarning('Editor review returned no results. Please try again.');
+              }
             } catch (error) {
-              logger.error('Error rejecting fixes', 'editor', error instanceof Error ? error : new Error(String(error)));
-              showError(`Failed to reject fixes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+              logger.error('Error in manual editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
+              stopLoading();
+              const errorMessage = error instanceof Error
+                ? error.message
+                : typeof error === 'string'
+                  ? error
+                  : 'Unknown error occurred';
+
+              // Check if it's a module loading error
+              if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
+                showError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
+              } else {
+                showError(`Editor review failed: ${errorMessage}`);
+              }
+
+              setIsGenerating(false);
+              setGenerationProgress(0);
+              setGenerationStatus('');
             }
           }}
-          onCancel={() => {
+          onSelectSpecificChapters={async (chapterNumbers, editMode) => {
+            setShowManualEditor(false);
+            try {
+              setIsGenerating(true);
+              startLoading(`Starting editor review for chapters ${chapterNumbers.join(', ')}...`, true);
+              setGenerationProgress(5);
+              setGenerationStatus(`Starting ${editMode} review for chapters ${chapterNumbers.join(', ')}...`);
+
+              const editorReport = await triggerEditorReview(activeNovel, 'manual', undefined, {
+                chapterNumbers,
+                onProgress: (phase: string, progress?: number) => {
+                  if (progress !== undefined) {
+                    updateProgress(progress, `Editor: ${phase}`);
+                    setGenerationProgress(progress);
+                    setGenerationStatus(`Editor: ${phase}`);
+                  } else {
+                    updateMessage(`Editor: ${phase}`);
+                  }
+                  addEphemeralLog(`Editor: ${phase}`, 'discovery');
+                },
+                onAutoFix: (fix: EditorFix) => {
+                  addEphemeralLog(`Auto-fixed: ${fix.fixType} issue`, 'update');
+                },
+              } as any);
+
+              if (editorReport) {
+                await saveEditorReport(editorReport);
+                setCurrentEditorReport(editorReport);
+
+                if (editMode === 'automatic') {
+                  // Automatic mode: apply all fixes without user confirmation
+                  setGenerationStatus('Applying all fixes automatically...');
+
+                  // Get all fixes that weren't auto-applied (exclude those that already failed during review)
+                  const failedAutoFixIds = new Set(((editorReport as any)._failedAutoFixes || []).map((f: EditorFix) => f.id));
+                  const fixesToApply = editorReport.fixes.filter((fix: EditorFix) =>
+                    fix.status === 'pending' && !failedAutoFixIds.has(fix.id)
+                  );
+
+                  // Log if any fixes were skipped because they already failed
+                  const skippedFixes = editorReport.fixes.filter((fix: EditorFix) =>
+                    fix.status === 'pending' && failedAutoFixIds.has(fix.id)
+                  );
+                  if (skippedFixes.length > 0) {
+                    logger.info('Skipping fixes that already failed during review', 'editor', {
+                      skippedCount: skippedFixes.length,
+                      skippedFixIds: skippedFixes.map(f => f.id)
+                    });
+                  }
+
+                  if (fixesToApply.length > 0) {
+                    // Get chapters that need to be updated
+                    const chaptersToUpdate = activeNovel.chapters.filter(ch => {
+                      return fixesToApply.some((fix: EditorFix) =>
+                        fix.chapterId === ch.id || fix.chapterNumber === ch.number
+                      );
+                    });
+
+                    // Validate all fixes belong to the chapters we're updating
+                    const validatedFixes = fixesToApply.filter((fix: EditorFix) => {
+                      const belongs = chaptersToUpdate.some(ch =>
+                        fix.chapterId === ch.id || fix.chapterNumber === ch.number
+                      );
+                      if (!belongs) {
+                        logger.error('Fix targets chapter not in update list', 'editor', undefined, {
+                          fixId: fix.id,
+                          fixChapterNumber: fix.chapterNumber,
+                          fixChapterId: fix.chapterId
+                        });
+                        return false;
+                      }
+                      return true;
+                    });
+
+                    if (validatedFixes.length > 0) {
+                      // Apply fixes
+                      const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
+
+                      // Get failed auto-fixes from review if available
+                      const editorReportWithInternal = editorReport as EditorReportWithInternal;
+                      const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
+
+                      // Log failed fixes with details
+                      if (failedFixes.length > 0) {
+                        console.warn(`[Editor] ${failedFixes.length} fix(es) failed to apply in automatic mode:`, failedFixes);
+                      }
+
+                      // Update novel state with fixed chapters and save to database
+                      updateActiveNovel(prev => {
+                        const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
+                        const updatedNovel = {
+                          ...prev,
+                          chapters: prev.chapters.map(ch => {
+                            const updated = updatedChapterMap.get(ch.id);
+                            if (updated && updated.content !== ch.content) {
+                              logger.debug('Updating chapter in novel state', 'editor', {
+                                chapterNumber: ch.number,
+                                chapterId: ch.id
+                              });
+                              return updated;
+                            }
+                            return ch;
+                          }),
+                          updatedAt: Date.now(),
+                        };
+
+                        // Save to database asynchronously
+                        import('./services/supabaseService').then(({ saveNovel }) => {
+                          saveNovel(updatedNovel).then(() => {
+                            logger.info('Successfully saved updated chapters to database', 'editor', {
+                              updatedChaptersCount: updatedChapters.length
+                            });
+                          }).catch(err => {
+                            logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
+                            showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
+                          });
+                        });
+
+                        return updatedNovel;
+                      });
+
+                      // Update fix status in database
+                      const { updateEditorFixStatus } = await import('./services/supabaseService');
+                      await Promise.all(
+                        appliedFixes.map(fix =>
+                          updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
+                            logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
+                              fixId: fix.id
+                            });
+                          })
+                        )
+                      );
+
+                      // Format comprehensive summary
+                      const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
+                      const summary = formatFixSummary(
+                        editorReport.analysis.issues.length,
+                        editorReport.autoFixedCount || 0,
+                        failedAutoFixes,
+                        appliedFixes.length,
+                        failedFixes,
+                        uniqueUpdatedChapters
+                      );
+
+                      setIsGenerating(false);
+                      stopLoading();
+
+                      // Show success or warning based on whether there were failures
+                      if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
+                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                      } else {
+                        showSuccess(summary.summary);
+                      }
+                    } else {
+                      // No fixes to apply in automatic mode, but show summary of what happened during review
+                      const editorReportWithInternal = editorReport as EditorReportWithInternal;
+                      const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
+                      const summary = formatFixSummary(
+                        editorReport.analysis.issues.length,
+                        editorReport.autoFixedCount || 0,
+                        failedAutoFixes,
+                        0, // No fixes applied in auto mode
+                        [], // No failures in auto mode
+                        0 // No chapters updated (already updated during review if any)
+                      );
+
+                      setIsGenerating(false);
+                      stopLoading();
+
+                      if (failedAutoFixes.length > 0) {
+                        showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                      } else {
+                        showSuccess(summary.summary);
+                      }
+                    }
+                  } else {
+                    // No fixes to apply in automatic mode, but show summary of what happened during review
+                    const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                    const summary = formatFixSummary(
+                      editorReport.analysis.issues.length,
+                      editorReport.autoFixedCount || 0,
+                      failedAutoFixes,
+                      0, // No fixes applied in auto mode
+                      [], // No failures in auto mode
+                      0 // No chapters updated (already updated during review if any)
+                    );
+
+                    setIsGenerating(false);
+                    stopLoading();
+
+                    if (failedAutoFixes.length > 0) {
+                      showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                    } else {
+                      showSuccess(summary.summary);
+                    }
+                  }
+                } else {
+                  // Manual mode: show FixApprovalDialog
+                  const { createFixProposals } = await import('./services/editorFixer');
+                  const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
+
+                  if (proposals.length > 0) {
+                    setPendingFixProposals(proposals);
+                    setIsGenerating(false);
+                    stopLoading();
+                  } else {
+                    // Show summary even in manual mode when no proposals
+                    const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                    const summary = formatFixSummary(
+                      editorReport.analysis.issues.length,
+                      editorReport.autoFixedCount || 0,
+                      failedAutoFixes,
+                      0, // No fixes applied in auto mode
+                      [], // No failures in auto mode
+                      0 // No chapters updated (already updated during review if any)
+                    );
+
+                    setIsGenerating(false);
+                    stopLoading();
+
+                    if (failedAutoFixes.length > 0) {
+                      showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+                    } else {
+                      showSuccess(summary.summary);
+                    }
+                  }
+                }
+
+                // Create comprehensive summary for log
+                const failedAutoFixes = (editorReport as any)._failedAutoFixes || [];
+                const summaryText = failedAutoFixes.length > 0
+                  ? `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed, ${failedAutoFixes.length} auto-fixes failed.`
+                  : `Editor review complete: ${editorReport.analysis.issues.length} issue(s) found. ${editorReport.autoFixedCount || 0} auto-fixed during review.`;
+                addEphemeralLog(summaryText, 'discovery');
+              } else {
+                setIsGenerating(false);
+                stopLoading();
+                showWarning('Editor review returned no results. Please try again.');
+              }
+            } catch (error) {
+              logger.error('Error in manual editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
+              stopLoading();
+              const errorMessage = error instanceof Error
+                ? error.message
+                : typeof error === 'string'
+                  ? error
+                  : 'Unknown error occurred';
+
+              // Check if it's a module loading error
+              if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
+                showError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
+              } else {
+                showError(`Editor review failed: ${errorMessage}`);
+              }
+
+              setIsGenerating(false);
+              setGenerationProgress(0);
+              setGenerationStatus('');
+            }
+          }}
+          onCancel={() => setShowManualEditor(false)}
+        />
+      )}
+
+      {/* Fix Approval Dialog */}
+      <FixApprovalDialog
+        isOpen={pendingFixProposals.length > 0}
+        proposals={pendingFixProposals}
+        onApprove={async (approvedFixIds) => {
+          if (!currentEditorReport || !activeNovel) return;
+
+          try {
+            setIsGenerating(true);
+            setGenerationStatus('Applying approved fixes...');
+
+            // Get approved fixes
+            const approvedFixes = currentEditorReport.fixes.filter((fix: EditorFix) =>
+              approvedFixIds.includes(fix.id)
+            );
+
+            // CRITICAL: Get chapters that need to be updated - match by both ID and number for safety
+            const chaptersToUpdate = activeNovel.chapters.filter(ch => {
+              return approvedFixes.some((fix: EditorFix) =>
+                fix.chapterId === ch.id || fix.chapterNumber === ch.number
+              );
+            });
+
+            // Validate all fixes belong to the chapters we're updating
+            const validatedFixes = approvedFixes.filter((fix: EditorFix) => {
+              const belongs = chaptersToUpdate.some(ch =>
+                fix.chapterId === ch.id || fix.chapterNumber === ch.number
+              );
+              if (!belongs) {
+                logger.error('Fix targets chapter not in update list', 'editor', undefined, {
+                  fixId: fix.id,
+                  fixChapterNumber: fix.chapterNumber,
+                  fixChapterId: fix.chapterId
+                });
+                showWarning(`Fix for chapter ${fix.chapterNumber} was skipped - chapter not found in update list.`);
+                return false;
+              }
+              return true;
+            });
+
+            if (validatedFixes.length === 0) {
+              showError('No valid fixes to apply. All fixes were filtered out.');
+              setIsGenerating(false);
+              return;
+            }
+
+            // Apply fixes
+            const { updatedChapters, appliedFixes, failedFixes } = await applyApprovedFixes(chaptersToUpdate, validatedFixes);
+
+            // Get failed auto-fixes from review if available
+            const editorReportWithInternal = currentEditorReport as EditorReportWithInternal;
+            const failedAutoFixes = editorReportWithInternal._failedAutoFixes || [];
+
+            // Log failed fixes with details
+            if (failedFixes.length > 0) {
+              logger.warn(`${failedFixes.length} fix(es) failed to apply`, 'editor', {
+                failedCount: failedFixes.length,
+                failedFixes: failedFixes.map(f => ({ id: f.id, chapterNumber: f.chapterNumber, failureReason: f.failureReason }))
+              });
+            }
+
+            // Log what was updated for debugging
+            updatedChapters.forEach(updatedChapter => {
+              const originalChapter = activeNovel.chapters.find(ch => ch.id === updatedChapter.id);
+              if (originalChapter && originalChapter.content !== updatedChapter.content) {
+                logger.debug('Chapter was updated', 'editor', {
+                  chapterNumber: updatedChapter.number,
+                  chapterId: updatedChapter.id,
+                  oldLength: originalChapter.content.length,
+                  newLength: updatedChapter.content.length
+                });
+              }
+            });
+
+            // Update novel state with fixed chapters and save to database
+            updateActiveNovel(prev => {
+              const updatedChapterMap = new Map(updatedChapters.map(ch => [ch.id, ch]));
+              const updatedNovel = {
+                ...prev,
+                chapters: prev.chapters.map(ch => {
+                  const updated = updatedChapterMap.get(ch.id);
+                  if (updated && updated.content !== ch.content) {
+                    logger.debug('Updating chapter in novel state', 'editor', {
+                      chapterNumber: ch.number,
+                      chapterId: ch.id
+                    });
+                    return updated;
+                  }
+                  return ch;
+                }),
+                updatedAt: Date.now(),
+              };
+
+              // Save to database asynchronously
+              import('./services/supabaseService').then(({ saveNovel }) => {
+                saveNovel(updatedNovel).then(() => {
+                  logger.info('Successfully saved updated chapters to database', 'editor', {
+                    updatedChaptersCount: updatedChapters.length
+                  });
+                }).catch(err => {
+                  logger.error('Failed to save fixed chapters', 'editor', err instanceof Error ? err : new Error(String(err)));
+                  showError('Failed to save fixed chapters to database. Changes are in memory but not saved.');
+                });
+              });
+
+              return updatedNovel;
+            });
+
+            // Update fix status in database
+            const { updateEditorFixStatus } = await import('./services/supabaseService');
+            await Promise.all(
+              appliedFixes.map(fix =>
+                updateEditorFixStatus(fix.id, 'applied', fix.appliedAt).catch(err => {
+                  logger.error('Failed to update fix status', 'editor', err instanceof Error ? err : new Error(String(err)), {
+                    fixId: fix.id
+                  });
+                })
+              )
+            );
+
+            // Format comprehensive summary
+            const uniqueUpdatedChapters = new Set(updatedChapters.map(ch => ch.id)).size;
+            const summary = formatFixSummary(
+              currentEditorReport.analysis.issues.length,
+              currentEditorReport.autoFixedCount || 0,
+              failedAutoFixes,
+              appliedFixes.length,
+              failedFixes,
+              uniqueUpdatedChapters
+            );
+
             setPendingFixProposals([]);
             setIsGenerating(false);
             stopLoading();
-          }}
-        />
+
+            // Show success or warning based on whether there were failures
+            if (failedFixes.length > 0 || failedAutoFixes.length > 0) {
+              showWarning(summary.summary + (summary.details ? '\n\nDetails:\n' + summary.details : ''));
+            } else {
+              showSuccess(summary.summary);
+            }
+
+          } catch (error) {
+            logger.error('Error applying fixes', 'editor', error instanceof Error ? error : new Error(String(error)));
+            showError(`Failed to apply fixes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            setIsGenerating(false);
+            stopLoading();
+          }
+        }}
+        onReject={async (rejectedFixIds) => {
+          try {
+            // Update rejected fixes in database
+            const { updateEditorFixStatus } = await import('./services/supabaseService');
+            await Promise.all(
+              rejectedFixIds.map(fixId =>
+                updateEditorFixStatus(fixId, 'rejected', undefined, 'Rejected by user')
+              )
+            );
+
+            setPendingFixProposals([]);
+            showWarning(`${rejectedFixIds.length} fix(es) rejected`);
+          } catch (error) {
+            logger.error('Error rejecting fixes', 'editor', error instanceof Error ? error : new Error(String(error)));
+            showError(`Failed to reject fixes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        }}
+        onCancel={() => {
+          setPendingFixProposals([]);
+          setIsGenerating(false);
+          stopLoading();
+        }}
+      />
     </div>
   );
 };

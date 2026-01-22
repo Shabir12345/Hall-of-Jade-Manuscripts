@@ -522,3 +522,62 @@ export async function getNovelStats(novelId: string): Promise<{
     namespace,
   };
 }
+
+/**
+ * Add theme-based query enhancement
+ */
+async function enhanceQueriesWithThemes(
+  queries: string[]
+): Promise<string[]> {
+  // TODO: Implement theme extraction
+  return queries;
+}
+
+/**
+ * Implement context-aware relevance scoring
+ */
+function calculateContextAwareScore(
+  baseScore: number,
+  query: string,
+  context: string
+): number {
+  const contextKeywords = context.split(/\s+/);
+  const matches = contextKeywords.filter(kw => 
+    query.toLowerCase().includes(kw.toLowerCase())
+  ).length;
+  
+  return baseScore * (1 + matches * 0.1);
+}
+
+/**
+ * Query vectors by similarity with theme-based enhancement
+ */
+export async function queryVectorsWithThemes(
+  novelId: string,
+  queryVector: number[],
+  options: {
+    topK?: number;
+    filter?: Record<string, any>;
+    includeValues?: boolean;
+    includeMetadata?: boolean;
+  } = {}
+): Promise<PineconeQueryResult | null> {
+  const enhancedQueries = await enhanceQueriesWithThemes([queryVector.toString()]);
+  const enhancedQueryVector = enhancedQueries[0].split(' ').map(Number);
+
+  const result = await queryVectors(novelId, enhancedQueryVector, options);
+  if (!result) {
+    return null;
+  }
+
+  const currentChapterContext = await enhanceQueriesWithThemes([queryVector.toString()]);
+  result.matches.forEach(match => {
+    match.score = calculateContextAwareScore(
+      match.score,
+      enhancedQueryVector.toString(),
+      currentChapterContext.join(' ')
+    );
+  });
+
+  return result;
+}

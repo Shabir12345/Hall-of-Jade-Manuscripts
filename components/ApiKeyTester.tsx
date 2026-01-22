@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { deepseekText } from '../services/deepseekService';
 import { geminiText } from '../services/geminiService';
 import { env } from '../utils/env';
@@ -6,9 +6,8 @@ import { env } from '../utils/env';
 /**
  * API Key Tester Component
  * 
- * Tests the two-model architecture:
- *   - DeepSeek-V3.2 ("The Writer") - For chapter generation and creative writing
- *   - Gemini Flash ("The Clerk") - For state extraction and metadata processing
+ * Tests the unified model architecture:
+ *   - DeepSeek-V3 ("The Writer & Clerk") - For all creative writing and state extraction tasks
  */
 
 interface TestResult {
@@ -27,19 +26,19 @@ function ApiKeyTester() {
     const start = Date.now();
     try {
       if (!env.deepseek?.apiKey) {
-        return { 
-          service: 'DeepSeek', 
+        return {
+          service: 'DeepSeek',
           role: 'The Writer',
-          status: 'skipped', 
-          message: 'DEEPSEEK_API_KEY not set in .env.local' 
+          status: 'skipped',
+          message: 'DEEPSEEK_API_KEY not set in .env.local'
         };
       }
-      
+
       const response = await deepseekText({
         user: 'Say "Hello" and nothing else.',
         maxTokens: 10,
       });
-      
+
       const duration = Date.now() - start;
       return {
         service: 'DeepSeek',
@@ -52,11 +51,11 @@ function ApiKeyTester() {
       const duration = Date.now() - start;
       const hasApiKey = !!env.deepseek?.apiKey;
       let errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       if (!hasApiKey) {
         errorMessage = 'API key not found. Please:\n1. Add DEEPSEEK_API_KEY=your_key_here to .env.local\n2. Restart the dev server (npm run dev)';
       }
-      
+
       return {
         service: 'DeepSeek',
         role: 'The Writer',
@@ -71,19 +70,19 @@ function ApiKeyTester() {
     const start = Date.now();
     try {
       if (!env.gemini?.apiKey) {
-        return { 
-          service: 'Gemini', 
+        return {
+          service: 'Gemini',
           role: 'The Clerk',
-          status: 'skipped', 
-          message: 'GEMINI_API_KEY not set in .env.local' 
+          status: 'skipped',
+          message: 'GEMINI_API_KEY not set in .env.local'
         };
       }
-      
+
       const response = await geminiText({
         user: 'Say "Hello" and nothing else.',
         maxTokens: 10,
       });
-      
+
       const duration = Date.now() - start;
       return {
         service: 'Gemini',
@@ -96,11 +95,11 @@ function ApiKeyTester() {
       const duration = Date.now() - start;
       const hasApiKey = !!env.gemini?.apiKey;
       let errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       if (!hasApiKey) {
         errorMessage = 'API key not found. Please:\n1. Add GEMINI_API_KEY=your_key_here to .env.local\n2. Restart the dev server (npm run dev)';
       }
-      
+
       return {
         service: 'Gemini',
         role: 'The Clerk',
@@ -165,7 +164,7 @@ function ApiKeyTester() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-xl font-bold text-zinc-100">API Key Tester</h2>
-          <p className="text-sm text-zinc-400">Two-Model Architecture</p>
+          <p className="text-sm text-zinc-400">Unified DeepSeek Architecture</p>
         </div>
         <button
           onClick={runTests}
@@ -182,12 +181,12 @@ function ApiKeyTester() {
           <div>✓ Supabase URL: {env.supabase.url ? 'Set' : 'Missing'}</div>
           <div>✓ Supabase Key: {env.supabase.anonKey ? 'Set' : 'Missing'}</div>
           <div>
-            {env.deepseek?.apiKey ? '✓' : '✗'} DeepSeek (The Writer):{' '}
+            {env.deepseek?.apiKey ? '✓' : '✗'} DeepSeek-V3 (Primary):{' '}
             {env.deepseek?.apiKey ? 'Set' : 'Missing'}
           </div>
           <div>
-            {env.gemini?.apiKey ? '✓' : '✗'} Gemini (The Clerk):{' '}
-            {env.gemini?.apiKey ? 'Set' : 'Missing'}
+            {env.deepseek?.apiKey ? '✓' : '✗'} DeepSeek-V3 (Extraction):{' '}
+            {env.deepseek?.apiKey ? 'Set' : 'Missing'}
           </div>
         </div>
       </div>
@@ -196,12 +195,8 @@ function ApiKeyTester() {
         <h3 className="text-sm font-semibold text-zinc-300 mb-2">Model Roles:</h3>
         <div className="space-y-2 text-xs text-zinc-400">
           <div>
-            <span className="text-amber-400 font-medium">DeepSeek-V3.2 "The Writer"</span>
-            <p className="ml-2">Trained on Chinese web fiction. Understands cultivation tropes natively. Used for chapter generation, arc planning, and creative tasks.</p>
-          </div>
-          <div>
-            <span className="text-blue-400 font-medium">Gemini Flash "The Clerk"</span>
-            <p className="ml-2">Fast and accurate. Used for state extraction, metadata processing, and Lore Bible updates.</p>
+            <span className="text-amber-400 font-medium">DeepSeek-V3 "Universal Model"</span>
+            <p className="ml-2">Trained on Chinese web fiction. Understands cultivation tropes natively. Now used for all tasks including chapter generation, extraction, and lore updates.</p>
           </div>
         </div>
       </div>
@@ -238,17 +233,14 @@ function ApiKeyTester() {
         <div className="mt-4 p-3 rounded-lg border-2 bg-zinc-800/50">
           {allPassed ? (
             <div className="text-green-400 font-medium">
-              ✅ Both API keys are working! Your app is ready to use the two-model architecture.
+              ✅ API configuration is working! Your app is ready to use the unified DeepSeek architecture.
             </div>
           ) : (
             <div className="text-red-400 font-medium">
               ❌ Some API keys are not working. Both are required:
               <ul className="mt-2 text-sm font-normal">
                 {deepseekResult?.status !== 'success' && (
-                  <li>• DEEPSEEK_API_KEY - Required for chapter generation</li>
-                )}
-                {geminiResult?.status !== 'success' && (
-                  <li>• GEMINI_API_KEY - Required for state extraction</li>
+                  <li>• DEEPSEEK_API_KEY - Required for all AI features</li>
                 )}
               </ul>
             </div>

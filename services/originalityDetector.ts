@@ -191,7 +191,7 @@ function analyzePlotOriginality(state: NovelState): number {
  */
 function analyzeCharacterOriginality(state: NovelState): number {
   const characters = state.characterCodex;
-  
+
   if (characters.length === 0) return 50;
 
   let score = 50; // Base score
@@ -203,11 +203,11 @@ function analyzeCharacterOriginality(state: NovelState): number {
     'comic relief', 'love interest', 'rival'
   ];
 
-  const allCharacterContent = characters.map(c => 
+  const allCharacterContent = characters.map(c =>
     (c.name + ' ' + c.personality + ' ' + c.notes).toLowerCase()
   ).join(' ');
 
-  const archetypeCount = commonArchetypes.filter(archetype => 
+  const archetypeCount = commonArchetypes.filter(archetype =>
     allCharacterContent.includes(archetype)
   ).length;
 
@@ -218,11 +218,11 @@ function analyzeCharacterOriginality(state: NovelState): number {
   characters.forEach(character => {
     const traits = character.personality.split(/,|;|\.|\s+and\s+/).filter(t => t.trim().length > 0);
     if (traits.length >= 4) complexCharacters++;
-    
+
     // Check for contradictions (complexity indicator)
     const hasContradictions = character.personality.toLowerCase().includes('but') ||
-                             character.personality.toLowerCase().includes('however') ||
-                             character.personality.toLowerCase().includes('yet');
+      character.personality.toLowerCase().includes('however') ||
+      character.personality.toLowerCase().includes('yet');
     if (hasContradictions) complexCharacters++;
   });
 
@@ -238,7 +238,7 @@ function analyzeCharacterOriginality(state: NovelState): number {
   if (hasUniqueConcepts) score += 15;
 
   // Check for character growth/transformation
-  const hasGrowth = state.characterPsychologies?.some(cp => 
+  const hasGrowth = state.characterPsychologies?.some(cp =>
     cp.growthStage === 'transformed' || cp.psychologicalState === 'transformed'
   );
   if (hasGrowth) score += 10;
@@ -265,7 +265,7 @@ function analyzeWorldBuildingOriginality(state: NovelState): number {
 
   const elementCount = commonElements.filter(element => allContent.includes(element)).length;
   const elementDensity = elementCount / Math.max(1, worldEntries.length);
-  
+
   if (elementDensity > 0.5) {
     score -= Math.min(20, (elementDensity - 0.5) * 40); // Too common
   }
@@ -285,7 +285,7 @@ function analyzeWorldBuildingOriginality(state: NovelState): number {
   }
 
   // Check for innovative systems (check for unique system descriptions)
-  const systemEntries = worldEntries.filter(we => 
+  const systemEntries = worldEntries.filter(we =>
     we.category === 'Systems' || we.content.toLowerCase().includes('system')
   );
 
@@ -309,7 +309,7 @@ function analyzeWorldBuildingOriginality(state: NovelState): number {
  * Analyzes concept innovation (0-100)
  */
 function analyzeConceptInnovation(state: NovelState): number {
-  const allContent = state.chapters.map(ch => 
+  const allContent = state.chapters.map(ch =>
     (ch.content + ' ' + ch.summary + ' ' + ch.title).toLowerCase()
   ).join(' ');
 
@@ -327,8 +327,8 @@ function analyzeConceptInnovation(state: NovelState): number {
 
   // Check for unique combinations (genre blending, etc.)
   const genreIndicators = state.genre ? [state.genre.toLowerCase()] : [];
-  const hasGenreBlending = genreIndicators.length > 0 && 
-                          (allContent.includes('mix') || allContent.includes('blend') || allContent.includes('combination'));
+  const hasGenreBlending = genreIndicators.length > 0 &&
+    (allContent.includes('mix') || allContent.includes('blend') || allContent.includes('combination'));
   if (hasGenreBlending) score += 15;
 
   // Check for fresh takes on tropes (trope subversion)
@@ -388,8 +388,8 @@ function detectUniqueElements(state: NovelState): string[] {
   // Check world-building for unique elements
   state.worldBible?.forEach(entry => {
     if (entry.content.toLowerCase().includes('unique') ||
-        entry.content.toLowerCase().includes('original') ||
-        entry.content.toLowerCase().includes('unprecedented')) {
+      entry.content.toLowerCase().includes('original') ||
+      entry.content.toLowerCase().includes('unprecedented')) {
       const element = `${entry.title}: unique ${entry.category.toLowerCase()}`;
       if (!uniqueElements.includes(element)) {
         uniqueElements.push(element);
@@ -404,7 +404,7 @@ function detectUniqueElements(state: NovelState): string[] {
  * Detects common tropes
  */
 function detectCommonTropes(state: NovelState): string[] {
-  const allContent = state.chapters.map(ch => 
+  const allContent = state.chapters.map(ch =>
     (ch.content + ' ' + ch.summary + ' ' + ch.title).toLowerCase()
   ).join(' ');
 
@@ -434,7 +434,7 @@ function detectCommonTropes(state: NovelState): string[] {
     'wise old master', 'damsel in distress', 'love interest'
   ];
 
-  const characterContent = state.characterCodex.map(c => 
+  const characterContent = state.characterCodex.map(c =>
     (c.name + ' ' + c.personality + ' ' + c.notes).toLowerCase()
   ).join(' ');
 
@@ -452,7 +452,7 @@ function detectCommonTropes(state: NovelState): string[] {
  */
 function identifyFreshAngles(state: NovelState, detectedTropes: string[]): string[] {
   const freshAngles: string[] = [];
-  const allContent = state.chapters.map(ch => 
+  const allContent = state.chapters.map(ch =>
     (ch.content + ' ' + ch.summary).toLowerCase()
   ).join(' ');
 
@@ -495,7 +495,7 @@ function identifyFreshAngles(state: NovelState, detectedTropes: string[]): strin
  */
 function identifyMarketGaps(state: NovelState): string[] {
   const marketGaps: string[] = [];
-  const allContent = state.chapters.map(ch => 
+  const allContent = state.chapters.map(ch =>
     (ch.content + ' ' + ch.summary).toLowerCase()
   ).join(' ');
 
@@ -516,7 +516,7 @@ function identifyMarketGaps(state: NovelState): string[] {
   underrepresentedElements.forEach(element => {
     const keywords = element.split(/\s+/);
     const hasElement = keywords.every(kw => allContent.includes(kw.toLowerCase()));
-    
+
     if (hasElement) {
       marketGaps.push(element);
     }
@@ -527,10 +527,10 @@ function identifyMarketGaps(state: NovelState): string[] {
     const genreLower = state.genre.toLowerCase();
     const isXianxia = genreLower.includes('xianxia');
     const isXuanhuan = genreLower.includes('xuanhuan');
-    
-    if ((isXianxia || isXuanhuan) && 
-        (allContent.includes('modern') || allContent.includes('contemporary') || 
-         allContent.includes('sci-fi') || allContent.includes('urban'))) {
+
+    if ((isXianxia || isXuanhuan) &&
+      (allContent.includes('modern') || allContent.includes('contemporary') ||
+        allContent.includes('sci-fi') || allContent.includes('urban'))) {
       marketGaps.push('Genre-blending: Traditional cultivation with modern/sci-fi elements');
     }
   }
@@ -635,27 +635,27 @@ export function analyzeChapterOriginality(
   state: NovelState
 ): ChapterOriginalityScore {
   // Check cache
-  const cacheKey = `${chapter.id}:${chapter.content.length}`;
+  const cacheKey = `${chapter.id}:${chapter.content?.length || 0}`;
   const cached = originalityCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < ORIGINALITY_CACHE_TTL) {
     return cached.score;
   }
-  
+
   const content = chapter.content || '';
   const wordCount = content.split(/\s+/).length;
-  
+
   const creativeDistance = calculateCreativeDistance(chapter, state);
   const novelMetaphorAnalysis = detectNovelMetaphors(content, wordCount);
   const uniqueImageryAnalysis = detectUniqueImagery(content, state, wordCount);
   const sceneConstructionAnalysis = analyzeSceneConstructionOriginality(chapter, state);
   const emotionalBeatAnalysis = analyzeEmotionalBeatOriginality(chapter, state);
-  
+
   // Detect generic patterns and mechanical structures
   const genericPatterns = detectGenericPatterns(content);
   const mechanicalStructures = detectMechanicalStructures(content);
   const derivativeContent = detectDerivativeContent(content, state);
   const clichePatterns = detectCliches(content);
-  
+
   // Calculate overall originality score
   const overallOriginality = Math.round(
     creativeDistance * 0.25 +
@@ -682,13 +682,13 @@ export function analyzeChapterOriginality(
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-  
+
   // Cache the result
   originalityCache.set(cacheKey, {
     timestamp: Date.now(),
     score,
   });
-  
+
   // Clean old cache entries (keep last 10)
   if (originalityCache.size > 10) {
     const entries = Array.from(originalityCache.entries());
@@ -697,7 +697,7 @@ export function analyzeChapterOriginality(
     originalityCache.clear();
     toKeep.forEach(([key, value]) => originalityCache.set(key, value));
   }
-  
+
   return score;
 }
 
@@ -708,7 +708,7 @@ export function analyzeChapterOriginality(
 function calculateCreativeDistance(chapter: Chapter, state: NovelState): number {
   const content = (chapter.content || '').toLowerCase();
   let score = 50; // Base score
-  
+
   // Common training data patterns to detect
   const commonPatterns = [
     // Generic openings
@@ -722,7 +722,7 @@ function calculateCreativeDistance(chapter: Chapter, state: NovelState): number 
     // Generic action
     /(he walked|she walked|they walked|he ran|she ran)/gi,
   ];
-  
+
   let patternMatches = 0;
   commonPatterns.forEach(pattern => {
     const matches = content.match(pattern);
@@ -730,13 +730,13 @@ function calculateCreativeDistance(chapter: Chapter, state: NovelState): number 
       patternMatches += matches.length;
     }
   });
-  
+
   const wordCount = content.split(/\s+/).length;
   const patternDensity = wordCount > 0 ? (patternMatches / wordCount) * 1000 : 0;
-  
+
   // Penalize high pattern density
   score -= Math.min(40, patternDensity * 2);
-  
+
   // Bonus for unique word combinations
   const words = content.split(/\s+/).filter(w => w.length > 4);
   const uniqueCombinations = new Set<string>();
@@ -746,12 +746,12 @@ function calculateCreativeDistance(chapter: Chapter, state: NovelState): number 
       uniqueCombinations.add(combo);
     }
   }
-  
+
   const uniqueRatio = words.length > 0 ? uniqueCombinations.size / words.length : 0;
   if (uniqueRatio > 0.1) {
     score += Math.min(20, uniqueRatio * 200);
   }
-  
+
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
@@ -764,17 +764,17 @@ function detectNovelMetaphors(content: string, wordCount: number): {
   score: number;
 } {
   const examples: string[] = [];
-  
+
   // Metaphor patterns
   const metaphorPatterns = [
     /(like|as|as if|as though)\s+\w+\s+\w+/gi,
     /(was|were|is|are)\s+\w+\s+(like|as)/gi,
     /(metaphor|simile|comparison)/gi,
   ];
-  
+
   let metaphorCount = 0;
   const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 10);
-  
+
   sentences.forEach(sentence => {
     const hasMetaphor = metaphorPatterns.some(pattern => pattern.test(sentence));
     if (hasMetaphor) {
@@ -786,19 +786,19 @@ function detectNovelMetaphors(content: string, wordCount: number): {
       }
     }
   });
-  
+
   // Target: 2 metaphors per 1000 words
   const targetMetaphors = (wordCount / 1000) * 2;
   const metaphorRatio = targetMetaphors > 0 ? metaphorCount / targetMetaphors : 0;
-  
+
   // Score: 0 = no metaphors, 100 = 2+ per 1000 words with novel examples
   let score = Math.min(100, Math.max(0, (metaphorRatio / 1.0) * 100));
-  
+
   // Bonus for novel metaphors
   if (examples.length > 0) {
     score = Math.min(100, score + (examples.length * 5));
   }
-  
+
   return {
     count: metaphorCount,
     examples: examples.slice(0, 5),
@@ -817,7 +817,7 @@ function isCommonMetaphor(sentence: string): boolean {
     /(time|life) (flew|stood still|crawled)/i,
     /(voice|words) (cut|stung|pierced)/i,
   ];
-  
+
   return commonMetaphors.some(pattern => pattern.test(sentence));
 }
 
@@ -830,7 +830,7 @@ function detectUniqueImagery(content: string, state: NovelState, wordCount: numb
   score: number;
 } {
   const examples: string[] = [];
-  
+
   // Unique imagery indicators (sensory details, specific descriptions)
   const imageryPatterns = [
     // Sensory details
@@ -843,10 +843,10 @@ function detectUniqueImagery(content: string, state: NovelState, wordCount: numb
     // Specific objects/details
     /\b(the|a|an)\s+\w+\s+(of|with|that|which)\s+\w+/gi,
   ];
-  
+
   let imageryCount = 0;
   const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 15);
-  
+
   sentences.forEach(sentence => {
     const hasImagery = imageryPatterns.some(pattern => pattern.test(sentence));
     if (hasImagery) {
@@ -860,13 +860,13 @@ function detectUniqueImagery(content: string, state: NovelState, wordCount: numb
       }
     }
   });
-  
+
   // Target: 5+ unique imagery instances per 1000 words
   const targetImagery = (wordCount / 1000) * 5;
   const imageryRatio = targetImagery > 0 ? imageryCount / targetImagery : 0;
-  
+
   const score = Math.min(100, Math.max(0, (imageryRatio / 1.0) * 100));
-  
+
   return {
     count: imageryCount,
     examples: examples.slice(0, 5),
@@ -883,7 +883,7 @@ function isGenericImagery(sentence: string): boolean {
     /(very|really|quite|rather|pretty|somewhat)/i,
     /(looked|appeared|seemed)\s+(nice|good|bad|beautiful|ugly)/i,
   ];
-  
+
   return genericImagery.some(pattern => pattern.test(sentence));
 }
 
@@ -898,7 +898,7 @@ function analyzeSceneConstructionOriginality(chapter: Chapter, state: NovelState
   const content = chapter.content || '';
   const patternMatches: string[] = [];
   const uniqueElements: string[] = [];
-  
+
   // Common scene patterns
   const commonPatterns = [
     {
@@ -922,13 +922,13 @@ function analyzeSceneConstructionOriginality(chapter: Chapter, state: NovelState
       pattern: /(prepared|readied|gathered).*?(weapon|technique|strategy)/gi,
     },
   ];
-  
+
   commonPatterns.forEach(({ name, pattern }) => {
     if (pattern.test(content)) {
       patternMatches.push(name);
     }
   });
-  
+
   // Unique elements: non-standard scene structures
   const paragraphs = content.split(/\n\n/).filter(p => p.trim().length > 0);
   if (paragraphs.length > 0) {
@@ -941,24 +941,24 @@ function analyzeSceneConstructionOriginality(chapter: Chapter, state: NovelState
     if (uniqueBeginnings.size > 3) {
       uniqueElements.push('Varied scene openings');
     }
-    
+
     // Check for non-linear elements
     if (content.match(/(flashback|memory|remembered|recalled|past)/gi)) {
       uniqueElements.push('Non-linear narrative elements');
     }
-    
+
     // Check for multiple POVs
     const povShifts = content.match(/(meanwhile|elsewhere|at the same time|simultaneously)/gi);
     if (povShifts && povShifts.length > 1) {
       uniqueElements.push('Multiple perspective shifts');
     }
   }
-  
+
   // Score: penalize common patterns, reward unique elements
   let score = 100;
   score -= patternMatches.length * 15; // Each common pattern = -15
   score += uniqueElements.length * 10; // Each unique element = +10
-  
+
   return {
     score: Math.max(0, Math.min(100, Math.round(score))),
     patternMatches,
@@ -977,7 +977,7 @@ function analyzeEmotionalBeatOriginality(chapter: Chapter, state: NovelState): {
   const content = (chapter.content || '').toLowerCase();
   const standardTropes: string[] = [];
   const uniqueBeats: string[] = [];
-  
+
   // Standard emotional tropes
   const standardTropePatterns = [
     {
@@ -1001,37 +1001,37 @@ function analyzeEmotionalBeatOriginality(chapter: Chapter, state: NovelState): {
       pattern: /(training|practice).*?(breakthrough|realization|understanding).*?(power|strength|level)/gi,
     },
   ];
-  
+
   standardTropePatterns.forEach(({ name, pattern }) => {
     if (pattern.test(content)) {
       standardTropes.push(name);
     }
   });
-  
+
   // Unique beats: unexpected emotional moments
   const uniqueBeatPatterns = [
     /(unexpected|surprising|unforeseen).*?(emotion|feeling|reaction)/gi,
     /(contrary|opposite|unlike).*?(expected|usual|normal)/gi,
     /(complex|nuanced|layered).*?(emotion|feeling|response)/gi,
   ];
-  
+
   uniqueBeatPatterns.forEach(pattern => {
     const matches = content.match(pattern);
     if (matches && matches.length > 0) {
       uniqueBeats.push(`Unexpected emotional complexity: ${matches.length} instances`);
     }
   });
-  
+
   // Check for emotional contradictions (more interesting)
   if (content.match(/(but|however|yet|still).*?(felt|emotion|feeling)/gi)) {
     uniqueBeats.push('Emotional contradictions present');
   }
-  
+
   // Score: penalize standard tropes, reward unique beats
   let score = 100;
   score -= standardTropes.length * 20; // Each standard trope = -20
   score += uniqueBeats.length * 15; // Each unique beat = +15
-  
+
   return {
     score: Math.max(0, Math.min(100, Math.round(score))),
     standardTropesDetected: standardTropes,
@@ -1044,37 +1044,37 @@ function analyzeEmotionalBeatOriginality(chapter: Chapter, state: NovelState): {
  */
 function detectGenericPatterns(content: string): string[] {
   const patterns: string[] = [];
-  
+
   // Generic sentence structures
   const genericStructures = [
     /(it was|there was|there were|it is|there is|there are)/gi,
     /(he was|she was|they were|he is|she is|they are)/gi,
     /(he had|she had|they had|he has|she has|they have)/gi,
   ];
-  
+
   const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 5);
   const genericCount = sentences.filter(sentence => {
     return genericStructures.some(pattern => pattern.test(sentence));
   }).length;
-  
+
   const genericRatio = sentences.length > 0 ? genericCount / sentences.length : 0;
   if (genericRatio > 0.3) {
     patterns.push(`High generic sentence structures: ${Math.round(genericRatio * 100)}%`);
   }
-  
+
   // Generic adjectives
   const genericAdjectives = ['beautiful', 'nice', 'good', 'bad', 'big', 'small', 'very', 'really'];
   const adjectiveCount = genericAdjectives.reduce((count, adj) => {
     const regex = new RegExp(`\\b${adj}\\w*`, 'gi');
     return count + (content.match(regex) || []).length;
   }, 0);
-  
+
   const wordCount = content.split(/\s+/).length;
   const adjectiveDensity = wordCount > 0 ? (adjectiveCount / wordCount) * 1000 : 0;
   if (adjectiveDensity > 10) {
     patterns.push(`High generic adjective density: ${Math.round(adjectiveDensity)} per 1000 words`);
   }
-  
+
   return patterns;
 }
 
@@ -1083,7 +1083,7 @@ function detectGenericPatterns(content: string): string[] {
  */
 function detectMechanicalStructures(content: string): string[] {
   const structures: string[] = [];
-  
+
   // Check for repetitive sentence patterns
   const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 5);
   if (sentences.length > 10) {
@@ -1091,21 +1091,21 @@ function detectMechanicalStructures(content: string): string[] {
       const words = s.trim().split(/\s+/);
       return words[0]?.toLowerCase() || '';
     });
-    
+
     const wordFreq: Record<string, number> = {};
     firstWords.forEach(word => {
       wordFreq[word] = (wordFreq[word] || 0) + 1;
     });
-    
+
     const repeated = Object.entries(wordFreq)
       .filter(([_, count]) => count >= 4)
       .map(([word]) => word);
-    
+
     if (repeated.length > 0) {
       structures.push(`Repetitive sentence beginnings: ${repeated.join(', ')}`);
     }
   }
-  
+
   // Check for uniform paragraph lengths
   const paragraphs = content.split(/\n\n/).filter(p => p.trim().length > 0);
   if (paragraphs.length > 5) {
@@ -1115,12 +1115,12 @@ function detectMechanicalStructures(content: string): string[] {
       const diff = len - avgLength;
       return sum + (diff * diff);
     }, 0) / paragraphLengths.length;
-    
+
     if (variance < 100) { // Low variance = uniform lengths
       structures.push('Uniform paragraph lengths detected');
     }
   }
-  
+
   return structures;
 }
 
@@ -1130,7 +1130,7 @@ function detectMechanicalStructures(content: string): string[] {
 function detectDerivativeContent(content: string, state: NovelState): string[] {
   const flags: string[] = [];
   const contentLower = content.toLowerCase();
-  
+
   // Common derivative phrases from training data
   const derivativePhrases = [
     'in a world where',
@@ -1143,13 +1143,13 @@ function detectDerivativeContent(content: string, state: NovelState): string[] {
     'her eyes burned with',
     'a chill ran down his spine',
   ];
-  
+
   derivativePhrases.forEach(phrase => {
     if (contentLower.includes(phrase)) {
       flags.push(`Derivative phrase detected: "${phrase}"`);
     }
   });
-  
+
   // Check for overused genre-specific phrases
   const genrePhrases = [
     'cultivation breakthrough',
@@ -1158,11 +1158,11 @@ function detectDerivativeContent(content: string, state: NovelState): string[] {
     'ancient technique',
     'hidden realm',
   ];
-  
+
   const genreMatches = genrePhrases.filter(phrase => contentLower.includes(phrase));
   if (genreMatches.length > 3) {
     flags.push(`Multiple overused genre phrases: ${genreMatches.length} instances`);
   }
-  
+
   return flags;
 }

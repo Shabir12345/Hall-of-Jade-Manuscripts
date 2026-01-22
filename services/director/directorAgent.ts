@@ -33,6 +33,7 @@ import { deepseekJson } from '../deepseekService';
 import { logger } from '../loggingService';
 import { generateUUID } from '../../utils/uuid';
 import { DIRECTOR_SYSTEM_PROMPT, buildDirectorUserPrompt } from './directorPrompts';
+import { formatRecoveredThreadsForPrompt } from '../../hooks/useNarrativeForensics';
 
 /**
  * Run the Director Agent to generate a beat sheet for the next chapter
@@ -87,6 +88,11 @@ export async function runDirectorAgent(
       .filter(t => t.status === 'active' || t.status === 'paused')
       .slice(0, 10);
 
+    // Get recovered threads
+    const recoveredThreads = (state.storyThreads || [])
+      .filter(t => 'isRecovered' in t && t.isRecovered) as any[];
+    const recoveredThreadsPrompt = formatRecoveredThreadsForPrompt(recoveredThreads);
+
     // Build prompt
     const userPrompt = buildDirectorUserPrompt({
       arc: activeArc,
@@ -96,6 +102,7 @@ export async function runDirectorAgent(
       nextChapterNumber,
       userInstruction,
       config: finalConfig,
+      recoveredThreadsPrompt,
     });
 
     // Call DeepSeek

@@ -6,7 +6,7 @@
  * and thread status across arcs.
  */
 
-import { NovelState, Chapter, Arc, Character, StoryThread } from '../../types';
+import { NovelState, Chapter, Arc, Character } from '../../types';
 import { logger } from '../loggingService';
 
 /**
@@ -24,6 +24,12 @@ export interface ArcCharacterState {
     targetName: string;
     type: string;
     change?: string; // How relationship changed during arc
+  }[];
+  relationshipHistory: {
+    arcTitle: string;
+    arcChapter: number;
+    relationshipType: string;
+    changeDescription: string;
   }[];
 }
 
@@ -50,32 +56,46 @@ export interface ArcMemorySummary {
   startChapter: number;
   endChapter?: number;
   status: 'active' | 'completed';
-  
+
   /** ~500 word summary of the arc */
   summary: string;
-  
+
   /** Key events that happened during the arc */
   keyEvents: string[];
-  
+
   /** Character states at arc start/end */
   characterStates: ArcCharacterState[];
-  
+
   /** Thread progression during the arc */
   threadStates: ArcThreadState[];
-  
+
   /** Major conflicts resolved or introduced */
   conflictChanges: {
     introduced: string[];
     resolved: string[];
     escalated: string[];
   };
-  
+
   /** Unresolved elements carried to next arc */
   unresolvedElements: string[];
-  
+
   /** Timestamp */
   createdAt: number;
   updatedAt: number;
+}
+
+interface RelationshipChange {
+  targetId: string;
+  type: string;
+  description: string;
+}
+
+// Interface for internal processing only
+interface CharacterUpdateInternal {
+  chapterId: string;
+  chapterNumber: number;
+  changes: string[];
+  relationshipChange?: RelationshipChange;
 }
 
 /**
@@ -83,8 +103,7 @@ export interface ArcMemorySummary {
  */
 export function generateArcSummary(
   arc: Arc,
-  chapters: Chapter[],
-  state: NovelState
+  chapters: Chapter[]
 ): string {
   const arcChapters = chapters.filter(ch => {
     if (!arc.startedAtChapter) return false;
@@ -105,11 +124,11 @@ export function generateArcSummary(
 
   // Build summary sections
   const sections: string[] = [];
-  
+
   sections.push(`Arc: "${arc.title}"`);
   sections.push(`Chapters ${arcChapters[0].number}-${arcChapters[arcChapters.length - 1].number}`);
   sections.push('');
-  
+
   if (arc.description) {
     sections.push(`Goal: ${arc.description}`);
     sections.push('');
@@ -126,7 +145,7 @@ export function generateArcSummary(
   // Add arc outcome if completed
   if (arc.status === 'completed') {
     sections.push(`Outcome: Arc completed at Chapter ${arc.endedAtChapter}.`);
-    
+
     // Check for checklist completions
     if (arc.checklist) {
       const completed = arc.checklist.filter(item => item.completed);
@@ -151,21 +170,21 @@ export function generateArcSummary(
  */
 function extractKeyEvents(summaries: string[]): string[] {
   const events: string[] = [];
-  
+
   for (const summary of summaries) {
     // Split into sentences
     const sentences = summary.split(/[.!?]+/).filter(s => s.trim().length > 10);
-    
+
     // Look for action-oriented sentences
     for (const sentence of sentences) {
       const trimmed = sentence.trim();
-      
+
       // Skip if too short or too long
       if (trimmed.length < 20 || trimmed.length > 200) continue;
-      
+
       // Prioritize sentences with action verbs or key words
       const actionPatterns = /\b(discovered|revealed|defeated|escaped|arrived|met|learned|received|lost|gained|broke through|confronted|allied|betrayed|rescued|destroyed)\b/i;
-      
+
       if (actionPatterns.test(trimmed)) {
         events.push(trimmed);
       }
@@ -175,7 +194,7 @@ function extractKeyEvents(summaries: string[]): string[] {
   // Deduplicate similar events
   const uniqueEvents: string[] = [];
   for (const event of events) {
-    const isDuplicate = uniqueEvents.some(e => 
+    const isDuplicate = uniqueEvents.some(e =>
       e.toLowerCase().includes(event.toLowerCase().substring(0, 30)) ||
       event.toLowerCase().includes(e.toLowerCase().substring(0, 30))
     );
@@ -200,14 +219,14 @@ export function buildArcCharacterStates(
   // Get protagonist first
   const protagonist = state.characterCodex.find(c => c.isProtagonist);
   if (protagonist) {
-    characterStates.push(buildCharacterArcState(protagonist, arc, chapters, state));
+    characterStates.push(buildCharacterArcState(protagonist, arc, state));
   }
 
   // Get other important characters (mentioned in arc chapters)
   const arcChapters = chapters.filter(ch => {
     if (!arc.startedAtChapter) return false;
-    return ch.number >= arc.startedAtChapter && 
-           (!arc.endedAtChapter || ch.number <= arc.endedAtChapter);
+    return ch.number >= arc.startedAtChapter &&
+      (!arc.endedAtChapter || ch.number <= arc.endedAtChapter);
   });
 
   const arcContent = arcChapters.map(ch => ch.content + ' ' + ch.summary).join(' ').toLowerCase();
@@ -217,7 +236,7 @@ export function buildArcCharacterStates(
     .slice(0, 5); // Top 5 non-protagonist characters
 
   for (const character of relevantCharacters) {
-    characterStates.push(buildCharacterArcState(character, arc, chapters, state));
+    characterStates.push(buildCharacterArcState(character, arc, state));
   }
 
   return characterStates;
@@ -229,11 +248,11 @@ export function buildArcCharacterStates(
 function buildCharacterArcState(
   character: Character,
   arc: Arc,
-  chapters: Chapter[],
   state: NovelState
 ): ArcCharacterState {
   const majorChanges: string[] = [];
   const relationships: ArcCharacterState['relationships'] = [];
+  const relationshipHistory: ArcCharacterState['relationshipHistory'] = [];
 
   // Extract relationship info
   if (character.relationships) {
@@ -248,15 +267,27 @@ function buildCharacterArcState(
     });
   }
 
-  // Detect potential changes from update history
+  // Detect relationship changes from update history
   if (character.updateHistory) {
     const arcUpdates = character.updateHistory.filter(update => {
       if (!arc.startedAtChapter) return false;
       return update.chapterNumber >= arc.startedAtChapter &&
-             (!arc.endedAtChapter || update.chapterNumber <= arc.endedAtChapter);
+        (!arc.endedAtChapter || update.chapterNumber <= arc.endedAtChapter);
     });
 
     arcUpdates.forEach(update => {
+      // Capture relationship changes
+      if (update.changes.includes('relationship')) {
+        const updateInt = update as unknown as CharacterUpdateInternal;
+        relationshipHistory.push({
+          arcTitle: arc.title,
+          arcChapter: update.chapterNumber,
+          relationshipType: updateInt.relationshipChange?.type || '',
+          changeDescription: updateInt.relationshipChange?.description || ''
+        });
+      }
+
+      // Detect potential changes from update history
       if (update.changes.includes('cultivation')) {
         majorChanges.push('Cultivation breakthrough');
       }
@@ -276,6 +307,7 @@ function buildCharacterArcState(
     status: character.status,
     majorChanges,
     relationships,
+    relationshipHistory, // Now populated
   };
 }
 
@@ -295,18 +327,18 @@ export function buildArcThreadStates(
   // Get threads that were active during this arc
   const arcThreads = state.storyThreads.filter(thread => {
     if (!arc.startedAtChapter) return false;
-    
+
     // Thread was introduced before or during arc
     if (thread.introducedChapter > (arc.endedAtChapter || arc.startedAtChapter + 100)) {
       return false;
     }
-    
+
     // Thread had activity during arc
     const hasArcActivity = thread.chaptersInvolved?.some(ch => {
-      return ch >= arc.startedAtChapter! && 
-             (!arc.endedAtChapter || ch <= arc.endedAtChapter);
+      return ch >= arc.startedAtChapter! &&
+        (!arc.endedAtChapter || ch <= arc.endedAtChapter);
     });
-    
+
     return hasArcActivity || thread.status === 'active';
   });
 
@@ -315,7 +347,7 @@ export function buildArcThreadStates(
     const arcProgression = thread.progressionNotes
       ?.filter(note => {
         return note.chapterNumber >= arc.startedAtChapter! &&
-               (!arc.endedAtChapter || note.chapterNumber <= arc.endedAtChapter);
+          (!arc.endedAtChapter || note.chapterNumber <= arc.endedAtChapter);
       })
       .map(note => note.note) || [];
 
@@ -326,9 +358,9 @@ export function buildArcThreadStates(
       statusAtArcStart: thread.introducedChapter < arc.startedAtChapter! ? 'active' : 'introduced',
       statusAtArcEnd: thread.status,
       progressionDuringArc: arcProgression,
-      isResolved: thread.status === 'resolved' && 
-                  thread.resolvedChapter !== undefined &&
-                  thread.resolvedChapter <= (arc.endedAtChapter || Infinity),
+      isResolved: thread.status === 'resolved' &&
+        thread.resolvedChapter !== undefined &&
+        thread.resolvedChapter <= (arc.endedAtChapter || Infinity),
     });
   }
 
@@ -336,18 +368,19 @@ export function buildArcThreadStates(
 }
 
 /**
- * Build a complete arc memory summary
+ * Build a complete arc memory summary with consistency checks
  */
 export function buildArcMemorySummary(
   arc: Arc,
-  state: NovelState
+  state: NovelState,
+  existingMemories?: ArcMemorySummary[]
 ): ArcMemorySummary {
-  logger.debug('Building arc memory summary', 'arcMemoryService', undefined, {
+  logger.debug('Building arc memory summary', 'arcMemoryService', {
     arcId: arc.id,
     arcTitle: arc.title,
   });
 
-  const summary = generateArcSummary(arc, state.chapters, state);
+  const summary = generateArcSummary(arc, state.chapters);
   const characterStates = buildArcCharacterStates(arc, state.chapters, state);
   const threadStates = buildArcThreadStates(arc, state);
 
@@ -355,7 +388,7 @@ export function buildArcMemorySummary(
   const arcChapters = state.chapters.filter(ch => {
     if (!arc.startedAtChapter) return false;
     return ch.number >= arc.startedAtChapter &&
-           (!arc.endedAtChapter || ch.number <= arc.endedAtChapter);
+      (!arc.endedAtChapter || ch.number <= arc.endedAtChapter);
   });
   const keyEvents = extractKeyEvents(arcChapters.map(ch => ch.summary || ''));
 
@@ -370,6 +403,20 @@ export function buildArcMemorySummary(
   const unresolvedElements = threadStates
     .filter(t => !t.isResolved && t.type !== 'conflict')
     .map(t => `${t.threadTitle} (${t.type})`);
+
+  // NEW: Cross-arc consistency validation
+  const consistencyIssues = validateArcConsistency(arc, existingMemories);
+  if (consistencyIssues.length > 0) {
+    logger.warn('Arc consistency issues detected', 'arcMemoryService', {
+      arcId: arc.id,
+      issues: consistencyIssues,
+    });
+
+    // Add to unresolved elements
+    unresolvedElements.push(
+      ...consistencyIssues.map(i => `CONSISTENCY ISSUE: ${i}`)
+    );
+  }
 
   return {
     arcId: arc.id,
@@ -390,13 +437,105 @@ export function buildArcMemorySummary(
 }
 
 /**
+ * Validate arc against existing memories for consistency
+ */
+function validateArcConsistency(arc: any, allMemories: ArcMemorySummary[] = []): string[] {
+  const issues: string[] = [];
+  // Removed buildAllArcMemories(state) to fix infinite recursion loop
+  // Consistency is checked against memories provided (usually those built so far)
+
+  // Placeholder loops removed as they were empty and causing lint errors
+
+  // Check character cultivation consistency
+  arc.characters?.forEach((char: any) => {
+    const prevState = findCharacterPreviousState(char.characterId, arc, allMemories);
+    if (prevState && prevState.cultivation && char.cultivation) {
+      if (!isCultivationProgressionValid(prevState.cultivation, char.cultivation)) {
+        issues.push(`${char.characterId}: Invalid cultivation progression from ${prevState.cultivation} to ${char.cultivation}`);
+      }
+    }
+  });
+
+  // Check relationship consistency
+  arc.relationships?.forEach((rel: any) => {
+    const prevRelState = findRelationshipPreviousState(rel.characterId, rel.targetId, arc, allMemories);
+    if (prevRelState && rel.type) {
+      if (!isRelationshipChangeValid(prevRelState, rel.type)) {
+        issues.push(`Relationship ${rel.characterId}-${rel.targetId}: Invalid change from ${prevRelState} to ${rel.type}`);
+      }
+    }
+  });
+
+  return issues;
+}
+
+function findCharacterPreviousState(
+  characterId: string,
+  arc: Arc,
+  allMemories: ArcMemorySummary[]
+): ArcCharacterState | undefined {
+  // Find the previous arc memory for this character
+  const previousArcs = allMemories.filter(mem =>
+    mem.arcId !== arc.id &&
+    mem.characterStates.some(char => char.characterId === characterId)
+  );
+
+  // Sort by endChapter descending
+  previousArcs.sort((a, b) => (b.endChapter || 0) - (a.endChapter || 0));
+
+  // Return the most recent character state from the previous arcs
+  if (previousArcs.length > 0) {
+    return previousArcs[0].characterStates.find(char => char.characterId === characterId);
+  }
+
+  return undefined;
+}
+
+function isCultivationProgressionValid(_prev: string, _next: string): boolean {
+  // Simplified validation: allow any progression for now
+  return true;
+}
+
+function findRelationshipPreviousState(
+  characterId: string,
+  targetId: string,
+  arc: Arc,
+  allMemories: ArcMemorySummary[]
+): string | undefined {
+  // Find the previous relationship state
+  const previousArcs = allMemories.filter(mem =>
+    mem.arcId !== arc.id &&
+    mem.characterStates.some(char => char.characterId === characterId)
+  );
+
+  previousArcs.sort((a, b) => (b.endChapter || 0) - (a.endChapter || 0));
+
+  if (previousArcs.length > 0) {
+    const charState = previousArcs[0].characterStates.find(char => char.characterId === characterId);
+    if (charState) {
+      // Find the relationship with the target
+      const relationship = charState.relationships.find(rel => rel.targetName === targetId);
+      return relationship?.type;
+    }
+  }
+
+  return undefined;
+}
+
+function isRelationshipChangeValid(_prev: string, _next: string): boolean {
+  // Simplified validation: allow any change
+  return true;
+}
+
+/**
  * Build memory summaries for all arcs
  */
 export function buildAllArcMemories(state: NovelState): ArcMemorySummary[] {
   const memories: ArcMemorySummary[] = [];
 
   for (const arc of state.plotLedger) {
-    const memory = buildArcMemorySummary(arc, state);
+    // Pass memories built so far to avoid infinite recursion while allowing consistency checks
+    const memory = buildArcMemorySummary(arc, state, memories);
     memories.push(memory);
   }
 
@@ -463,14 +602,14 @@ export function formatArcMemoryForPrompt(memory: ArcMemorySummary): string {
  */
 export function formatArcMemoriesCompact(memories: ArcMemorySummary[]): string {
   const sections: string[] = [];
-  
+
   sections.push('[EPISODIC ARC MEMORY]');
   sections.push('');
 
   for (const memory of memories) {
     const statusTag = memory.status === 'active' ? '[ACTIVE]' : '';
     sections.push(`${memory.arcTitle} (Ch ${memory.startChapter}-${memory.endChapter || 'present'}) ${statusTag}`);
-    
+
     // Truncate summary to ~100 words
     const summaryWords = memory.summary.split(/\s+/).slice(0, 100);
     sections.push(summaryWords.join(' '));

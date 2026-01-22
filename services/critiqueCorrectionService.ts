@@ -513,6 +513,34 @@ export async function applyCritiqueCorrectionLoop(
       break;
     }
 
+    // Early termination: stop if improvement is minimal (< 0.3 points)
+    if (iteration > 1 && finalCritique) {
+      const scoreImprovement = critique.overallScore - finalCritique.overallScore;
+      if (scoreImprovement < 0.3) {
+        logger.info('Early termination: minimal score improvement', 'critique', {
+          iteration,
+          currentScore: critique.overallScore,
+          previousScore: finalCritique.overallScore,
+          improvement: scoreImprovement,
+        });
+
+        history.push({
+          iteration,
+          critique,
+          contentAfter: currentContent,
+        });
+
+        callbacks?.onPhase?.('critique_complete', {
+          passed: false,
+          finalScore: critique.overallScore,
+          iterations: iteration,
+          reason: 'minimal_improvement',
+        });
+
+        break;
+      }
+    }
+
     // Step 2: Generate corrections
     callbacks?.onPhase?.('correction_start', { iteration, issueCount: critique.issues.length });
 

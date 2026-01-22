@@ -24,18 +24,18 @@ const CACHE_TTL = 60000; // 1 minute
  */
 function identifyCoreStoryElements(state: NovelState): string[] {
   const coreElements: string[] = [];
-  
+
   // Check genre - System novels should not be penalized for using "system"
-  if (state.genre?.toLowerCase().includes('system') || 
-      state.title?.toLowerCase().includes('system')) {
+  if (state.genre?.toLowerCase().includes('system') ||
+    state.title?.toLowerCase().includes('system')) {
     coreElements.push('system');
   }
-  
+
   // Check if the novel has system logs - indicates a System novel
   if (state.systemLogs && state.systemLogs.length > 0) {
     coreElements.push('system');
   }
-  
+
   // Check grand saga for core concepts
   if (state.grandSaga) {
     const sagaLower = state.grandSaga.toLowerCase();
@@ -53,11 +53,11 @@ function identifyCoreStoryElements(state: NovelState): string[] {
       coreElements.push('system');
     }
   }
-  
+
   // Check world bible for core concepts
   if (state.worldBible && state.worldBible.length > 0) {
     const worldContent = state.worldBible.map(w => (w.title + ' ' + w.content).toLowerCase()).join(' ');
-    
+
     if (worldContent.includes('system')) {
       coreElements.push('system');
     }
@@ -66,7 +66,7 @@ function identifyCoreStoryElements(state: NovelState): string[] {
       coreElements.push('realm of cultivation');
     }
   }
-  
+
   // Check if any antagonists or plot elements reference these as core
   if (state.plotLedger && state.plotLedger.length > 0) {
     const plotContent = state.plotLedger.map(p => (p.title + ' ' + p.description).toLowerCase()).join(' ');
@@ -74,7 +74,7 @@ function identifyCoreStoryElements(state: NovelState): string[] {
       coreElements.push('system');
     }
   }
-  
+
   // Return unique elements
   return [...new Set(coreElements)];
 }
@@ -104,7 +104,7 @@ function checkNarrativeCraftReadiness(
 } {
   const issues: string[] = [];
   const suggestions: string[] = [];
-  
+
   // Check character development context
   if (state.characterCodex.length === 0) {
     issues.push('No characters defined - character development context missing');
@@ -114,14 +114,14 @@ function checkNarrativeCraftReadiness(
       suggestions.push('Consider identifying a protagonist for clearer character development focus');
     }
   }
-  
+
   // Check for scene intent clarity (recent chapters should have clear logic audits)
   const recentChapters = state.chapters.slice(-3);
   const chaptersWithoutAudit = recentChapters.filter(ch => !ch.logicAudit);
   if (chaptersWithoutAudit.length > 0 && state.chapters.length > 0) {
     suggestions.push(`${chaptersWithoutAudit.length} recent chapter(s) missing logic audits - ensure clear scene intent`);
   }
-  
+
   // Check for subtext opportunities (dialogue potential)
   const lastChapter = state.chapters[state.chapters.length - 1];
   if (lastChapter) {
@@ -130,7 +130,7 @@ function checkNarrativeCraftReadiness(
       suggestions.push('Low dialogue in recent chapters - consider adding dialogue with subtext opportunities');
     }
   }
-  
+
   return {
     isReady: issues.length === 0,
     issues,
@@ -156,13 +156,13 @@ export function checkOriginalityPreparation(
   const overusedTropes: string[] = [];
   const derivativeStructures: string[] = [];
   const suggestions: string[] = [];
-  
+
   // Analyze recent chapters for repetitive patterns
   const recentChapters = state.chapters.slice(-5);
   if (recentChapters.length >= 3) {
     const recentContent = recentChapters.map(ch => ch.content).join(' ');
     const sentences = recentContent.split(/[.!?]+/).filter(s => s.trim().length > 5);
-    
+
     // Check for repeated sentence beginnings
     // ADJUSTED: Exclude common articles and pronouns that naturally begin many sentences
     if (sentences.length > 10) {
@@ -175,12 +175,12 @@ export function checkOriginalityPreparation(
         'but', 'and', 'or', 'so', 'yet', 'for', // Conjunctions
         'as', 'when', 'while', 'if', 'then', 'now', // Common starters
       ]);
-      
+
       const firstWords = sentences.slice(0, 30).map(s => {
         const words = s.trim().split(/\s+/);
         return words[0]?.toLowerCase() || '';
       });
-      
+
       const wordFreq: Record<string, number> = {};
       firstWords.forEach(word => {
         // Skip excluded common words
@@ -188,37 +188,37 @@ export function checkOriginalityPreparation(
           wordFreq[word] = (wordFreq[word] || 0) + 1;
         }
       });
-      
+
       // Increased threshold from 3 to 4 for less strict detection
       const repeated = Object.entries(wordFreq)
         .filter(([word, count]) => count >= 4 && word.length > 2) // Skip very short words
         .map(([word]) => word);
-      
+
       if (repeated.length > 0) {
         repetitivePatterns.push(`Repeated sentence beginnings: ${repeated.join(', ')}`);
         suggestions.push('Vary sentence beginnings in next chapter to avoid repetitive patterns');
       }
     }
   }
-  
+
   // Check for overused tropes
   if (recentChapters.length > 0 && state.chapters.length > 0) {
     try {
       const originalityAnalysis = analyzeOriginality(state);
       const commonTropes = originalityAnalysis.commonTropesDetected;
-      
+
       // Core story elements that should NOT be flagged as "overused tropes"
       // These are central to the story's concept and genre, not tropes to avoid
       const coreStoryElements = identifyCoreStoryElements(state);
-      
+
       // Filter out core story elements from trope checking
-      const tropesToCheck = commonTropes.filter(trope => 
-        !coreStoryElements.some(core => 
+      const tropesToCheck = commonTropes.filter(trope =>
+        !coreStoryElements.some(core =>
           core.toLowerCase() === trope.toLowerCase() ||
           trope.toLowerCase().includes(core.toLowerCase())
         )
       );
-      
+
       // Check if remaining tropes appear frequently in recent content
       const recentContent = recentChapters.map(ch => ch.content + ' ' + ch.summary).join(' ').toLowerCase();
       const tropeFrequency: Record<string, number> = {};
@@ -230,12 +230,12 @@ export function checkOriginalityPreparation(
           tropeFrequency[trope] = matches.length;
         }
       });
-      
+
       // Higher threshold (>8 instead of >3) for flagging as "overused"
       const overused = Object.entries(tropeFrequency)
         .filter(([_, count]) => count > 8)
         .map(([trope]) => trope);
-      
+
       if (overused.length > 0) {
         overusedTropes.push(...overused);
         suggestions.push(`Consider subverting or avoiding these overused tropes: ${overused.slice(0, 3).join(', ')}`);
@@ -245,7 +245,7 @@ export function checkOriginalityPreparation(
       console.warn('Error checking tropes in originality preparation:', error);
     }
   }
-  
+
   // Check for derivative scene structures
   if (recentChapters.length >= 2) {
     const scenePatterns = [
@@ -254,19 +254,19 @@ export function checkOriginalityPreparation(
       'power-up sequence',
       'revelation scene',
     ];
-    
+
     const recentSummaries = recentChapters.map(ch => (ch.summary || ch.title).toLowerCase()).join(' ');
     const detectedPatterns = scenePatterns.filter(pattern => {
       const count = (recentSummaries.match(new RegExp(pattern, 'gi')) || []).length;
       return count >= 2;
     });
-    
+
     if (detectedPatterns.length > 0) {
       derivativeStructures.push(...detectedPatterns);
       suggestions.push(`Recent chapters use common scene structures: ${detectedPatterns.join(', ')}. Consider unique scene construction.`);
     }
   }
-  
+
   return {
     isReady: repetitivePatterns.length === 0 && overusedTropes.length === 0 && derivativeStructures.length === 0,
     repetitivePatterns,
@@ -286,10 +286,10 @@ function checkVoiceConsistencyReadiness(state: NovelState): {
   issues: string[];
 } {
   const issues: string[] = [];
-  
+
   // Check if enough chapters exist to establish voice
   const profileEstablished = state.chapters.length >= 3;
-  
+
   if (!profileEstablished) {
     return {
       isReady: true, // Not an error, just not established yet
@@ -298,10 +298,10 @@ function checkVoiceConsistencyReadiness(state: NovelState): {
       issues: [],
     };
   }
-  
+
   // Extract voice profile to check consistency
   const voiceProfile = extractAuthorialVoiceProfile(state.chapters, state);
-  
+
   if (!voiceProfile) {
     issues.push('Unable to extract authorial voice profile');
     return {
@@ -311,28 +311,28 @@ function checkVoiceConsistencyReadiness(state: NovelState): {
       issues,
     };
   }
-  
+
   // Check recent chapters for voice consistency
   const recentChapters = state.chapters.slice(-3);
   let consistencyScore = 100;
-  
+
   // Check sentence complexity consistency
   const recentSentences = recentChapters
     .map(ch => ch.content.split(/[.!?]+/).filter(s => s.trim().length > 0))
     .flat();
-  
+
   if (recentSentences.length > 0) {
     const recentLengths = recentSentences.map(s => s.trim().split(/\s+/).length);
     const recentAvg = recentLengths.reduce((sum, len) => sum + len, 0) / recentLengths.length;
     const expectedAvg = voiceProfile.preferredSentenceComplexity.average;
     const deviation = Math.abs(recentAvg - expectedAvg) / expectedAvg;
-    
+
     if (deviation > 0.3) {
       consistencyScore -= 20;
       issues.push(`Sentence complexity deviation: recent average ${recentAvg.toFixed(1)} vs expected ${expectedAvg.toFixed(1)}`);
     }
   }
-  
+
   return {
     isReady: consistencyScore >= 70,
     profileEstablished: true,
@@ -350,19 +350,19 @@ export function validateChapterGenerationQuality(
     const errors: string[] = [];
     const suggestions: string[] = [];
     let qualityScore = 100; // Start with perfect score, deduct for issues
-    
+
     // Run new pre-generation checks
     const narrativeCraftCheck = checkNarrativeCraftReadiness(state, nextChapterNumber);
     const originalityCheck = checkOriginalityPreparation(state, nextChapterNumber);
     const voiceConsistencyCheck = checkVoiceConsistencyReadiness(state);
-    
+
     // Aggregate results
     if (!narrativeCraftCheck.isReady) {
       warnings.push(...narrativeCraftCheck.issues);
       qualityScore -= narrativeCraftCheck.issues.length * 5;
     }
     suggestions.push(...narrativeCraftCheck.suggestions);
-    
+
     if (!originalityCheck.isReady) {
       warnings.push('Originality preparation issues detected');
       qualityScore -= 10;
@@ -376,28 +376,28 @@ export function validateChapterGenerationQuality(
       qualityScore -= 5;
     }
     suggestions.push(...originalityCheck.suggestions);
-    
+
     if (!voiceConsistencyCheck.isReady && voiceConsistencyCheck.profileEstablished) {
       warnings.push(...voiceConsistencyCheck.issues);
       qualityScore -= voiceConsistencyCheck.issues.length * 5;
     }
-    
+
     const activeArc = state.plotLedger.find(a => a.status === 'active');
     const previousChapter = state.chapters.length > 0 ? state.chapters[state.chapters.length - 1] : null;
-    
+
     // Check 1: Emotional value shift preparation
     if (!previousChapter?.logicAudit && state.chapters.length > 0) {
       warnings.push('Previous chapter missing logic audit. New chapter may lack clear value shift foundation.');
       qualityScore -= 10;
     }
-    
+
     // Check 2: Foreshadowing appropriateness for arc stage
     const foreshadowing = analyzeForeshadowing(state);
     if (activeArc && activeArc.startedAtChapter) {
       const idx = Math.max(0, nextChapterNumber - activeArc.startedAtChapter);
       if (idx === 0) {
         // Beginning of arc - should have recent foreshadowing setup
-        const recentForeshadowing = foreshadowing.activeForeshadowing.filter(f => 
+        const recentForeshadowing = foreshadowing.activeForeshadowing.filter(f =>
           (nextChapterNumber - f.introducedChapter) <= 3
         );
         if (recentForeshadowing.length === 0 && state.chapters.length > 3) {
@@ -412,22 +412,22 @@ export function validateChapterGenerationQuality(
         }
       }
     }
-    
+
     // Check 3: Pacing appropriateness for arc stage
     const pacing = analyzePacing(state);
     if (activeArc && activeArc.startedAtChapter) {
       const idx = Math.max(0, nextChapterNumber - activeArc.startedAtChapter);
       const recommendedPacing = idx === 0 ? pacing.arcPositionPacing.beginning.recommendedPacing :
-                                  idx <= 2 ? pacing.arcPositionPacing.early.recommendedPacing :
-                                  idx <= 5 ? pacing.arcPositionPacing.middle.recommendedPacing :
-                                  pacing.arcPositionPacing.late.recommendedPacing;
-      
+        idx <= 2 ? pacing.arcPositionPacing.early.recommendedPacing :
+          idx <= 5 ? pacing.arcPositionPacing.middle.recommendedPacing :
+            pacing.arcPositionPacing.late.recommendedPacing;
+
       if (pacing.recommendations.length > 0) {
         suggestions.push(`Pacing: ${pacing.recommendations[0]}`);
         qualityScore -= 5;
       }
     }
-    
+
     // Check 4: Emotional payoff opportunities
     const emotionalPayoffs = analyzeEmotionalPayoffs(state);
     if (emotionalPayoffs.upcomingPayoffOpportunities.length > 0) {
@@ -437,7 +437,7 @@ export function validateChapterGenerationQuality(
         qualityScore -= 3;
       }
     }
-    
+
     // Check 5: Subtext presence
     if (state.chapters.length > 5) {
       const recentChapters = state.chapters.slice(-3);
@@ -445,13 +445,13 @@ export function validateChapterGenerationQuality(
         const content = (ch.content + ' ' + (ch.summary || '')).toLowerCase();
         return sum + (content.match(/(said|asked|replied|shouted|whispered|spoke|exclaimed)/gi) || []).length;
       }, 0);
-      
+
       if (dialogueCount < 10 && recentChapters.length >= 3) {
         suggestions.push('Low dialogue count in recent chapters. Consider adding dialogue with subtext to create depth.');
         qualityScore -= 5;
       }
     }
-    
+
     // Check 6: Chapter ending hook appropriateness
     if (activeArc && activeArc.startedAtChapter) {
       const idx = Math.max(0, nextChapterNumber - activeArc.startedAtChapter);
@@ -460,16 +460,16 @@ export function validateChapterGenerationQuality(
       else if (idx <= 2) hookType = 'emotional or mystery hook';
       else if (idx <= 5) hookType = 'action or emotional cliffhanger';
       else hookType = 'tension escalation toward climax';
-      
+
       suggestions.push(`Chapter Ending: Use a ${hookType} appropriate for arc stage ${idx === 0 ? 'Beginning' : idx <= 2 ? 'Early' : idx <= 5 ? 'Middle' : 'Late'}.`);
     }
-    
+
     // Check 7: Story state consistency
     if (!previousChapter && state.chapters.length > 0) {
       warnings.push('No previous chapter found. Ensure continuity with most recent chapter.');
       qualityScore -= 5;
     }
-    
+
     // Aggregate all suggestions (remove duplicates)
     const allSuggestions = [
       ...suggestions,
@@ -480,12 +480,12 @@ export function validateChapterGenerationQuality(
       ...pacing.recommendations.slice(0, 2),
     ];
     const uniqueSuggestions = Array.from(new Set(allSuggestions)).slice(0, 10);
-    
+
     // Calculate final quality score
     qualityScore = Math.max(0, Math.min(100, qualityScore));
-    
+
     const isValid = errors.length === 0 && qualityScore >= 70;
-    
+
     return {
       isValid,
       warnings,
@@ -517,7 +517,7 @@ export async function validateGeneratedChapter(
   const errors: string[] = [];
   const suggestions: string[] = [];
   let qualityScore = 100;
-  
+
   // Check 1: Word count minimum
   const wordCount = chapter.content.split(/\s+/).filter(w => w.length > 0).length;
   if (wordCount < 1500) {
@@ -527,7 +527,7 @@ export async function validateGeneratedChapter(
     warnings.push(`Chapter is ${wordCount} words, slightly below recommended 1800+ words.`);
     qualityScore -= 5;
   }
-  
+
   // Check 2: Paragraph structure
   const paragraphs = chapter.content.split(/\n\n/).filter(p => p.trim().length > 0);
   if (paragraphs.length < 3) {
@@ -537,77 +537,77 @@ export async function validateGeneratedChapter(
     warnings.push(`Chapter has ${paragraphs.length} paragraphs. Consider more paragraph breaks for better readability.`);
     qualityScore -= 5;
   }
-  
+
   // Check 3: Logic audit presence
   if (!chapter.logicAudit) {
     errors.push('Chapter missing logic audit (starting value, friction, choice, resulting value).');
     qualityScore -= 15;
   } else {
     // Validate logic audit completeness
-    if (!chapter.logicAudit.startingValue || !chapter.logicAudit.theFriction || 
-        !chapter.logicAudit.theChoice || !chapter.logicAudit.resultingValue) {
+    if (!chapter.logicAudit.startingValue || !chapter.logicAudit.theFriction ||
+      !chapter.logicAudit.theChoice || !chapter.logicAudit.resultingValue) {
       errors.push('Logic audit is incomplete. Missing required fields.');
       qualityScore -= 10;
     }
   }
-  
+
   // Check 4: Chapter summary presence
   if (!chapter.summary || chapter.summary.trim().length < 50) {
     warnings.push('Chapter summary is missing or too short. Summaries help maintain story continuity.');
     qualityScore -= 5;
   }
-  
+
   // Check 5: Emotional value shift (Delta principle)
   if (chapter.logicAudit) {
     const hasValueShift = chapter.logicAudit.startingValue !== chapter.logicAudit.resultingValue ||
-                          chapter.logicAudit.theFriction.length > 10 ||
-                          chapter.logicAudit.theChoice.length > 10;
+      chapter.logicAudit.theFriction.length > 10 ||
+      chapter.logicAudit.theChoice.length > 10;
     if (!hasValueShift) {
       warnings.push('Chapter may lack clear emotional value shift (Delta principle). Ensure characters end in different state than they began.');
       qualityScore -= 10;
     }
   }
-  
+
   // Check 6: Foreshadowing presence (should have at least some in most chapters)
   const foreshadowingKeywords = ['mystery', 'secret', 'prophecy', 'hint', 'seemed', 'felt', 'appeared', 'strange', 'ancient', 'mysterious'];
-  const hasForeshadowing = foreshadowingKeywords.some(kw => 
-    chapter.content.toLowerCase().includes(kw) || 
+  const hasForeshadowing = foreshadowingKeywords.some(kw =>
+    chapter.content.toLowerCase().includes(kw) ||
     (chapter.summary && chapter.summary.toLowerCase().includes(kw))
   );
-  
+
   if (!hasForeshadowing && state.chapters.length > 3) {
     suggestions.push('Chapter may benefit from subtle foreshadowing elements.');
     qualityScore -= 3;
   }
-  
+
   // Check 7: Dialogue presence (most chapters should have dialogue)
   const hasDialogue = chapter.content.includes('"') || chapter.content.includes("'") || chapter.content.includes('"');
   if (!hasDialogue && wordCount > 2000) {
     suggestions.push('Long chapter without dialogue. Consider adding dialogue with subtext for character development.');
     qualityScore -= 3;
   }
-  
+
   // Check 8: Chapter ending hook
   const lastParagraph = paragraphs[paragraphs.length - 1] || '';
   const hasQuestionMark = lastParagraph.includes('?');
-  const hasSuspenseIndicators = ['suddenly', 'but', 'however', 'yet', 'still', 'moreover', 'meanwhile'].some(ind => 
+  const hasSuspenseIndicators = ['suddenly', 'but', 'however', 'yet', 'still', 'moreover', 'meanwhile'].some(ind =>
     lastParagraph.toLowerCase().includes(ind)
   );
-  
+
   if (!hasQuestionMark && !hasSuspenseIndicators && lastParagraph.length < 200) {
     suggestions.push('Chapter ending may lack a strong hook. Consider ending with a question, revelation, or unresolved tension.');
     qualityScore -= 5;
   }
-  
+
   // Check 8b: Chapter ending cliché detection (CRITICAL)
   try {
     const { validateChapterEnding } = await import('./chapterEndingValidator');
     const endingValidation = validateChapterEnding(chapter);
-    
+
     if (endingValidation.hasClicheEnding) {
       const highSeverityCount = endingValidation.detectedPatterns.filter(p => p.severity === 'high').length;
       const mediumSeverityCount = endingValidation.detectedPatterns.filter(p => p.severity === 'medium').length;
-      
+
       if (highSeverityCount > 0) {
         errors.push(`Chapter ending contains cliché summary patterns (${highSeverityCount} high-severity, ${mediumSeverityCount} medium-severity detected). End with immediate action, dialogue, or sensory detail instead of summarizing what will happen.`);
         qualityScore -= 25; // Significant penalty for cliché endings
@@ -615,7 +615,7 @@ export async function validateGeneratedChapter(
         warnings.push(`Chapter ending contains cliché patterns (${mediumSeverityCount} detected). Consider ending with more immediate, concrete action or dialogue.`);
         qualityScore -= 15;
       }
-      
+
       // Add specific suggestions from validator
       if (endingValidation.suggestions.length > 0) {
         endingValidation.suggestions.forEach(suggestion => {
@@ -624,10 +624,10 @@ export async function validateGeneratedChapter(
           }
         });
       }
-      
+
       // Log detected patterns for debugging
       if (endingValidation.detectedPatterns.length > 0) {
-        console.warn('[Chapter Quality] Cliché ending patterns detected:', 
+        console.warn('[Chapter Quality] Cliché ending patterns detected:',
           endingValidation.detectedPatterns.map(p => `${p.type}: ${p.example}`).join(', '));
       }
     } else if (endingValidation.score < 100) {
@@ -648,7 +648,7 @@ export async function validateGeneratedChapter(
     console.warn('[Chapter Quality] Failed to validate chapter ending:', error);
     // Don't block validation if ending validator fails
   }
-  
+
   // Check 9: Continuity with previous chapter (CRITICAL) - Enhanced with transition validator
   let transitionQualityScore: number | undefined = undefined;
   if (state.chapters.length > 0) {
@@ -659,7 +659,7 @@ export async function validateGeneratedChapter(
         const { validateChapterTransition } = await import('./chapterTransitionValidator');
         const transitionValidation = validateChapterTransition(previousChapter, chapter);
         transitionQualityScore = transitionValidation.score;
-        
+
         // Add transition issues to warnings/errors
         // Reduced penalties to be less harsh - transition issues are important but shouldn't dominate scoring
         transitionValidation.issues.forEach(issue => {
@@ -679,19 +679,19 @@ export async function validateGeneratedChapter(
             suggestions.push(`[Transition] ${issue.description}`);
           }
         });
-        
+
         // Add transition warnings as suggestions (less impactful)
         transitionValidation.warnings.forEach(warning => {
           suggestions.push(`[Transition] ${warning}`);
         });
-        
+
         // Add transition suggestions
         transitionValidation.suggestions.forEach(suggestion => {
           if (!suggestions.includes(suggestion)) {
             suggestions.push(suggestion);
           }
         });
-        
+
         // Log transition quality
         if (transitionValidation.score < 70) {
           console.warn(`[Chapter Quality] Transition quality score: ${transitionValidation.score}/100 (below threshold of 70)`);
@@ -706,9 +706,9 @@ export async function validateGeneratedChapter(
           /(later|after|hours?|days?|weeks?|months?|years?|the next|the following|eventually|meanwhile)/i,
           /(some time|a while|much|long) (later|after|passed|went by)/i
         ];
-        
+
         const hasTimeSkip = timeSkipPatterns.some(pattern => pattern.test(chapterStart));
-        
+
         if (hasTimeSkip && !chapterStart.includes('however') && !chapterStart.includes('but')) {
           warnings.push(`Possible time skip detected at chapter start. Ensure this is intentional and properly explained, or continue from the exact moment the previous chapter ended.`);
           qualityScore -= 15;
@@ -716,18 +716,18 @@ export async function validateGeneratedChapter(
       }
     }
   }
-  
+
   // Check 10: Subtext in dialogue (if dialogue exists)
   if (hasDialogue) {
     const questionCount = (chapter.content.match(/\?/g) || []).length;
     const dialogueTagCount = (chapter.content.match(/(said|asked|replied|whispered|shouted|spoke|exclaimed)/gi) || []).length;
-    
+
     if (dialogueTagCount > 5 && questionCount < 2) {
       suggestions.push('Dialogue may lack subtext. Consider adding questions or indirect speech that implies hidden meaning.');
       qualityScore -= 3;
     }
   }
-  
+
   // Check 10: Antagonist presence in chapter content
   const antagonists = state.antagonists || [];
   if (antagonists.length > 0) {
@@ -735,9 +735,9 @@ export async function validateGeneratedChapter(
     const hasAntagonistMention = activeAntagonists.some(ant => {
       const nameLower = ant.name.toLowerCase();
       return chapter.content.toLowerCase().includes(nameLower) ||
-             (chapter.summary && chapter.summary.toLowerCase().includes(nameLower));
+        (chapter.summary && chapter.summary.toLowerCase().includes(nameLower));
     });
-    
+
     if (!hasAntagonistMention && activeAntagonists.length > 0 && wordCount > 2000) {
       suggestions.push('Long chapter without antagonist presence. Consider featuring an active antagonist to maintain conflict.');
       qualityScore -= 3;
@@ -746,29 +746,30 @@ export async function validateGeneratedChapter(
     suggestions.push('No antagonists in story. Consider introducing opposition to create narrative tension.');
     qualityScore -= 5;
   }
-  
+
   // Check 11: Thread progression validation (NEW)
   const threads = state.storyThreads || [];
   const activeThreads = threads.filter(t => t.status === 'active');
-  
+
   if (activeThreads.length > 0) {
     const chapterContent = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
-    
+
     // Check if any thread was referenced or progressed in this chapter
     const referencedThreads = activeThreads.filter(thread => {
       // Check if thread title or related keywords are mentioned
+      if (!thread.title) return false;
       const titleWords = thread.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
       const hasReference = titleWords.some(word => chapterContent.includes(word));
-      
+
       // Check if description keywords are mentioned
       const descWords = thread.description?.toLowerCase().split(/\s+/).filter(w => w.length > 4) || [];
       const hasDescReference = descWords.slice(0, 5).some(word => chapterContent.includes(word));
-      
+
       return hasReference || hasDescReference;
     });
-    
+
     const threadReferenceRate = (referencedThreads.length / activeThreads.length) * 100;
-    
+
     if (referencedThreads.length === 0 && activeThreads.length >= 3) {
       warnings.push(`No active story threads were referenced in this chapter. ${activeThreads.length} threads may be stagnating.`);
       qualityScore -= 10;
@@ -776,37 +777,37 @@ export async function validateGeneratedChapter(
       suggestions.push(`Only ${referencedThreads.length} of ${activeThreads.length} active threads were referenced. Consider progressing more threads.`);
       qualityScore -= 5;
     }
-    
+
     // Check for critical threads that should have progressed
     const criticalThreads = activeThreads.filter(t => t.priority === 'critical');
     const referencedCritical = criticalThreads.filter(t => {
       const titleWords = t.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
       return titleWords.some(word => chapterContent.includes(word));
     });
-    
+
     if (criticalThreads.length > 0 && referencedCritical.length === 0) {
       const criticalNames = criticalThreads.slice(0, 3).map(t => t.title).join(', ');
       warnings.push(`No critical story threads were addressed. Consider progressing: ${criticalNames}`);
       qualityScore -= 8;
     }
-    
+
     // Check for stalled threads that should have been addressed
     const stalledThreads = activeThreads.filter(t => {
       const chaptersSinceUpdate = chapter.number - t.lastUpdatedChapter;
       // Consider stalled if not updated in 5+ chapters for most types
       return chaptersSinceUpdate >= 5;
     });
-    
+
     if (stalledThreads.length > 2) {
       suggestions.push(`${stalledThreads.length} story threads have been stalled for 5+ chapters. Consider progressing some of them.`);
       qualityScore -= 3;
     }
   }
-  
+
   qualityScore = Math.max(0, Math.min(100, qualityScore));
-  
+
   const isValid = errors.length === 0 && qualityScore >= 70;
-  
+
   return {
     isValid,
     warnings,
@@ -827,11 +828,14 @@ function validateNarrativeCraft(chapter: Chapter, state: NovelState): {
   interiorityScore: number;
   sceneIntentScore: number;
   dialogueNaturalnessScore: number;
+  repetitivePatterns: string[];
+  overexplanationFlags: string[];
+  neutralProseFlags: string[];
   issues: string[];
 } {
   try {
     const craftScore = analyzeNarrativeCraft(chapter, state);
-    
+
     const issues: string[] = [];
     // Adjusted thresholds - lowered to be less harsh
     if (craftScore.burstinessScore < 50) { // Reduced from 60
@@ -852,7 +856,7 @@ function validateNarrativeCraft(chapter: Chapter, state: NovelState): {
     if (craftScore.dialogueNaturalnessScore < 40) { // Reduced from 50
       issues.push(`Low dialogue naturalness score (${craftScore.dialogueNaturalnessScore}/100) - dialogue may be too formal`);
     }
-    
+
     // Only add pattern issues if they're significant
     if (craftScore.repetitivePatterns.length > 2) {
       issues.push(...craftScore.repetitivePatterns.slice(0, 2));
@@ -863,7 +867,7 @@ function validateNarrativeCraft(chapter: Chapter, state: NovelState): {
     if (craftScore.neutralProseFlags.length > 0) {
       issues.push(...craftScore.neutralProseFlags.slice(0, 1));
     }
-    
+
     return {
       score: craftScore.overallCraftScore,
       burstinessScore: craftScore.burstinessScore,
@@ -872,6 +876,9 @@ function validateNarrativeCraft(chapter: Chapter, state: NovelState): {
       interiorityScore: craftScore.interiorityScore,
       sceneIntentScore: craftScore.sceneIntentScore,
       dialogueNaturalnessScore: craftScore.dialogueNaturalnessScore,
+      repetitivePatterns: craftScore.repetitivePatterns,
+      overexplanationFlags: craftScore.overexplanationFlags,
+      neutralProseFlags: craftScore.neutralProseFlags,
       issues,
     };
   } catch (error) {
@@ -885,6 +892,9 @@ function validateNarrativeCraft(chapter: Chapter, state: NovelState): {
       interiorityScore: 50,
       sceneIntentScore: 50,
       dialogueNaturalnessScore: 50,
+      repetitivePatterns: [],
+      overexplanationFlags: [],
+      neutralProseFlags: [],
       issues: ['Error analyzing narrative craft - using fallback scores'],
     };
   }
@@ -906,7 +916,7 @@ function validateOriginality(chapter: Chapter, state: NovelState): {
 } {
   try {
     const originalityScore = analyzeChapterOriginality(chapter, state);
-    
+
     return {
       score: originalityScore.overallOriginality,
       creativeDistance: originalityScore.creativeDistance,
@@ -945,7 +955,7 @@ function validateVoiceConsistency(chapter: Chapter, state: NovelState, voiceProf
   issues: string[];
 } {
   const issues: string[] = [];
-  
+
   try {
     if (!voiceProfile) {
       return {
@@ -956,93 +966,93 @@ function validateVoiceConsistency(chapter: Chapter, state: NovelState, voiceProf
         issues: ['No voice profile available for comparison'],
       };
     }
-  
-  const content = chapter.content || '';
-  const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
-  
-  // Check sentence complexity match
-  let sentenceComplexityMatch = 100;
-  if (sentences.length > 0) {
-    const sentenceLengths = sentences.map(s => s.trim().split(/\s+/).length);
-    const avgLength = sentenceLengths.reduce((sum, len) => sum + len, 0) / sentenceLengths.length;
-    const expectedAvg = voiceProfile.preferredSentenceComplexity.average;
-    const deviation = Math.abs(avgLength - expectedAvg) / expectedAvg;
-    
-    sentenceComplexityMatch = Math.max(0, Math.min(100, 100 - (deviation * 100)));
-    
-    if (deviation > 0.3) {
-      issues.push(`Sentence complexity deviation: ${avgLength.toFixed(1)} vs expected ${expectedAvg.toFixed(1)}`);
-    }
-  }
-  
-  // Check tone consistency
-  const contentLower = content.toLowerCase();
-  const toneKeywords: Record<string, string[]> = {
-    formal: ['thus', 'therefore', 'hence', 'whereas', 'furthermore', 'moreover'],
-    casual: ["'", "don't", "can't", "won't", "gonna", "wanna"],
-    dramatic: ['suddenly', 'abruptly', 'violently', 'fiercely'],
-    contemplative: ['pondered', 'reflected', 'considered', 'contemplated'],
-  };
-  
-  const toneCounts: Record<string, number> = {};
-  Object.keys(toneKeywords).forEach(tone => {
-    toneCounts[tone] = toneKeywords[tone].reduce((count, keyword) => {
-      const matches = contentLower.match(new RegExp(keyword, 'gi'));
-      return count + (matches ? matches.length : 0);
-    }, 0);
-  });
-  
-  const primaryTone = voiceProfile.emotionalToneRange.primary;
-  const primaryCount = toneCounts[primaryTone] || 0;
-  const totalToneCount = Object.values(toneCounts).reduce((sum, count) => sum + count, 0);
-  const toneRatio = totalToneCount > 0 ? primaryCount / totalToneCount : 0.5;
-  
-  const toneConsistency = Math.round(toneRatio * 100);
-  if (toneConsistency < 50) {
-    issues.push(`Tone inconsistency: primary tone "${primaryTone}" not dominant`);
-  }
-  
-  // Check stylistic pattern preservation
-  let stylisticPatternPreservation = 100;
-  const quirks = voiceProfile.stylisticQuirks;
-  
-  if (quirks.length > 0) {
-    // Check if stylistic quirks are present
-    let quirksPresent = 0;
-    quirks.forEach(quirk => {
-      const quirkLower = quirk.toLowerCase();
-      if (quirkLower.includes('dash') && content.match(/—/g)) quirksPresent++;
-      else if (quirkLower.includes('ellipsis') && content.match(/\.\.\./g)) quirksPresent++;
-      else if (quirkLower.includes('fragment') && content.match(/^[a-z][^.!?]*$/m)) quirksPresent++;
-      else if (quirkLower.includes('repetition')) {
-        // Check for strategic repetition
-        const words = contentLower.split(/\s+/);
-        const wordFreq: Record<string, number> = {};
-        words.forEach(word => {
-          if (word.length > 4) {
-            wordFreq[word] = (wordFreq[word] || 0) + 1;
-          }
-        });
-        const repeated = Object.entries(wordFreq).filter(([_, count]) => count > 3).length;
-        if (repeated > 0 && repeated < 10) quirksPresent++;
+
+    const content = chapter.content || '';
+    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
+
+    // Check sentence complexity match
+    let sentenceComplexityMatch = 100;
+    if (sentences.length > 0) {
+      const sentenceLengths = sentences.map(s => s.trim().split(/\s+/).length);
+      const avgLength = sentenceLengths.reduce((sum, len) => sum + len, 0) / sentenceLengths.length;
+      const expectedAvg = voiceProfile.preferredSentenceComplexity.average;
+      const deviation = Math.abs(avgLength - expectedAvg) / expectedAvg;
+
+      sentenceComplexityMatch = Math.max(0, Math.min(100, 100 - (deviation * 100)));
+
+      if (deviation > 0.3) {
+        issues.push(`Sentence complexity deviation: ${avgLength.toFixed(1)} vs expected ${expectedAvg.toFixed(1)}`);
       }
-    });
-    
-    stylisticPatternPreservation = Math.round((quirksPresent / quirks.length) * 100);
-    // Lowered threshold from 50 to 25 - not every chapter needs all quirks
-    // Some chapters may have different pacing/mood that naturally uses fewer quirks
-    if (stylisticPatternPreservation < 25 && quirks.length > 2) {
-      issues.push('Stylistic quirks not preserved in chapter');
     }
-  }
-  
-  // Overall score
-  const overallScore = Math.round(
-    sentenceComplexityMatch * 0.4 +
-    toneConsistency * 0.4 +
-    stylisticPatternPreservation * 0.2
-  );
-  
+
+    // Check tone consistency
+    const contentLower = content.toLowerCase();
+    const toneKeywords: Record<string, string[]> = {
+      formal: ['thus', 'therefore', 'hence', 'whereas', 'furthermore', 'moreover'],
+      casual: ["'", "don't", "can't", "won't", "gonna", "wanna"],
+      dramatic: ['suddenly', 'abruptly', 'violently', 'fiercely'],
+      contemplative: ['pondered', 'reflected', 'considered', 'contemplated'],
+    };
+
+    const toneCounts: Record<string, number> = {};
+    Object.keys(toneKeywords).forEach(tone => {
+      toneCounts[tone] = toneKeywords[tone].reduce((count, keyword) => {
+        const matches = contentLower.match(new RegExp(keyword, 'gi'));
+        return count + (matches ? matches.length : 0);
+      }, 0);
+    });
+
+    const primaryTone = voiceProfile.emotionalToneRange.primary;
+    const primaryCount = toneCounts[primaryTone] || 0;
+    const totalToneCount = Object.values(toneCounts).reduce((sum, count) => sum + count, 0);
+    const toneRatio = totalToneCount > 0 ? primaryCount / totalToneCount : 0.5;
+
+    const toneConsistency = Math.round(toneRatio * 100);
+    if (toneConsistency < 50) {
+      issues.push(`Tone inconsistency: primary tone "${primaryTone}" not dominant`);
+    }
+
+    // Check stylistic pattern preservation
+    let stylisticPatternPreservation = 100;
+    const quirks = voiceProfile.stylisticQuirks;
+
+    if (quirks.length > 0) {
+      // Check if stylistic quirks are present
+      let quirksPresent = 0;
+      quirks.forEach(quirk => {
+        const quirkLower = quirk.toLowerCase();
+        if (quirkLower.includes('dash') && content.match(/—/g)) quirksPresent++;
+        else if (quirkLower.includes('ellipsis') && content.match(/\.\.\./g)) quirksPresent++;
+        else if (quirkLower.includes('fragment') && content.match(/^[a-z][^.!?]*$/m)) quirksPresent++;
+        else if (quirkLower.includes('repetition')) {
+          // Check for strategic repetition
+          const words = contentLower.split(/\s+/);
+          const wordFreq: Record<string, number> = {};
+          words.forEach(word => {
+            if (word.length > 4) {
+              wordFreq[word] = (wordFreq[word] || 0) + 1;
+            }
+          });
+          const repeated = Object.entries(wordFreq).filter(([_, count]) => count > 3).length;
+          if (repeated > 0 && repeated < 10) quirksPresent++;
+        }
+      });
+
+      stylisticPatternPreservation = Math.round((quirksPresent / quirks.length) * 100);
+      // Lowered threshold from 50 to 25 - not every chapter needs all quirks
+      // Some chapters may have different pacing/mood that naturally uses fewer quirks
+      if (stylisticPatternPreservation < 25 && quirks.length > 2) {
+        issues.push('Stylistic quirks not preserved in chapter');
+      }
+    }
+
+    // Overall score
+    const overallScore = Math.round(
+      sentenceComplexityMatch * 0.4 +
+      toneConsistency * 0.4 +
+      stylisticPatternPreservation * 0.2
+    );
+
     return {
       score: overallScore,
       sentenceComplexityMatch,
@@ -1076,121 +1086,121 @@ function validateEditorialQuality(chapter: Chapter, state: NovelState): {
 } {
   try {
     const issues: string[] = [];
-  const content = chapter.content || '';
-  const wordCount = content.split(/\s+/).length;
-  
-  // Readability: Flesch-Kincaid approximation
-  const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
-  const avgSentenceLength = sentences.length > 0 ? wordCount / sentences.length : 0;
-  const avgWordsPerSentence = avgSentenceLength;
-  
-  // Simple readability score (lower avg words = more readable, but balance needed)
-  // Target: 10-20 words per sentence = good readability
-  // Note: Short, punchy sentences (6-10 words) are valid stylistic choices
-  let readability = 100;
-  if (avgWordsPerSentence < 5) readability = 70; // Too choppy - overly fragmented
-  else if (avgWordsPerSentence > 30) readability = 70; // Too complex - hard to follow
-  else if (avgWordsPerSentence >= 10 && avgWordsPerSentence <= 20) readability = 100; // Ideal range
-  else if (avgWordsPerSentence >= 5 && avgWordsPerSentence < 10) readability = 90; // Short but valid - stylistic variety
-  else readability = 85; // Slightly long but acceptable
-  
-  // Only flag readability concerns for truly problematic cases
-  if (readability < 75) {
-    issues.push(`Readability concerns: average ${avgWordsPerSentence.toFixed(1)} words per sentence`);
-  }
-  
-  // Flow: transition quality and paragraph structure
-  const paragraphs = content.split(/\n\n/).filter(p => p.trim().length > 0);
-  const transitionWords = ['however', 'meanwhile', 'therefore', 'consequently', 'furthermore', 'moreover', 'then', 'next', 'after'];
-  const transitionCount = transitionWords.reduce((count, word) => {
-    const regex = new RegExp(`\\b${word}\\b`, 'gi');
-    return count + (content.match(regex) || []).length;
-  }, 0);
-  
-  const transitionDensity = wordCount > 0 ? (transitionCount / wordCount) * 1000 : 0;
-  // Target: 3-5 transitions per 1000 words
-  let flow = 100;
-  if (transitionDensity < 2) flow = 70; // Too few transitions
-  else if (transitionDensity > 8) flow = 80; // Too many transitions
-  else flow = 100;
-  
-  if (flow < 80) {
-    issues.push(`Flow concerns: ${transitionDensity.toFixed(1)} transitions per 1000 words`);
-  }
-  
-  // Emotional authenticity: presence of emotional language
-  // Expanded list includes emotion-naming words, emotional descriptors, and physical emotional responses
-  const emotionalWords = [
-    // Core emotions
-    'anger', 'fear', 'joy', 'sadness', 'love', 'hate', 'hope', 'despair',
-    'excitement', 'anxiety', 'relief', 'guilt', 'pride', 'shame',
-    'furious', 'terrified', 'ecstatic', 'devastated', 'worried', 'nervous',
-    'happy', 'sad', 'angry', 'scared', 'surprised', 'disgusted',
-    // Emotional intensity descriptors
-    'burning', 'cold', 'icy', 'fiery', 'overwhelming', 'crushing', 'sharp',
-    'dull', 'bitter', 'sweet', 'warm', 'hollow', 'heavy', 'light',
-    // Physical emotional responses
-    'trembled', 'shook', 'clenched', 'gripped', 'tensed', 'relaxed',
-    'pounded', 'raced', 'sank', 'soared', 'churned', 'knotted',
-    'tightened', 'loosened', 'froze', 'flushed', 'paled', 'sweating',
-    // Emotional state descriptors
-    'determined', 'resolute', 'uncertain', 'confident', 'doubtful',
-    'desperate', 'hopeful', 'resigned', 'defiant', 'vulnerable',
-    'shocked', 'stunned', 'bewildered', 'confused', 'conflicted',
-    // Heart/soul/feeling references
-    'heart', 'soul', 'feeling', 'felt', 'emotion', 'passion',
-    // Common emotional phrases (single words)
-    'dread', 'terror', 'rage', 'fury', 'bliss', 'agony', 'misery',
-    'longing', 'yearning', 'aching', 'sorrow', 'grief', 'regret',
-  ];
-  const emotionalCount = emotionalWords.reduce((count, word) => {
-    const regex = new RegExp(`\\b${word}\\w*`, 'gi');
-    return count + (content.match(regex) || []).length;
-  }, 0);
-  
-  const emotionalDensity = wordCount > 0 ? (emotionalCount / wordCount) * 1000 : 0;
-  // Target: 3-15 emotional indicators per 1000 words
-  // Adjusted formula to be more lenient - score 100 at 5+ emotional words per 1000
-  const emotionalAuthenticity = Math.min(100, Math.max(0, ((emotionalDensity - 1) / 6) * 100));
-  
-  // Lowered threshold from 40 to 30 - some action-focused chapters may have less explicit emotion
-  if (emotionalAuthenticity < 30) {
-    issues.push(`Low emotional language density - prose may be too neutral`);
-  }
-  
-  // Narrative coherence: logic audit and continuity
-  let narrativeCoherence = 100;
-  if (!chapter.logicAudit) {
-    narrativeCoherence = 60;
-    issues.push('Missing logic audit - narrative coherence cannot be fully assessed');
-  } else {
-    const { startingValue, resultingValue } = chapter.logicAudit;
-    if (!startingValue || !resultingValue || startingValue.length < 5 || resultingValue.length < 5) {
-      narrativeCoherence = 70;
-      issues.push('Incomplete logic audit - value shift unclear');
+    const content = chapter.content || '';
+    const wordCount = content.split(/\s+/).length;
+
+    // Readability: Flesch-Kincaid approximation
+    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const avgSentenceLength = sentences.length > 0 ? wordCount / sentences.length : 0;
+    const avgWordsPerSentence = avgSentenceLength;
+
+    // Simple readability score (lower avg words = more readable, but balance needed)
+    // Target: 10-20 words per sentence = good readability
+    // Note: Short, punchy sentences (6-10 words) are valid stylistic choices
+    let readability = 100;
+    if (avgWordsPerSentence < 5) readability = 70; // Too choppy - overly fragmented
+    else if (avgWordsPerSentence > 30) readability = 70; // Too complex - hard to follow
+    else if (avgWordsPerSentence >= 10 && avgWordsPerSentence <= 20) readability = 100; // Ideal range
+    else if (avgWordsPerSentence >= 5 && avgWordsPerSentence < 10) readability = 90; // Short but valid - stylistic variety
+    else readability = 85; // Slightly long but acceptable
+
+    // Only flag readability concerns for truly problematic cases
+    if (readability < 75) {
+      issues.push(`Readability concerns: average ${avgWordsPerSentence.toFixed(1)} words per sentence`);
     }
-  }
-  
-  // Structural balance: paragraph variety and chapter structure
-  let structuralBalance = 100;
-  if (paragraphs.length < 3) {
-    structuralBalance = 60;
-    issues.push(`Insufficient paragraph breaks: only ${paragraphs.length} paragraphs`);
-  } else {
-    // Check paragraph length variety
-    const paragraphLengths = paragraphs.map(p => p.split(/\s+/).length);
-    const avgLength = paragraphLengths.reduce((sum, len) => sum + len, 0) / paragraphLengths.length;
-    const variance = paragraphLengths.reduce((sum, len) => {
-      const diff = len - avgLength;
-      return sum + (diff * diff);
-    }, 0) / paragraphLengths.length;
-    
-    if (variance < 50) {
-      structuralBalance = 75;
-      issues.push('Uniform paragraph lengths - lacks structural variety');
+
+    // Flow: transition quality and paragraph structure
+    const paragraphs = content.split(/\n\n/).filter(p => p.trim().length > 0);
+    const transitionWords = ['however', 'meanwhile', 'therefore', 'consequently', 'furthermore', 'moreover', 'then', 'next', 'after'];
+    const transitionCount = transitionWords.reduce((count, word) => {
+      const regex = new RegExp(`\\b${word}\\b`, 'gi');
+      return count + (content.match(regex) || []).length;
+    }, 0);
+
+    const transitionDensity = wordCount > 0 ? (transitionCount / wordCount) * 1000 : 0;
+    // Target: 3-5 transitions per 1000 words
+    let flow = 100;
+    if (transitionDensity < 2) flow = 70; // Too few transitions
+    else if (transitionDensity > 8) flow = 80; // Too many transitions
+    else flow = 100;
+
+    if (flow < 80) {
+      issues.push(`Flow concerns: ${transitionDensity.toFixed(1)} transitions per 1000 words`);
     }
-  }
-  
+
+    // Emotional authenticity: presence of emotional language
+    // Expanded list includes emotion-naming words, emotional descriptors, and physical emotional responses
+    const emotionalWords = [
+      // Core emotions
+      'anger', 'fear', 'joy', 'sadness', 'love', 'hate', 'hope', 'despair',
+      'excitement', 'anxiety', 'relief', 'guilt', 'pride', 'shame',
+      'furious', 'terrified', 'ecstatic', 'devastated', 'worried', 'nervous',
+      'happy', 'sad', 'angry', 'scared', 'surprised', 'disgusted',
+      // Emotional intensity descriptors
+      'burning', 'cold', 'icy', 'fiery', 'overwhelming', 'crushing', 'sharp',
+      'dull', 'bitter', 'sweet', 'warm', 'hollow', 'heavy', 'light',
+      // Physical emotional responses
+      'trembled', 'shook', 'clenched', 'gripped', 'tensed', 'relaxed',
+      'pounded', 'raced', 'sank', 'soared', 'churned', 'knotted',
+      'tightened', 'loosened', 'froze', 'flushed', 'paled', 'sweating',
+      // Emotional state descriptors
+      'determined', 'resolute', 'uncertain', 'confident', 'doubtful',
+      'desperate', 'hopeful', 'resigned', 'defiant', 'vulnerable',
+      'shocked', 'stunned', 'bewildered', 'confused', 'conflicted',
+      // Heart/soul/feeling references
+      'heart', 'soul', 'feeling', 'felt', 'emotion', 'passion',
+      // Common emotional phrases (single words)
+      'dread', 'terror', 'rage', 'fury', 'bliss', 'agony', 'misery',
+      'longing', 'yearning', 'aching', 'sorrow', 'grief', 'regret',
+    ];
+    const emotionalCount = emotionalWords.reduce((count, word) => {
+      const regex = new RegExp(`\\b${word}\\w*`, 'gi');
+      return count + (content.match(regex) || []).length;
+    }, 0);
+
+    const emotionalDensity = wordCount > 0 ? (emotionalCount / wordCount) * 1000 : 0;
+    // Target: 3-15 emotional indicators per 1000 words
+    // Adjusted formula to be more lenient - score 100 at 5+ emotional words per 1000
+    const emotionalAuthenticity = Math.min(100, Math.max(0, ((emotionalDensity - 1) / 6) * 100));
+
+    // Lowered threshold from 40 to 30 - some action-focused chapters may have less explicit emotion
+    if (emotionalAuthenticity < 30) {
+      issues.push(`Low emotional language density - prose may be too neutral`);
+    }
+
+    // Narrative coherence: logic audit and continuity
+    let narrativeCoherence = 100;
+    if (!chapter.logicAudit) {
+      narrativeCoherence = 60;
+      issues.push('Missing logic audit - narrative coherence cannot be fully assessed');
+    } else {
+      const { startingValue, resultingValue } = chapter.logicAudit;
+      if (!startingValue || !resultingValue || startingValue.length < 5 || resultingValue.length < 5) {
+        narrativeCoherence = 70;
+        issues.push('Incomplete logic audit - value shift unclear');
+      }
+    }
+
+    // Structural balance: paragraph variety and chapter structure
+    let structuralBalance = 100;
+    if (paragraphs.length < 3) {
+      structuralBalance = 60;
+      issues.push(`Insufficient paragraph breaks: only ${paragraphs.length} paragraphs`);
+    } else {
+      // Check paragraph length variety
+      const paragraphLengths = paragraphs.map(p => p.split(/\s+/).length);
+      const avgLength = paragraphLengths.reduce((sum, len) => sum + len, 0) / paragraphLengths.length;
+      const variance = paragraphLengths.reduce((sum, len) => {
+        const diff = len - avgLength;
+        return sum + (diff * diff);
+      }, 0) / paragraphLengths.length;
+
+      if (variance < 50) {
+        structuralBalance = 75;
+        issues.push('Uniform paragraph lengths - lacks structural variety');
+      }
+    }
+
     return {
       readability: Math.round(readability),
       flow: Math.round(flow),
@@ -1288,16 +1298,16 @@ async function validateChapterQualityInternal(
   state: NovelState
 ): Promise<ChapterQualityMetrics> {
   // Check cache
-  const cacheKey = `${chapter.id}:${chapter.content.length}`;
+  const cacheKey = `${chapter.id}:${chapter.content?.length || 0}`;
   const cached = qualityMetricsCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < QUALITY_METRICS_CACHE_TTL) {
     return cached.metrics;
   }
-  
+
   try {
     console.log('[Quality Validator] Starting validation...');
     const validationStartTime = Date.now();
-    
+
     // Run all validation functions with individual timeout protection
     // Use shorter timeouts for each operation (5 seconds each, 30 seconds total budget)
     const qualityCheck = await withAsyncTimeout(
@@ -1306,86 +1316,98 @@ async function validateChapterQualityInternal(
       { isValid: true, warnings: [], errors: [], suggestions: [], qualityScore: 50 },
       'validateGeneratedChapter'
     );
-    
+
     const narrativeCraft = withTimeout(
       () => validateNarrativeCraft(chapter, state),
       8000,
-      { score: 50, burstinessScore: 50, perplexityScore: 50, subtextScore: 50, interiorityScore: 50, sceneIntentScore: 50, dialogueNaturalnessScore: 50, issues: [] },
+      {
+        score: 50,
+        burstinessScore: 50,
+        perplexityScore: 50,
+        subtextScore: 50,
+        interiorityScore: 50,
+        sceneIntentScore: 50,
+        dialogueNaturalnessScore: 50,
+        repetitivePatterns: [],
+        overexplanationFlags: [],
+        neutralProseFlags: [],
+        issues: []
+      },
       'validateNarrativeCraft'
     );
-    
+
     const originality = withTimeout(
       () => validateOriginality(chapter, state),
       10000,
       { score: 50, creativeDistance: 50, novelMetaphorScore: 50, uniqueImageryScore: 50, sceneConstructionOriginality: 50, emotionalBeatOriginality: 50, genericPatterns: [], mechanicalStructures: [], derivativeContent: [] },
       'validateOriginality'
     );
-    
+
     const voiceProfile = withTimeout(
       () => extractAuthorialVoiceProfile(state.chapters, state),
       8000,
       null, // extractAuthorialVoiceProfile returns AuthorialVoiceProfile | null
       'extractAuthorialVoiceProfile'
     );
-    
+
     const voiceConsistency = withTimeout(
       () => validateVoiceConsistency(chapter, state, voiceProfile),
       5000,
       { score: 75, sentenceComplexityMatch: 75, toneConsistency: 75, stylisticPatternPreservation: 75, issues: [] },
       'validateVoiceConsistency'
     );
-    
+
     const editorial = withTimeout(
       () => validateEditorialQuality(chapter, state),
       5000,
       { readability: 75, flow: 75, emotionalAuthenticity: 50, narrativeCoherence: 75, structuralBalance: 75, issues: [] },
       'validateEditorialQuality'
     );
-    
+
     console.log('[Quality Validator] Core validations completed, starting AI detection checks...');
-    
+
     // AI Detection Evasion Checks with timeout protection
     const burstinessResult = AI_DETECTION_CONFIG.burstiness.enabled
       ? withTimeout(
-          () => validateBurstinessPattern(chapter.content, {
-            maxSimilarSequences: AI_DETECTION_CONFIG.burstiness.maxSimilarSequences,
-            similarityThreshold: AI_DETECTION_CONFIG.burstiness.similarityThreshold,
-          }),
-          8000,
-          { isValid: true, violations: [], overallScore: 100, recommendations: [] },
-          'validateBurstinessPattern'
-        )
+        () => validateBurstinessPattern(chapter.content, {
+          maxSimilarSequences: AI_DETECTION_CONFIG.burstiness.maxSimilarSequences,
+          similarityThreshold: AI_DETECTION_CONFIG.burstiness.similarityThreshold,
+        }),
+        8000,
+        { isValid: true, violations: [], overallScore: 100, recommendations: [] },
+        'validateBurstinessPattern'
+      )
       : { isValid: true, violations: [], overallScore: 100, recommendations: [] };
-    
+
     const blacklistViolations = AI_DETECTION_CONFIG.blacklist.enforcePostProcess
       ? withTimeout(
-          () => [
-            ...checkForForbiddenWords(chapter.content),
-            ...checkForForbiddenStructures(chapter.content),
-          ],
-          5000,
-          [],
-          'checkBlacklistViolations'
-        )
+        () => [
+          ...checkForForbiddenWords(chapter.content),
+          ...checkForForbiddenStructures(chapter.content),
+        ],
+        5000,
+        [],
+        'checkBlacklistViolations'
+      )
       : [];
-    
+
     const perplexityResult = AI_DETECTION_CONFIG.perplexity.enabled
       ? withTimeout(
-          () => verifyPerplexityThreshold(
-            chapter.content,
-            AI_DETECTION_CONFIG.perplexity.threshold,
-            { checkParagraphs: AI_DETECTION_CONFIG.perplexity.checkParagraphs }
-          ),
-          10000,
-          { isValid: true, overallPerplexity: 100, threshold: 90, violations: [], recommendations: [] },
-          'verifyPerplexityThreshold'
-        )
+        () => verifyPerplexityThreshold(
+          chapter.content,
+          AI_DETECTION_CONFIG.perplexity.threshold,
+          { checkParagraphs: AI_DETECTION_CONFIG.perplexity.checkParagraphs }
+        ),
+        10000,
+        { isValid: true, overallPerplexity: 100, threshold: 90, violations: [], recommendations: [] },
+        'verifyPerplexityThreshold'
+      )
       : { isValid: true, overallPerplexity: 100, threshold: 90, violations: [], recommendations: [] };
-    
+
     // Stricter validation thresholds
     const burstinessScore = burstinessResult.overallScore || 0;
     const perplexityScore = perplexityResult.overallPerplexity || 0;
-    
+
     // N-gram analysis with timeout protection
     let ngramScore = 100;
     let ngramViolations: string[] = [];
@@ -1402,14 +1424,14 @@ async function validateChapterQualityInternal(
         );
         ngramScore = result.overallScore;
         if (result.trigramScore < AI_DETECTION_CONFIG.nGramControl.minTrigramScore ||
-            result.fourgramScore < AI_DETECTION_CONFIG.nGramControl.minFourgramScore) {
+          result.fourgramScore < AI_DETECTION_CONFIG.nGramControl.minFourgramScore) {
           ngramViolations = result.recommendations;
         }
       } catch (error) {
         console.warn('[Quality Validator] N-gram analysis failed:', error);
       }
     }
-    
+
     // Lexical balance analysis with timeout protection
     let lexicalBalanceScore = 100;
     let lexicalViolations: string[] = [];
@@ -1432,12 +1454,12 @@ async function validateChapterQualityInternal(
         console.warn('[Quality Validator] Lexical balance analysis failed:', error);
       }
     }
-    
+
     console.log('[Quality Validator] All validation checks completed');
-    
+
     // Determine if regeneration is needed - RELAXED thresholds to reduce excessive regenerations
     // Only regenerate for truly critical issues, not for every minor deviation
-    const shouldRegenerate = 
+    const shouldRegenerate =
       originality.score < QUALITY_CONFIG.criticalThresholds.originality ||
       narrativeCraft.score < QUALITY_CONFIG.criticalThresholds.narrativeCraft ||
       voiceConsistency.score < QUALITY_CONFIG.criticalThresholds.voiceConsistency ||
@@ -1453,7 +1475,7 @@ async function validateChapterQualityInternal(
       perplexityScore < 60 || // Relaxed from 85 to 60
       (AI_DETECTION_CONFIG.nGramControl?.enabled && ngramScore < 50) || // Relaxed from 70 to 50
       (AI_DETECTION_CONFIG.lexicalBalance?.enabled && lexicalBalanceScore < 50); // Relaxed - use fixed threshold
-    
+
     const regenerationReasons: string[] = [];
     if (originality.score < QUALITY_CONFIG.criticalThresholds.originality) {
       regenerationReasons.push(`Originality score ${originality.score} below threshold ${QUALITY_CONFIG.criticalThresholds.originality}`);
@@ -1494,7 +1516,7 @@ async function validateChapterQualityInternal(
     if (!perplexityResult.isValid && perplexityResult.violations.length > 6) {
       regenerationReasons.push(`Perplexity violations: ${perplexityResult.violations.length} paragraphs below threshold (threshold: 6)`);
     }
-    
+
     // Collect all warnings
     const allWarnings = [
       ...qualityCheck.warnings,
@@ -1505,7 +1527,7 @@ async function validateChapterQualityInternal(
       ...perplexityResult.recommendations,
       ...(blacklistViolations.length > 0 ? [`Found ${blacklistViolations.length} blacklist violations`] : []),
     ];
-    
+
     // Calculate transition quality score (if there's a previous chapter)
     let transitionQualityScore: number | undefined = undefined;
     if (state.chapters.length > 0) {
@@ -1515,7 +1537,7 @@ async function validateChapterQualityInternal(
           const { validateChapterTransition } = await import('./chapterTransitionValidator');
           const transitionValidation = validateChapterTransition(previousChapter, chapter);
           transitionQualityScore = transitionValidation.score;
-          
+
           // Log transition quality
           if (transitionValidation.score < 70) {
             console.warn(`[Chapter Quality] Transition quality score: ${transitionValidation.score}/100 (below threshold of 70)`);
@@ -1528,7 +1550,7 @@ async function validateChapterQualityInternal(
         }
       }
     }
-    
+
     // Create narrative craft score object
     const narrativeCraftScore: NarrativeCraftScore = {
       id: generateUUID(),
@@ -1541,13 +1563,13 @@ async function validateChapterQualityInternal(
       interiorityScore: narrativeCraft.interiorityScore,
       sceneIntentScore: narrativeCraft.sceneIntentScore,
       dialogueNaturalnessScore: narrativeCraft.dialogueNaturalnessScore,
-      repetitivePatterns: [],
-      overexplanationFlags: [],
-      neutralProseFlags: [],
+      repetitivePatterns: narrativeCraft.repetitivePatterns,
+      overexplanationFlags: narrativeCraft.overexplanationFlags,
+      neutralProseFlags: narrativeCraft.neutralProseFlags,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    
+
     // Create originality score object with proper property mapping
     const originalityScore: ChapterOriginalityScore = {
       id: generateUUID(),
@@ -1566,7 +1588,7 @@ async function validateChapterQualityInternal(
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    
+
     const metrics: ChapterQualityMetrics = {
       chapterId: chapter.id,
       qualityCheck,
@@ -1586,13 +1608,13 @@ async function validateChapterQualityInternal(
       warnings: allWarnings.slice(0, 20), // Limit warnings
       createdAt: Date.now(),
     };
-    
+
     // Cache the result
     qualityMetricsCache.set(cacheKey, {
       timestamp: Date.now(),
       metrics,
     });
-    
+
     // Clean old cache entries (keep last 10)
     if (qualityMetricsCache.size > 10) {
       const entries = Array.from(qualityMetricsCache.entries());
@@ -1601,10 +1623,10 @@ async function validateChapterQualityInternal(
       qualityMetricsCache.clear();
       toKeep.forEach(([key, value]) => qualityMetricsCache.set(key, value));
     }
-    
+
     const totalDuration = Date.now() - validationStartTime;
     console.log(`[Quality Validator] Validation completed in ${totalDuration}ms`);
-    
+
     return metrics;
   } catch (error) {
     console.error('Error validating chapter quality:', error);
@@ -1620,56 +1642,56 @@ async function getDefaultQualityMetrics(chapter: Chapter, state: NovelState, err
   } catch (error) {
     qualityCheck = { isValid: true, warnings: [], errors: [], suggestions: [], qualityScore: 50 };
   }
-  
+
   return {
     chapterId: chapter.id,
     qualityCheck,
-      originalityScore: {
-        id: generateUUID(),
-        chapterId: chapter.id,
-        novelId: state.id,
-        overallOriginality: 50,
-        creativeDistance: 50,
-        novelMetaphorScore: 50,
-        uniqueImageryScore: 50,
-        sceneConstructionOriginality: 50,
-        emotionalBeatOriginality: 50,
-        genericPatternsDetected: [],
-        mechanicalStructuresDetected: [],
-        derivativeContentFlags: [],
-        clichePatterns: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      },
-      narrativeCraftScore: {
-        id: generateUUID(),
-        chapterId: chapter.id,
-        novelId: state.id,
-        overallCraftScore: 50,
-        burstinessScore: 50,
-        perplexityScore: 50,
-        subtextScore: 50,
-        interiorityScore: 50,
-        sceneIntentScore: 50,
-        dialogueNaturalnessScore: 50,
-        repetitivePatterns: [],
-        overexplanationFlags: [],
-        neutralProseFlags: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      },
-      voiceConsistencyScore: 75,
-      editorialScore: {
-        readability: 75,
-        flow: 75,
-        emotionalAuthenticity: 50,
-        narrativeCoherence: 75,
-        structuralBalance: 75,
-      },
-      shouldRegenerate: false,
-      regenerationReasons: ['Error during quality validation'],
-      warnings: ['Error validating chapter quality'],
-      transitionQualityScore: undefined, // No transition score on error
+    originalityScore: {
+      id: generateUUID(),
+      chapterId: chapter.id,
+      novelId: state.id,
+      overallOriginality: 50,
+      creativeDistance: 50,
+      novelMetaphorScore: 50,
+      uniqueImageryScore: 50,
+      sceneConstructionOriginality: 50,
+      emotionalBeatOriginality: 50,
+      genericPatternsDetected: [],
+      mechanicalStructuresDetected: [],
+      derivativeContentFlags: [],
+      clichePatterns: [],
       createdAt: Date.now(),
-    };
+      updatedAt: Date.now(),
+    },
+    narrativeCraftScore: {
+      id: generateUUID(),
+      chapterId: chapter.id,
+      novelId: state.id,
+      overallCraftScore: 50,
+      burstinessScore: 50,
+      perplexityScore: 50,
+      subtextScore: 50,
+      interiorityScore: 50,
+      sceneIntentScore: 50,
+      dialogueNaturalnessScore: 50,
+      repetitivePatterns: [],
+      overexplanationFlags: [],
+      neutralProseFlags: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    },
+    voiceConsistencyScore: 75,
+    editorialScore: {
+      readability: 75,
+      flow: 75,
+      emotionalAuthenticity: 50,
+      narrativeCoherence: 75,
+      structuralBalance: 75,
+    },
+    shouldRegenerate: false,
+    regenerationReasons: ['Error during quality validation'],
+    warnings: ['Error validating chapter quality'],
+    transitionQualityScore: undefined, // No transition score on error
+    createdAt: Date.now(),
+  };
 }

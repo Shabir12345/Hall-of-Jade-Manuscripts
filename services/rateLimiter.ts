@@ -35,30 +35,30 @@ class RateLimiter {
   private requestCounts: Map<RequestType, number[]> = new Map();
   private processing = false;
 
-  // Rate limits per request type (requests per minute)
+  // Rate limits per request type (requests per minute) - OPTIMIZED: Increased limits
   private readonly RATE_LIMITS: Record<RequestType, number> = {
-    generate: 10,    // 10 chapter generations per minute
-    edit: 15,        // 15 edits per minute
-    expand: 20,      // 20 creative expansions per minute
-    portrait: 10,    // 10 portrait generations per minute
-    tts: 15,         // 15 text-to-speech per minute
-    refine: 30,     // 30 refinements per minute
-    plan: 10,        // 10 arc planning requests per minute
-    analyze: 5,      // 5 editor analyses per minute
-    'analyze-arc': 3, // 3 arc analyses per minute
+    generate: 20,    // Increased from 10 - 20 chapter generations per minute
+    edit: 30,        // Increased from 15 - 30 edits per minute
+    expand: 40,      // Increased from 20 - 40 creative expansions per minute
+    portrait: 20,    // Increased from 10 - 20 portrait generations per minute
+    tts: 30,         // Increased from 15 - 30 text-to-speech per minute
+    refine: 60,      // Increased from 30 - 60 refinements per minute
+    plan: 20,        // Increased from 10 - 20 arc planning requests per minute
+    analyze: 10,     // Increased from 5 - 10 editor analyses per minute
+    'analyze-arc': 6, // Increased from 3 - 6 arc analyses per minute
   };
 
-  // Minimum delay between requests of the same type (ms)
+  // Minimum delay between requests of the same type (ms) - OPTIMIZED: Reduced delays
   private readonly MIN_DELAYS: Record<RequestType, number> = {
-    generate: 6000,   // 6 seconds between chapter generations
-    edit: 4000,       // 4 seconds between edits
-    expand: 3000,     // 3 seconds between expansions
-    portrait: 6000,   // 6 seconds between portraits
-    tts: 4000,        // 4 seconds between TTS
-    refine: 2000,     // 2 seconds between refinements
-    plan: 6000,       // 6 seconds between planning calls
-    analyze: 12000,   // 12 seconds between editor analyses
-    'analyze-arc': 20000, // 20 seconds between arc analyses
+    generate: 3000,   // Reduced from 6000ms - 3 seconds between chapter generations
+    edit: 2000,       // Reduced from 4000ms - 2 seconds between edits
+    expand: 1500,     // Reduced from 3000ms - 1.5 seconds between expansions
+    portrait: 3000,   // Reduced from 6000ms - 3 seconds between portraits
+    tts: 2000,        // Reduced from 4000ms - 2 seconds between TTS
+    refine: 1000,     // Reduced from 2000ms - 1 second between refinements
+    plan: 3000,       // Reduced from 6000ms - 3 seconds between planning calls
+    analyze: 6000,    // Reduced from 12000ms - 6 seconds between editor analyses
+    'analyze-arc': 10000, // Reduced from 20000ms - 10 seconds between arc analyses
   };
 
   // Maximum concurrent requests per type

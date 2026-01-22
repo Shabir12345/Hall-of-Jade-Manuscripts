@@ -125,6 +125,7 @@ export function buildDirectorUserPrompt(params: {
   nextChapterNumber: number;
   userInstruction?: string;
   config: DirectorConfig;
+  recoveredThreadsPrompt?: string;
 }): string {
   const {
     arc,
@@ -134,6 +135,7 @@ export function buildDirectorUserPrompt(params: {
     nextChapterNumber,
     userInstruction,
     config,
+    recoveredThreadsPrompt,
   } = params;
 
   // Build chapter summaries
@@ -186,6 +188,8 @@ ${chapterSummaries || 'No previous chapters'}
 
 === ACTIVE STORY THREADS ===
 ${threadList || 'No active threads'}
+
+${recoveredThreadsPrompt ? `=== RECOVERED NARRATIVE THREADS ===\n${recoveredThreadsPrompt}\n` : ''}
 
 === USER INSTRUCTION FOR THIS CHAPTER ===
 ${userInstruction || 'No specific instruction - continue natural story progression'}

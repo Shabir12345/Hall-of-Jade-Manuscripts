@@ -56,6 +56,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, isCollapsed = false, onTo
     { id: 'beatsheet', label: 'Beat Sheet', icon: '📊' },
     { id: 'matrix', label: 'Matrix', icon: '🔲' },
     { id: 'story-threads', label: 'Story Threads', icon: '🧵' },
+    { id: 'loom', label: 'Heavenly Loom', icon: '✨' },
+    { id: 'narrative-forensics', label: 'Akasha Recall', icon: '🔍' },
   ];
 
   const worldBuildingItems: { id: ViewType; label: string; icon: string }[] = [
@@ -96,8 +98,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, isCollapsed = false, onTo
       {groupLabel && !isCollapsed && (
         <div className="px-4 pt-4 pb-2">
           {isGroupCollapsible ? (
-            <Tooltip 
-              content={isExpanded ? 'Click to collapse Advanced Analysis tools' : 'Click to expand Advanced Analysis tools'} 
+            <Tooltip
+              content={isExpanded ? 'Click to collapse Advanced Analysis tools' : 'Click to expand Advanced Analysis tools'}
               position="right"
               delay={300}
             >
@@ -131,11 +133,10 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, isCollapsed = false, onTo
               <button
                 onClick={() => handleViewChange(item.id)}
                 aria-label={`Navigate to ${item.label}`}
-                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-2 px-3'} py-2.5 rounded-xl transition-all duration-200 ${
-                  currentView === item.id 
-                    ? 'bg-amber-600/15 text-amber-500 border border-amber-600/30 shadow-lg shadow-amber-900/10' 
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-2 px-3'} py-2.5 rounded-xl transition-all duration-200 ${currentView === item.id
+                    ? 'bg-amber-600/15 text-amber-500 border border-amber-600/30 shadow-lg shadow-amber-900/10'
                     : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 border border-transparent'
-                }`}
+                  }`}
               >
                 <span className={`${isCollapsed ? 'text-lg' : 'text-sm'} flex-shrink-0`}>{item.icon}</span>
                 {!isCollapsed && (
@@ -153,10 +154,10 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, isCollapsed = false, onTo
   );
 
   return (
-    <div 
-      className={`${isCollapsed ? 'w-[72px]' : 'w-64'} bg-zinc-900 border-r border-zinc-700 flex flex-col h-full flex-shrink-0 transition-all duration-300 ease-in-out`} 
-      role="navigation" 
-      aria-label="Main navigation" 
+    <div
+      className={`${isCollapsed ? 'w-[72px]' : 'w-64'} bg-zinc-900 border-r border-zinc-700 flex flex-col h-full flex-shrink-0 transition-all duration-300 ease-in-out`}
+      role="navigation"
+      aria-label="Main navigation"
       data-tour="sidebar"
     >
       {/* Header */}
@@ -207,17 +208,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, isCollapsed = false, onTo
               <div className="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-zinc-300 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-400">All AI Features</span>
-                  <span className="text-amber-400 font-medium">Grok-4-1</span>
+                  <span className="text-amber-400 font-medium">DeepSeek-V3</span>
                 </div>
                 <div className="pt-1.5 mt-1.5 border-t border-zinc-800 text-[10px] text-zinc-500">
-                  All AI features use Grok for optimal performance
+                  All AI features use DeepSeek-V3 for optimal consistency and local relevance
                 </div>
               </div>
             </div>
           </>
         )}
       </div>
-      
+
       {/* Navigation */}
       <nav className={`flex-1 ${isCollapsed ? 'p-2' : 'p-4'} overflow-y-auto scrollbar-thin`} aria-label="Navigation menu">
         <div className="space-y-1">
@@ -238,30 +239,29 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, isCollapsed = false, onTo
       {/* Status Footer */}
       <div className={`${isCollapsed ? 'p-2' : 'p-3'} border-t border-zinc-700`}>
         {isCollapsed ? (
-          <Tooltip 
+          <Tooltip
             content={
-              !isOnline ? 'Offline' : 
-              isSaving ? 'Syncing...' : 
-              !cloudAvailable ? 'Cloud Unavailable' : 
-              pendingSyncCount > 0 ? `Needs Sync (${pendingSyncCount})` : 
-              'Synced'
-            } 
-            position="right" 
+              !isOnline ? 'Offline' :
+                isSaving ? 'Syncing...' :
+                  !cloudAvailable ? 'Cloud Unavailable' :
+                    pendingSyncCount > 0 ? `Needs Sync (${pendingSyncCount})` :
+                      'Synced'
+            }
+            position="right"
             delay={100}
           >
-            <div className={`flex items-center justify-center p-2 rounded-lg ${
-              !isOnline ? 'text-zinc-400' :
-              isSaving ? 'text-amber-500' :
-              !cloudAvailable ? 'text-red-400' :
-              pendingSyncCount > 0 ? 'text-amber-500' :
-              'text-emerald-400'
-            }`}>
+            <div className={`flex items-center justify-center p-2 rounded-lg ${!isOnline ? 'text-zinc-400' :
+                isSaving ? 'text-amber-500' :
+                  !cloudAvailable ? 'text-red-400' :
+                    pendingSyncCount > 0 ? 'text-amber-500' :
+                      'text-emerald-400'
+              }`}>
               <span className="text-lg">
-                {!isOnline ? '📴' : 
-                 isSaving ? '🔄' : 
-                 !cloudAvailable ? '⚠️' : 
-                 pendingSyncCount > 0 ? '⏳' : 
-                 '✅'}
+                {!isOnline ? '📴' :
+                  isSaving ? '🔄' :
+                    !cloudAvailable ? '⚠️' :
+                      pendingSyncCount > 0 ? '⏳' :
+                        '✅'}
               </span>
             </div>
           </Tooltip>

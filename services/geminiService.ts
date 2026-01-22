@@ -1,5 +1,6 @@
 import { env } from '../utils/env';
 import { recordCacheHit, recordCacheMiss } from './promptCacheMonitor';
+import { jsonrepair } from 'jsonrepair';
 
 /**
  * Gemini Service - "The Clerk"
@@ -274,8 +275,8 @@ function fixCommonJsonIssues(jsonString: string): string {
   
   // Try to fix unescaped quotes in string values by using a more careful parser
   // Look for patterns like: "key": "value with "unclosed quote"
-  // This regex finds string values that might have issues
-  // We'll be conservative and only fix obvious cases
+  // This pattern looks for: "key": "value with "problematic quote"
+  // The fix: escape quotes that appear to be inside string values
   try {
     // Fix pattern: "text "more text" - where quotes inside strings aren't escaped
     // This pattern looks for: "key": "value with "problematic quote"
@@ -493,91 +494,34 @@ export async function geminiJson<T>(opts: {
     cleaned = jsonMatch[0];
   }
 
-  // First, try to parse cleaned JSON
   try {
     return JSON.parse(cleaned) as T;
-  } catch (e) {
-    // Try fixing common JSON issues (unescaped quotes, trailing commas, etc.)
+  } catch (primaryError) {
     try {
-      const fixedCommon = fixCommonJsonIssues(cleaned);
-      return JSON.parse(fixedCommon) as T;
-    } catch (commonError) {
-      // Try fixing control characters
+      // First repair attempt: fix common trailing commas
+      const fixed1 = cleaned
+        .replace(/,\s*}/g, '}')
+        .replace(/,\s*]/g, ']')
+        .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":');
+      
+      return JSON.parse(fixed1) as T;
+    } catch (secondError) {
       try {
-        const fixedControl = fixControlCharacters(cleaned);
-        return JSON.parse(fixedControl) as T;
-      } catch (controlError) {
-        // Try fixing common issues AND control characters
-        try {
-          const fixedCommon = fixCommonJsonIssues(cleaned);
-          const fixedControl = fixControlCharacters(fixedCommon);
-          return JSON.parse(fixedControl) as T;
-        } catch (combinedError) {
-          // Try to fix truncated JSON
-          try {
-            const fixed = tryFixTruncatedJson(cleaned);
-            const parsed = JSON.parse(fixed) as T;
-            
-            console.warn('[Gemini - The Clerk] JSON response required fixing. Consider increasing maxTokens or reducing response size.');
-            
-            return parsed;
-          } catch (fixError) {
-            // Last attempt: fix control characters, common issues, AND truncation
-            try {
-              const fixedCommon = fixCommonJsonIssues(cleaned);
-              const fixedControl = fixControlCharacters(fixedCommon);
-              const fixed = tryFixTruncatedJson(fixedControl);
-              const parsed = JSON.parse(fixed) as T;
-              
-              console.warn('[Gemini - The Clerk] JSON response required extensive fixing. Consider increasing maxTokens or reducing response size.');
-              
-              return parsed;
-            } catch (finalError) {
-              // Try to extract a valid JSON object by finding the largest valid substring
-              try {
-                // Find all potential JSON object boundaries
-                const jsonObjects: string[] = [];
-                let depth = 0;
-                let start = -1;
-                
-                for (let i = 0; i < cleaned.length; i++) {
-                  if (cleaned[i] === '{') {
-                    if (depth === 0) start = i;
-                    depth++;
-                  } else if (cleaned[i] === '}') {
-                    depth--;
-                    if (depth === 0 && start >= 0) {
-                      const candidate = cleaned.substring(start, i + 1);
-                      try {
-                        JSON.parse(candidate);
-                        jsonObjects.push(candidate);
-                      } catch {
-                        // Not valid JSON
-                      }
-                      start = -1;
-                    }
-                  }
-                }
-                
-                if (jsonObjects.length > 0) {
-                  // Try the largest valid JSON object
-                  jsonObjects.sort((a, b) => b.length - a.length);
-                  return JSON.parse(jsonObjects[0]) as T;
-                }
-              } catch {
-                // Fall through to error
-              }
-              
-              throw new Error(
-                `Gemini (The Clerk) returned invalid JSON.\n` +
-                `Parse error: ${e instanceof Error ? e.message : String(e)}\n` +
-                `Attempted fixes also failed.\n` +
-                `Response length: ${raw.length} characters\n` +
-                `Preview (first 500 chars):\n${raw.substring(0, 500)}...`
-              );
-            }
-          }
-        }
+        // Second repair: use dedicated library
+        const repaired = jsonrepair(cleaned);
+        return JSON.parse(repaired) as T;
+      } catch (finalError) {
+        console.error(`Gemini returned invalid JSON after repair attempts`, 'gemini', {
+          error: finalError,
+          responsePreview: cleaned.substring(0, 500),
+        });
+        
+        throw new Error(
+          `Gemini returned invalid JSON after repair attempts.\n` +
+          `Parse error: ${finalError.message}\n` +
+          `Response length: ${cleaned.length} characters\n` +
+          `Preview: ${cleaned.substring(0, 500)}`
+        );
       }
     }
   }

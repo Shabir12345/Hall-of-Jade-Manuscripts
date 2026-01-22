@@ -1,8 +1,6 @@
 import type { Arc, ArcChecklistItem, Character, Chapter, NovelState, LogicAudit } from '../types';
 import { SYSTEM_INSTRUCTION, QUALITY_CONFIG, CRITIQUE_CORRECTION_CONFIG } from '../constants';
-import { applyCritiqueCorrectionLoop, getAvailableRubrics } from './critiqueCorrectionService';
-import type { CritiqueCorrectionPhase } from '../types/critique';
-import { DEFAULT_RUBRICS } from '../config/styleRubrics';
+import { applyCritiqueCorrectionLoop } from './critiqueCorrectionService';
 import { getStoredLlm, type LlmId } from '../contexts/LlmContext';
 import { getStoredChapterGenerationModel } from '../contexts/ChapterGenerationModelContext';
 import { rateLimiter } from './rateLimiter';
@@ -12,7 +10,16 @@ import { buildChapterPrompt } from './promptEngine/writers/chapterPromptWriter';
 import { buildEditPrompt } from './promptEngine/writers/editPromptWriter';
 import { buildExpansionPrompt } from './promptEngine/writers/expansionPromptWriter';
 import { formatChapterContent } from '../utils/chapterFormatter';
-import { validateChapterGenerationQuality, validateChapterQuality } from './chapterQualityValidator';
+import {
+  validateChapterQuality as validateChapterGenerationQuality,
+  validateChapterQuality,
+  checkOriginalityPreparation
+} from './chapterQualityValidator';
+import {
+  validateChapterQuality as validatePostGeneration,
+  applyQuickFixes,
+  type QualityReport
+} from './postGenerationQualityService';
 import { AppError, formatErrorMessage } from '../utils/errorHandling';
 import { generateUUID } from '../utils/uuid';
 import { logger } from './loggingService';
@@ -20,12 +27,13 @@ import { regenerateWithQualityCheck } from './chapterRegenerationService';
 import { isJsonChapterContent, extractChapterContent } from '../utils/chapterContentRepair';
 import { generateChapterWarnings, logChapterGenerationReport } from './chapterGenerationWarningService';
 import { gatherMemoryEnhancedContext, injectMemoryContext } from './memory';
-import { 
-  runDirectorAgent, 
-  formatBeatSheetForPrompt, 
+import { queryMemory } from './memory/memoryQueryService';
+import { assembleContextWithBudget } from './memory/memoryTierManager';
+import {
+  runDirectorAgent,
+  formatBeatSheetForPrompt,
   shouldRunDirector,
   recordTensionFromBeatSheet,
-  saveTensionEntry,
 } from './director';
 import { DirectorBeatSheet } from '../types/director';
 import {
@@ -42,12 +50,13 @@ import { WorldEventInjectionContext, DEFAULT_WORLD_SIMULATION_CONFIG } from '../
 import { shouldTriggerTribulationGate } from './tribulationGateDetector';
 import { generateFatePaths } from './fatePathGenerator';
 import { createGate, getGateConfig, buildGatePromptInjection, getGateById } from './tribulationGateService';
-import { TribulationGate, TribulationGateConfig, DEFAULT_TRIBULATION_GATE_CONFIG } from '../types/tribulationGates';
-import { buildConsequenceReminder, checkChapterForConsequences } from './gateConsequenceTracker';
+import { TribulationGate } from '../types/tribulationGates';
+import { buildConsequenceReminder } from './gateConsequenceTracker';
 import { generateFaceGraphContext, extractKarmaFromChapter, getFaceGraphConfig } from './faceGraph';
 import type { FaceGraphContext } from '../types/faceGraph';
-import { generateMarketContext, validateGeneratedPrices } from './market';
+import { generateMarketContext } from './market';
 import type { MarketContextResult } from './market/marketContextGenerator';
+import { generateLoomDirective, runLoomClerkAudit } from './loom/loomIntegrationService';
 
 // Legacy function kept for backward compatibility but no longer used for model selection
 // Models are now selected automatically via the orchestrator based on task type
@@ -56,7 +65,7 @@ export function getActiveLlm(): LlmId {
   try {
     return getStoredLlm();
   } catch {
-    return 'grok-4-1-fast-reasoning';
+    return 'deepseek';
   }
 }
 
@@ -125,7 +134,7 @@ function truncateForExtraction(text: string, maxChars: number): string {
   if (!text) return '';
   const trimmed = text.trim();
   if (trimmed.length <= maxChars) return trimmed;
-  return trimmed.slice(0, maxChars) + '\n\n[... truncated ...]';
+  return trimmed.slice(0, maxChars) + '\n\n[TRUNCATED]';
 }
 
 export type ChapterGenPhase =
@@ -316,13 +325,13 @@ export const generateNextChapter = async (
   // Pre-generation quality checks
   const nextChapterNumber = state.chapters.length + 1;
   const qualityCheck = validateChapterGenerationQuality(state, nextChapterNumber);
-  
+
   // NEW: Generate story health warnings using the smart warning system
   const warningReport = generateChapterWarnings(state, nextChapterNumber);
-  
+
   // Log the comprehensive warning report
   logChapterGenerationReport(warningReport);
-  
+
   // Log blockers as errors
   if (warningReport.blockers.length > 0) {
     warningReport.blockers.forEach(blocker => {
@@ -334,7 +343,7 @@ export const generateNextChapter = async (
       });
     });
   }
-  
+
   // Log high-priority warnings
   const highWarnings = warningReport.warnings.filter(w => w.severity === 'high');
   if (highWarnings.length > 0) {
@@ -346,8 +355,8 @@ export const generateNextChapter = async (
       });
     });
   }
-  
-  if (qualityCheck.suggestions.length > 0) {
+
+  if (qualityCheck.suggestions && qualityCheck.suggestions.length > 0) {
     opts?.onPhase?.('quality_check', {
       qualityScore: qualityCheck.qualityScore,
       suggestions: qualityCheck.suggestions,
@@ -360,7 +369,7 @@ export const generateNextChapter = async (
         arcPosition: warningReport.arcPositionAnalysis,
       },
     });
-    
+
     if (qualityCheck.warnings.length > 0) {
       logger.warn('Chapter generation quality warnings', 'ai', {
         warnings: qualityCheck.warnings
@@ -371,7 +380,7 @@ export const generateNextChapter = async (
   // NEW: Check and run Living World simulation if triggered
   let livingWorldInjectionContext: WorldEventInjectionContext | null = null;
   opts?.onPhase?.('living_world_check');
-  
+
   try {
     const livingWorldStatus = getLivingWorldStatus(state.id);
     const simulationTrigger = shouldRunSimulation(
@@ -380,39 +389,39 @@ export const generateNextChapter = async (
       DEFAULT_WORLD_SIMULATION_CONFIG,
       livingWorldStatus.lastSimulationChapter
     );
-    
+
     if (simulationTrigger) {
       opts?.onPhase?.('living_world_simulation', {
         trigger: simulationTrigger.type,
         chapter: simulationTrigger.triggerChapter,
       });
-      
+
       const simulationStart = Date.now();
-      
+
       logger.info('Living World simulation triggered', 'generation', {
         trigger: simulationTrigger.type,
         chapter: simulationTrigger.triggerChapter,
         lastSimulation: livingWorldStatus.lastSimulationChapter,
       });
-      
+
       const simulationResult = await runWorldSimulation(state, simulationTrigger);
-      
+
       if (simulationResult.success && simulationResult.events.length > 0) {
         // Add events to storage
         addWorldEvents(state.id, simulationResult.events);
-        
+
         // Update status
         livingWorldStatus.lastSimulationChapter = nextChapterNumber;
         livingWorldStatus.nextScheduledSimulation = nextChapterNumber + DEFAULT_WORLD_SIMULATION_CONFIG.chapterInterval;
         saveLivingWorldStatus(state.id, livingWorldStatus);
-        
+
         logger.info('Living World generated events', 'generation', {
           eventCount: simulationResult.events.length,
           trigger: simulationTrigger.type,
           durationMs: Date.now() - simulationStart,
         });
       }
-      
+
       opts?.onPhase?.('living_world_complete', {
         durationMs: Date.now() - simulationStart,
         eventCount: simulationResult.events.length,
@@ -430,10 +439,10 @@ export const generateNextChapter = async (
   if (shouldRunDirector(state)) {
     opts?.onPhase?.('director_start');
     const directorStart = Date.now();
-    
+
     try {
       const directorResult = await runDirectorAgent(state, userInstruction);
-      
+
       if (directorResult.success && directorResult.beatSheet) {
         directorBeatSheet = directorResult.beatSheet;
         logger.info('Director generated beat sheet', 'generation', {
@@ -449,7 +458,7 @@ export const generateNextChapter = async (
           error: directorResult.error,
         });
       }
-      
+
       opts?.onPhase?.('director_complete', {
         durationMs: Date.now() - directorStart,
         beatCount: directorBeatSheet?.beats.length || 0,
@@ -468,13 +477,13 @@ export const generateNextChapter = async (
 
   // NEW: Check for Tribulation Gate trigger (unless skipping or resuming from a gate)
   let resolvedGateInjection: string | null = null;
-  
+
   if (!opts?.skipTribulationGate) {
     opts?.onPhase?.('tribulation_gate_check');
-    
+
     try {
       const gateConfig = getGateConfig(state.id);
-      
+
       if (gateConfig.enabled) {
         const gateDetection = shouldTriggerTribulationGate(
           state,
@@ -482,23 +491,23 @@ export const generateNextChapter = async (
           userInstruction,
           gateConfig
         );
-        
+
         if (gateDetection.shouldTrigger && gateDetection.triggerType) {
           opts?.onPhase?.('tribulation_gate_triggered', {
             triggerType: gateDetection.triggerType,
             situation: gateDetection.situation,
             confidence: gateDetection.confidence,
           });
-          
+
           logger.info('Tribulation Gate triggered', 'generation', {
             triggerType: gateDetection.triggerType,
             confidence: gateDetection.confidence,
             reason: gateDetection.reason,
           });
-          
+
           // Generate fate paths
           opts?.onPhase?.('tribulation_gate_generating');
-          
+
           const fatePaths = await generateFatePaths(
             state,
             gateDetection.triggerType,
@@ -506,7 +515,7 @@ export const generateNextChapter = async (
             gateDetection.protagonistName,
             gateDetection.context
           );
-          
+
           // Create and persist the gate
           const gate = createGate(
             state.id,
@@ -519,12 +528,12 @@ export const generateNextChapter = async (
             gateDetection.arcId,
             gateDetection.relatedThreadIds
           );
-          
+
           opts?.onPhase?.('tribulation_gate_ready', {
             gateId: gate.id,
             pathCount: fatePaths.length,
           });
-          
+
           // Return early - the caller needs to show the gate UI and get user choice
           return {
             requiresUserChoice: true,
@@ -561,51 +570,94 @@ export const generateNextChapter = async (
     }
   }
 
-  opts?.onPhase?.('prompt_build_start');
-  const promptStart = Date.now();
-  // Get the selected chapter generation model from storage early to pass to prompt builder
-  const selectedModel = getStoredChapterGenerationModel();
-  let builtPrompt = await buildChapterPrompt(state, userInstruction, selectedModel);
-  
-  // NEW: Inject hierarchical memory context into the prompt
+  // NEW: Generate Heavenly Loom directive before building prompt
+  let loomDirective: string | null = null;
   try {
-    opts?.onPhase?.('memory_context_gather');
-    const memoryContext = await gatherMemoryEnhancedContext(state, {
-      userInstruction,
-      tokenBudget: 4000, // Reserve 4000 tokens for memory context
-      compactFormat: false,
+    opts?.onPhase?.('loom_director_start');
+    const directiveStart = Date.now();
+
+    loomDirective = await generateLoomDirective(state, userInstruction, {
+      enabled: true,
+      onPhase: (phase, data) => {
+        // Map Loom phases to our phase callbacks
+        if (phase === 'loom_director_start') {
+          opts?.onPhase?.('loom_director_start', data);
+        } else if (phase === 'loom_director_complete') {
+          opts?.onPhase?.('loom_director_complete', data);
+        }
+      },
     });
-    
-    if (memoryContext.combinedMemoryContext) {
-      builtPrompt = injectMemoryContext(builtPrompt, memoryContext);
-      
-      logger.info('Injected hierarchical memory context', 'generation', {
-        loreBibleTokens: memoryContext.tokenCounts.loreBible,
-        arcMemoryTokens: memoryContext.tokenCounts.arcMemory,
-        semanticSearchTokens: memoryContext.tokenCounts.semanticSearch,
-        totalMemoryTokens: memoryContext.tokenCounts.total,
-        vectorDbUsed: memoryContext.vectorDbUsed,
-        retrievalDuration: memoryContext.retrievalDuration,
-        searchQueries: memoryContext.searchQueries,
+
+    if (loomDirective) {
+      logger.info('Heavenly Loom directive generated', 'loom', {
+        directiveLength: loomDirective.length,
       });
     }
-  } catch (memoryError) {
-    // Log but don't fail generation if memory context fails
-    logger.warn('Failed to gather memory context, continuing without', 'generation', {
-      error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+
+    opts?.onPhase?.('loom_director_complete', {
+      directiveGenerated: !!loomDirective,
+      durationMs: Date.now() - directiveStart,
+    });
+  } catch (loomError) {
+    logger.warn('Heavenly Loom directive generation failed, continuing without', 'loom', {
+      error: loomError instanceof Error ? loomError.message : String(loomError),
     });
   }
-  
+
+  opts?.onPhase?.('prompt_build_start');
+  const promptStart = Date.now();
+
+  // OPTIMIZATION: Build prompt components in parallel where possible
+  const selectedModel = getStoredChapterGenerationModel();
+
+  // Start parallel operations for prompt building
+  const basePromptPromise = buildChapterPrompt(state, userInstruction);
+  const memoryContextPromise = opts?.onPhase ? (async () => {
+    opts?.onPhase?.('memory_context_gather');
+    try {
+      const memoryContext = await queryMemory(state, {
+        depth: 3,
+        tokenBudget: 4000,
+        characterId: state.characterCodex.find(c => c.isProtagonist)?.id
+      });
+      return memoryContext;
+    } catch (memoryError) {
+      logger.warn('Failed to gather memory context, continuing without', 'generation', {
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+      return null;
+    }
+  })() : Promise.resolve(null);
+
+  // Wait for base prompt to complete
+  let builtPrompt = await basePromptPromise;
+
+  // Process memory context in parallel with other optimizations
+  const memoryContext = await memoryContextPromise;
+  if (memoryContext) {
+    // Use the optimized memory context assembly
+    const assembledMemory = assembleContextWithBudget(memoryContext, 4000);
+    builtPrompt = {
+      ...builtPrompt,
+      systemInstruction: builtPrompt.systemInstruction + '\n\n' + assembledMemory,
+    };
+
+    logger.info('Injected hierarchical memory context', 'generation', {
+      totalTokenCount: memoryContext.totalTokenCount,
+      retrievalDuration: memoryContext.retrievalDuration,
+    });
+  }
+
   // NEW: Inject Director beat sheet into the prompt for pacing control
   if (directorBeatSheet) {
     const beatSheetBlock = formatBeatSheetForPrompt(directorBeatSheet);
-    
+
     // Add beat sheet to system instruction for authoritative guidance
     builtPrompt = {
       ...builtPrompt,
       systemInstruction: builtPrompt.systemInstruction + '\n\n' + beatSheetBlock,
     };
-    
+
     logger.info('Injected Director beat sheet into prompt', 'generation', {
       beatCount: directorBeatSheet.beats.length,
       mandatoryBeats: directorBeatSheet.beats.filter(b => b.mandatory).length,
@@ -613,7 +665,7 @@ export const generateNextChapter = async (
       pacingGuidance: directorBeatSheet.pacingGuidance.overallPace,
     });
   }
-  
+
   // NEW: Inject resolved Tribulation Gate choice into the prompt
   if (resolvedGateInjection) {
     builtPrompt = {
@@ -621,10 +673,10 @@ export const generateNextChapter = async (
       systemInstruction: builtPrompt.systemInstruction + '\n\n' + resolvedGateInjection,
       userPrompt: resolvedGateInjection + '\n\n' + builtPrompt.userPrompt,
     };
-    
+
     logger.info('Injected Tribulation Gate choice into prompt', 'generation');
   }
-  
+
   // NEW: Inject Tribulation Gate consequence reminder into the prompt
   try {
     const consequenceReminder = buildConsequenceReminder(state.id);
@@ -633,7 +685,7 @@ export const generateNextChapter = async (
         ...builtPrompt,
         systemInstruction: builtPrompt.systemInstruction + '\n\n' + consequenceReminder,
       };
-      
+
       logger.info('Injected consequence reminder into prompt', 'generation');
     }
   } catch (consequenceError) {
@@ -641,7 +693,7 @@ export const generateNextChapter = async (
       error: consequenceError instanceof Error ? consequenceError.message : String(consequenceError),
     });
   }
-  
+
   // NEW: Inject Living World events context into the prompt
   if (hasLivingWorldContent(state.id)) {
     try {
@@ -652,11 +704,11 @@ export const generateNextChapter = async (
         nextChapterNumber,
         recentChapters
       );
-      
+
       if (injectionContext.formattedContext) {
         builtPrompt = enhancedPrompt;
         livingWorldInjectionContext = injectionContext;
-        
+
         logger.info('Injected Living World context into prompt', 'generation', {
           eventsToDiscover: injectionContext.eventsToDiscover.length,
           pendingEvents: injectionContext.pendingEventCount,
@@ -669,17 +721,17 @@ export const generateNextChapter = async (
       });
     }
   }
-  
+
   // NEW: Inject Face Graph (karma/reputation) context into the prompt
   let faceGraphContext: FaceGraphContext | null = null;
   try {
     const faceConfig = await getFaceGraphConfig(state.id);
-    
+
     if (faceConfig.enabled) {
       // Get characters likely present in this chapter (from recent context)
       const recentChapterCharacters = new Set<string>();
       const recentChapters = state.chapters.slice(-3);
-      
+
       // Extract character IDs from recent chapters and current arc
       for (const chapter of recentChapters) {
         // Check for character mentions in content
@@ -689,13 +741,13 @@ export const generateNextChapter = async (
           }
         }
       }
-      
+
       // Add protagonist
       const protagonist = state.characterCodex.find(c => c.isProtagonist);
       if (protagonist) {
         recentChapterCharacters.add(protagonist.id);
       }
-      
+
       // Add characters from active threads (via relatedEntityId if it's a character)
       const activeThreads = (state.storyThreads || []).filter(t => t.status === 'active');
       for (const thread of activeThreads) {
@@ -703,7 +755,7 @@ export const generateNextChapter = async (
           recentChapterCharacters.add(thread.relatedEntityId);
         }
       }
-      
+
       if (recentChapterCharacters.size > 0) {
         faceGraphContext = await generateFaceGraphContext(
           state,
@@ -711,13 +763,13 @@ export const generateNextChapter = async (
           nextChapterNumber,
           protagonist?.id
         );
-        
+
         if (faceGraphContext.formattedContext) {
           builtPrompt = {
             ...builtPrompt,
             systemInstruction: builtPrompt.systemInstruction + '\n\n' + faceGraphContext.formattedContext,
           };
-          
+
           logger.info('Injected Face Graph context into prompt', 'generation', {
             unresolvedKarma: faceGraphContext.unresolvedKarma.length,
             activeBloodFeuds: faceGraphContext.activeBloodFeuds.length,
@@ -732,26 +784,26 @@ export const generateNextChapter = async (
       error: faceGraphError instanceof Error ? faceGraphError.message : String(faceGraphError),
     });
   }
-  
+
   // NEW: Inject Market/Economic context into the prompt for price consistency
   let marketContextResult: MarketContextResult | null = null;
   try {
     if (state.globalMarketState && state.globalMarketState.currencies.length > 0) {
       const previousContent = state.chapters.slice(-2).map(c => c.content).join('\n');
-      
+
       marketContextResult = generateMarketContext(state, {
         userInstructions: userInstruction,
         previousContent,
-        chapterOutline: directorBeatSheet ? 
+        chapterOutline: directorBeatSheet ?
           directorBeatSheet.beats.map(b => b.description).join('. ') : undefined,
       });
-      
+
       if (marketContextResult.shouldInclude && marketContextResult.contextBlock) {
         builtPrompt = {
           ...builtPrompt,
           systemInstruction: builtPrompt.systemInstruction + '\n\n' + marketContextResult.contextBlock,
         };
-        
+
         logger.info('Injected Market context into prompt', 'generation', {
           sceneType: marketContextResult.sceneType,
           relevantItems: marketContextResult.relevantItems.length,
@@ -764,7 +816,7 @@ export const generateNextChapter = async (
       error: marketError instanceof Error ? marketError.message : String(marketError),
     });
   }
-  
+
   // NEW: Inject story health constraints into the prompt
   if (warningReport.promptConstraints.length > 0 || warningReport.blockers.length > 0) {
     // Collect specific stalled threads that MUST be addressed
@@ -772,15 +824,15 @@ export const generateNextChapter = async (
       .filter(b => b.category === 'thread_progression' && b.title.includes('Stalled'))
       .map(b => b.affectedEntities[0]?.name)
       .filter(Boolean);
-    
+
     const criticalThreads = warningReport.blockers
       .filter(b => b.category === 'resolution_urgency' && b.title.includes('Exceeded Max Age'))
       .map(b => b.affectedEntities[0]?.name)
       .filter(Boolean);
-    
+
     // Build a prioritized list of threads to address (max 3 for focus)
     const threadsToAddress = [...new Set([...stalledThreads, ...criticalThreads])].slice(0, 3);
-    
+
     // Build system-level constraints (more authoritative placement)
     const systemConstraints = [
       '',
@@ -792,7 +844,7 @@ export const generateNextChapter = async (
       `ARC POSITION: ${warningReport.arcPositionAnalysis.positionName} (${warningReport.arcPositionAnalysis.progressPercentage}% through story)`,
       '',
     ];
-    
+
     // Add specific thread requirements if there are stalled threads
     if (threadsToAddress.length > 0) {
       systemConstraints.push(
@@ -813,7 +865,7 @@ export const generateNextChapter = async (
         ''
       );
     }
-    
+
     // Add general constraints
     systemConstraints.push(
       '📋 ADDITIONAL REQUIREMENTS:',
@@ -828,16 +880,16 @@ export const generateNextChapter = async (
       '════════════════════════════════════════════════════════════════════',
       ''
     );
-    
+
     const constraintBlock = systemConstraints.join('\n');
-    
+
     // Add constraints to BOTH system instruction and user prompt for emphasis
     builtPrompt = {
       ...builtPrompt,
       systemInstruction: builtPrompt.systemInstruction + constraintBlock,
       userPrompt: constraintBlock + builtPrompt.userPrompt,
     };
-    
+
     logger.info('Added story health constraints to prompt', 'generation', {
       constraintCount: warningReport.promptConstraints.length,
       blockerCount: warningReport.blockers.length,
@@ -845,7 +897,20 @@ export const generateNextChapter = async (
       overallHealth: warningReport.overallHealth,
     });
   }
-  
+
+  // NEW: Inject Heavenly Loom directive into the prompt
+  if (loomDirective) {
+    builtPrompt = {
+      ...builtPrompt,
+      systemInstruction: builtPrompt.systemInstruction + '\n\n' + loomDirective,
+      userPrompt: loomDirective + '\n\n' + builtPrompt.userPrompt,
+    };
+
+    logger.info('Injected Heavenly Loom directive into prompt', 'loom', {
+      directiveLength: loomDirective.length,
+    });
+  }
+
   const promptBuildMs = Date.now() - promptStart;
   opts?.onPhase?.('prompt_build_end', { promptBuildMs });
 
@@ -862,9 +927,9 @@ export const generateNextChapter = async (
       opts?.onPhase?.('llm_request_start');
       const start = Date.now();
       // selectedModel is already retrieved above for prompt building
-      
+
       // Enhanced JSON schema with explicit word count requirement
-      const jsonSchemaInstruction = 
+      const jsonSchemaInstruction =
         '\n\n⚠️ CRITICAL WORD COUNT REQUIREMENT: The chapterContent field MUST contain AT LEAST 1500 words. This is NON-NEGOTIABLE. Before generating, plan for 1800-2200 words to ensure you meet the minimum. Count your words before finalizing.\n\n' +
         'Return ONLY a JSON object with this exact shape:\n' +
         '{' +
@@ -873,11 +938,11 @@ export const generateNextChapter = async (
         '"chapterContent":string (MUST BE AT LEAST 1500 WORDS - aim for 1800-2200 words),' +
         '"chapterSummary":string,' +
         '"wordCount":number (count the words in chapterContent and report here - MUST be >= 1500),' +
-        '"characterUpdates":[{"name":string,"updateType":string,"newValue":string,"targetName":string}],' +
+        '"characterUpdates":[{"name":string,"updateType":"new"|"cultivation"|"skill"|"item"|"status"|"notes"|"relationship"|"appearance"|"location","newValue":string,"targetName":string}],' +
         '"worldUpdates":[{"title":string,"content":string,"category":string,"isNewRealm":boolean}],' +
         '"territoryUpdates":[{"name":string,"type":string,"description":string}]' +
         '}';
-      
+
       const json = await routeJsonTask<{
         logicAudit?: LogicAudit;
         chapterTitle?: string;
@@ -914,9 +979,6 @@ export const generateNextChapter = async (
           cacheableContent: builtPrompt.cacheMetadata.cacheableContent,
           dynamicContent: (builtPrompt.cacheMetadata.dynamicContent || '') + jsonSchemaInstruction,
         } : undefined,
-        // Use 5-minute default TTL (can be changed to '1h' for 1-hour cache)
-        // Grok: Uses automatic prefix caching (TTL parameter is for compatibility/structure)
-        cacheTtl: '5m',
         // Override provider based on user selection
         overrideProvider: selectedModel,
       });
@@ -930,7 +992,7 @@ export const generateNextChapter = async (
         queueWaitMs = info.queueWaitMs;
         opts?.onPhase?.('queue_dequeued', { queueWaitMs });
       },
-      onFinished: () => {},
+      onFinished: () => { },
       onError: (info) => {
         console.warn('LLM request failed in rate limiter', info);
       },
@@ -944,7 +1006,7 @@ export const generateNextChapter = async (
     const receivedFields = result ? Object.keys(result) : [];
     const hasLogicAudit = result?.logicAudit ? 'yes' : 'no';
     const resultPreview = result ? JSON.stringify(result).substring(0, 200) : 'null';
-    
+
     throw new Error(
       `LLM response missing required fields (chapterTitle or chapterContent).\n` +
       `Response may be truncated or incomplete.\n` +
@@ -954,7 +1016,7 @@ export const generateNextChapter = async (
       `This usually indicates the response was truncated due to token limits. Try increasing maxTokens.`
     );
   }
-  
+
   // CRITICAL: Validate that chapterContent is not accidentally JSON
   // This prevents a bug where the entire response was saved as content
   if (isJsonChapterContent(result.chapterContent)) {
@@ -968,18 +1030,18 @@ export const generateNextChapter = async (
       throw new Error('LLM response contains JSON in chapterContent field instead of prose');
     }
   }
-  
+
   // Format chapter content for professional structure and punctuation
   const originalContent = result.chapterContent;
   result.chapterContent = formatChapterContent(result.chapterContent);
-  
+
   if (originalContent !== result.chapterContent) {
     logger.debug('Chapter content formatted: structure and punctuation improvements applied', 'ai');
   }
-  
+
   // Validate minimum word count (1500 words) - after formatting
   let wordCount = result.chapterContent.split(/\s+/).filter((word: string) => word.length > 0).length;
-  
+
   // If reported wordCount from AI differs significantly from actual, log it
   if (result.wordCount && Math.abs(result.wordCount - wordCount) > 50) {
     logger.debug('AI reported word count differs from actual', 'ai', {
@@ -987,26 +1049,26 @@ export const generateNextChapter = async (
       actual: wordCount
     });
   }
-  
+
   if (wordCount < 1500) {
     logger.warn('Generated chapter below minimum word count', 'ai', {
       wordCount,
       minimum: 1500
     });
-    
+
     // Attempt to expand the content to meet minimum
     // This is a fallback - the prompt should enforce word count
     if (!opts?.skipRegeneration) {
       const wordsNeeded = 1500 - wordCount;
       const targetWordCount = Math.max(1600, wordCount + Math.ceil(wordsNeeded * 1.3)); // Target 30% above the gap
       const originalWordCount = wordCount;
-      
+
       logger.info('Attempting to expand chapter content to meet minimum word count', 'ai', {
         currentWordCount: wordCount,
         wordsNeeded,
         targetWordCount
       });
-      
+
       try {
         const expansionPrompt = `You are a prose expansion specialist. A chapter has been written but is too short at ${wordCount} words. It needs to be at least ${targetWordCount} words (minimum acceptable: 1500).
 
@@ -1042,7 +1104,7 @@ OUTPUT: Return ONLY the expanded chapter as plain text. No JSON, no markdown hea
           temperature: 0.85, // Slightly lower for more controlled expansion
           maxTokens: 5000, // Increased to allow for longer output
         });
-        
+
         if (expandedContent) {
           const expandedWordCount = expandedContent.split(/\s+/).filter((word: string) => word.length > 0).length;
           // Accept expansion if it added at least 50 words and is closer to the target
@@ -1055,14 +1117,14 @@ OUTPUT: Return ONLY the expanded chapter as plain text. No JSON, no markdown hea
               newWordCount: wordCount,
               wordsAdded: wordCount - originalWordCount
             });
-            
+
             // If still below minimum after first expansion, try one more time
             if (wordCount < 1500) {
               logger.info('First expansion still below minimum, attempting second expansion', 'ai', {
                 currentWordCount: wordCount,
                 stillNeeded: 1500 - wordCount
               });
-              
+
               const secondExpansionPrompt = `This chapter is still ${1500 - wordCount} words short of the 1500 word minimum. Current word count: ${wordCount}.
 
 === CHAPTER CONTENT ===
@@ -1083,7 +1145,7 @@ Return ONLY the expanded text.`;
                 temperature: 0.9,
                 maxTokens: 5000,
               });
-              
+
               if (secondExpansion) {
                 const secondWordCount = secondExpansion.split(/\s+/).filter((word: string) => word.length > 0).length;
                 if (secondWordCount > wordCount) {
@@ -1117,7 +1179,39 @@ Return ONLY the expanded text.`;
       minimum: 1500
     });
   }
-  
+
+  // Post-generation quality check and fixes
+  const chapterForQuality: Chapter = {
+    id: generateUUID(),
+    number: state.chapters.length + 1,
+    title: result.chapterTitle || 'Untitled Chapter',
+    content: result.chapterContent || '',
+    summary: result.chapterSummary || '',
+    logicAudit: result.logicAudit,
+    scenes: [],
+    createdAt: Date.now()
+  };
+
+  const qualityReport = await validatePostGeneration(chapterForQuality);
+
+  if (qualityReport.issues.length > 0 && !opts?.skipRegeneration) {
+    logger.info('Post-generation quality issues detected', 'ai', {
+      issueCount: qualityReport.issues.length,
+      overallScore: qualityReport.overallScore,
+      needsRegeneration: qualityReport.needsRegeneration
+    });
+
+    // Apply quick fixes for minor issues
+    if (!qualityReport.needsRegeneration) {
+      const fixedChapter = applyQuickFixes(chapterForQuality, qualityReport.issues);
+      result.chapterContent = fixedChapter.content;
+
+      logger.info('Applied quick fixes to chapter', 'ai', {
+        fixesApplied: qualityReport.issues.length
+      });
+    }
+  }
+
   // NEW: Critique-Correction Loop - Auto-Critic Agent using Gemini Flash
   // Evaluates the chapter against a Style Rubric and iteratively refines prose quality
   if (CRITIQUE_CORRECTION_CONFIG.enabled && !opts?.skipRegeneration) {
@@ -1126,16 +1220,16 @@ Return ONLY the expanded text.`;
         rubricId: 'literary_xianxia', // Default rubric
         rubricName: 'Literary Xianxia',
       });
-      
+
       logger.info('Starting Critique-Correction Loop', 'critique', {
         chapterTitle: result.chapterTitle,
         wordCount,
       });
-      
+
       // Determine which rubric to use (default to literary_xianxia)
       // Could be customized per-novel via state.novelStyleConfig in the future
       const rubricId = (state as any).novelStyleConfig?.activeRubricId || 'literary_xianxia';
-      
+
       const critiqueResult = await applyCritiqueCorrectionLoop(
         result.chapterContent,
         result.chapterTitle || 'Untitled',
@@ -1166,14 +1260,14 @@ Return ONLY the expanded text.`;
         },
         CRITIQUE_CORRECTION_CONFIG
       );
-      
+
       // Update chapter content with critique-corrected version
       if (critiqueResult.success && critiqueResult.finalContent !== result.chapterContent) {
         result.chapterContent = critiqueResult.finalContent;
-        
+
         // Update word count after critique corrections
         wordCount = result.chapterContent.split(/\s+/).filter((word: string) => word.length > 0).length;
-        
+
         logger.info('Critique-Correction Loop completed successfully', 'critique', {
           iterations: critiqueResult.iterations,
           finalScore: critiqueResult.finalCritique.overallScore,
@@ -1189,7 +1283,7 @@ Return ONLY the expanded text.`;
           passedOnFirstTry: critiqueResult.iterations === 1 && critiqueResult.finalCritique.passesThreshold,
         });
       }
-      
+
       opts?.onPhase?.('critique_complete', {
         success: critiqueResult.success,
         iterations: critiqueResult.iterations,
@@ -1203,7 +1297,7 @@ Return ONLY the expanded text.`;
       // Continue with original content if critique fails
     }
   }
-  
+
   // Post-generation quality validation with comprehensive checks
   let finalChapter: Chapter | null = null;
   try {
@@ -1217,33 +1311,33 @@ Return ONLY the expanded text.`;
       scenes: [],
       createdAt: Date.now(),
     };
-    
+
     finalChapter = generatedChapter;
-    
+
     // Comprehensive quality validation
     opts?.onPhase?.('post_generation_validation');
     const qualityMetrics = await validateChapterQuality(generatedChapter, state);
-    
+
     // Enhanced: Save context snapshot
     try {
       const { saveContextSnapshot } = await import('./consistencyIntegrationService');
-      
+
       // Get entities that were likely in context
       const previousChapter = state.chapters[state.chapters.length - 1];
       const entitiesIncluded = previousChapter
         ? state.characterCodex
-            .filter(c => previousChapter.content.slice(-1000).toLowerCase().includes(c.name.toLowerCase()))
-            .map(c => c.id)
+          .filter(c => previousChapter.content.slice(-1000).toLowerCase().includes(c.name.toLowerCase()))
+          .map(c => c.id)
         : state.characterCodex.filter(c => c.isProtagonist).map(c => c.id);
-      
+
       await saveContextSnapshot(
         state.id,
         generatedChapter.id,
         generatedChapter.number,
-        { 
+        {
           chapterNumber: generatedChapter.number,
           chapterTitle: generatedChapter.title,
-          entitiesIncluded 
+          entitiesIncluded
         },
         entitiesIncluded,
         Math.ceil(builtPrompt.userPrompt.length / 4) // Rough token estimate
@@ -1252,7 +1346,7 @@ Return ONLY the expanded text.`;
       console.warn('Failed to save context snapshot:', error);
       // Don't fail generation if snapshot save fails
     }
-    
+
     opts?.onPhase?.('quality_validation', {
       qualityScore: qualityMetrics.qualityCheck.qualityScore,
       originalityScore: qualityMetrics.originalityScore.overallOriginality,
@@ -1263,14 +1357,14 @@ Return ONLY the expanded text.`;
       suggestions: qualityMetrics.qualityCheck.suggestions,
       shouldRegenerate: qualityMetrics.shouldRegenerate,
     });
-    
+
     // Check if regeneration is needed (skip if called from within regeneration to prevent infinite loops)
     if (qualityMetrics.shouldRegenerate && QUALITY_CONFIG.enabled && !opts?.skipRegeneration) {
       opts?.onPhase?.('regeneration_start', {
         reasons: qualityMetrics.regenerationReasons,
         attempt: 1,
       });
-      
+
       try {
         const regenerationResult = await regenerateWithQualityCheck(
           generatedChapter,
@@ -1278,7 +1372,7 @@ Return ONLY the expanded text.`;
           qualityMetrics,
           QUALITY_CONFIG
         );
-        
+
         if (regenerationResult.success && regenerationResult.chapter) {
           finalChapter = regenerationResult.chapter;
           opts?.onPhase?.('regeneration_complete', {
@@ -1286,13 +1380,13 @@ Return ONLY the expanded text.`;
             attempts: regenerationResult.attempts,
             finalMetrics: regenerationResult.finalMetrics,
           });
-          
+
           // Update result with regenerated chapter data
           result.chapterTitle = finalChapter.title;
           result.chapterContent = finalChapter.content;
           result.chapterSummary = finalChapter.summary;
           result.logicAudit = finalChapter.logicAudit;
-          
+
           logger.info('Successfully regenerated chapter', 'ai', {
             attempts: regenerationResult.attempts,
             originalOriginality: qualityMetrics.originalityScore.overallOriginality,
@@ -1309,10 +1403,10 @@ Return ONLY the expanded text.`;
           });
         }
       } catch (regenerationError) {
-        const errorMessage = regenerationError instanceof Error 
+        const errorMessage = regenerationError instanceof Error
           ? regenerationError.message || regenerationError.toString() || 'Unknown error'
-          : regenerationError 
-            ? String(regenerationError) 
+          : regenerationError
+            ? String(regenerationError)
             : 'Unknown error';
         logger.error(
           'Error during regeneration',
@@ -1329,7 +1423,7 @@ Return ONLY the expanded text.`;
         // Continue with original chapter if regeneration fails
       }
     }
-    
+
     // Log quality metrics
     if (qualityMetrics.qualityCheck.errors.length > 0) {
       logger.error('Chapter quality validation errors', 'ai', undefined, {
@@ -1341,7 +1435,7 @@ Return ONLY the expanded text.`;
         warnings: qualityMetrics.warnings.slice(0, 5),
       });
     }
-    
+
     // Log quality scores
     logger.debug('Chapter quality metrics', 'ai', {
       originality: qualityMetrics.originalityScore.overallOriginality,
@@ -1353,7 +1447,7 @@ Return ONLY the expanded text.`;
       error: error instanceof Error ? error.message : String(error),
     });
   }
-  
+
   // NEW: Process Living World event discoveries from generated chapter
   if (livingWorldInjectionContext && livingWorldInjectionContext.eventsToDiscover.length > 0) {
     try {
@@ -1367,13 +1461,13 @@ Return ONLY the expanded text.`;
         scenes: [],
         createdAt: Date.now(),
       };
-      
+
       const discoveryResult = processChapterForDiscoveries(
         state.id,
         generatedChapter,
         livingWorldInjectionContext
       );
-      
+
       if (discoveryResult.discoveredEventIds.length > 0) {
         logger.info('Living World events discovered in chapter', 'generation', {
           discoveredCount: discoveryResult.discoveredEventIds.length,
@@ -1387,9 +1481,9 @@ Return ONLY the expanded text.`;
       });
     }
   }
-  
+
   opts?.onPhase?.('parse_end', { parseMs: 0 });
-  
+
   // Save tension tracking data from Director beat sheet
   if (directorBeatSheet) {
     try {
@@ -1402,7 +1496,7 @@ Return ONLY the expanded text.`;
         endTension: tensionEntry.endTension,
         arcPhase: tensionEntry.arcPhase,
       });
-      
+
       // Return tension data in the result for the caller to save
       (result as any).tensionData = tensionEntry;
     } catch (tensionError) {
@@ -1411,11 +1505,11 @@ Return ONLY the expanded text.`;
       });
     }
   }
-  
+
   // NEW: Extract karma events from generated chapter (Face Graph)
   try {
     const faceConfig = await getFaceGraphConfig(state.id);
-    
+
     if (faceConfig.enabled && faceConfig.autoExtractKarma) {
       const generatedChapterForKarma: Chapter = {
         id: generateUUID(),
@@ -1427,7 +1521,7 @@ Return ONLY the expanded text.`;
         scenes: [],
         createdAt: Date.now(),
       };
-      
+
       // Extract karma asynchronously (don't block return)
       extractKarmaFromChapter(state, generatedChapterForKarma, {
         minSeverity: 'moderate', // Only extract notable events
@@ -1451,6 +1545,54 @@ Return ONLY the expanded text.`;
     });
   }
 
+  // NEW: Run Heavenly Loom Clerk audit after chapter generation
+  try {
+    opts?.onPhase?.('loom_clerk_start');
+    const auditStart = Date.now();
+
+    const generatedChapterForLoom: Chapter = {
+      id: generateUUID(),
+      number: nextChapterNumber,
+      title: result.chapterTitle,
+      content: result.chapterContent,
+      summary: result.chapterSummary || '',
+      logicAudit: result.logicAudit,
+      scenes: [],
+      createdAt: Date.now(),
+    };
+
+    const updatedThreads = await runLoomClerkAudit(state, generatedChapterForLoom, {
+      enabled: true,
+      onPhase: (phase, data) => {
+        // Map Loom phases to our phase callbacks
+        if (phase === 'loom_clerk_start') {
+          opts?.onPhase?.('loom_clerk_start', data);
+        } else if (phase === 'loom_clerk_complete') {
+          opts?.onPhase?.('loom_clerk_complete', data);
+        }
+      },
+    });
+
+    if (updatedThreads.length > 0) {
+      // Include updated threads in result for caller to save
+      (result as any).loomThreadUpdates = updatedThreads;
+
+      logger.info('Heavenly Loom Clerk audit completed', 'loom', {
+        threadsUpdated: updatedThreads.length,
+        durationMs: Date.now() - auditStart,
+      });
+    }
+
+    opts?.onPhase?.('loom_clerk_complete', {
+      threadsUpdated: updatedThreads.length,
+      durationMs: Date.now() - auditStart,
+    });
+  } catch (loomAuditError) {
+    logger.warn('Heavenly Loom Clerk audit failed, continuing without', 'loom', {
+      error: loomAuditError instanceof Error ? loomAuditError.message : String(loomAuditError),
+    });
+  }
+
   return result;
 };
 
@@ -1458,7 +1600,17 @@ export type PostChapterExtraction = {
   characterUpserts: Array<{
     name: string;
     isNew?: boolean;
-    set?: Partial<Pick<Character, 'age' | 'personality' | 'currentCultivation' | 'notes' | 'status' | 'appearance' | 'background' | 'goals' | 'flaws'>>;
+    set?: {
+      age?: string;
+      personality?: string;
+      currentCultivation?: string;
+      notes?: string;
+      status?: string;
+      appearance?: string;
+      background?: string;
+      goals?: string[];
+      flaws?: string[];
+    };
     addSkills?: string[]; // @deprecated - Use techniqueUpdates instead
     addItems?: string[]; // @deprecated - Use itemUpdates instead
     relationships?: Array<{
@@ -1569,402 +1721,244 @@ export const extractPostChapterUpdates = async (
   newChapter: Chapter,
   activeArc: Arc | null
 ): Promise<PostChapterExtraction> => {
+  try {
+    // always use enhanced extraction prompt for better results
+    const systemPrompt =
+      `You are a meticulous narrative analyst tasked with extracting structured data from a chapter of a cultivation fantasy novel.
 
-  const safeChecklist: ArcChecklistItem[] = activeArc?.checklist || [];
+CRITICAL OBJECTIVE: The Novel's Codex must be kept in perfect sync with the narrative. You must extract EVERY significant entity, update, and plot thread.
 
-  const prompt = `
-You are the "Omniscient System Clerk" for a Xianxia/Fantasy novel writing tool.
+Your extraction targets:
 
-TASK:
-Given the latest generated chapter, produce structured UPDATES that should be merged into:
-1) Character Codex
-2) World Bible
-3) Territories
-4) Items and Techniques (with smart deduplication)
-5) Antagonists (opponents, threats, conflicts - with smart recognition)
-6) Scenes (break the chapter into logical scenes)
-7) Active Arc progress checklist
+1. **CHARACTERS (High Priority)**:
+   - Identify ALL characters mentioned, whether by name, title (e.g., "Elder Zhang"), or role.
+   - For NEW characters: Extract appearance, personality, cultivation level, and background.
+   - For EXISTING characters: track ANY changes in status, cultivation, location, or relationships.
+   - **Relationships**: Link characters together (friends, enemies, family, mentors).
 
-CRITICAL RULES:
-- Prefer UPDATING existing entities rather than creating duplicates.
-- For items/techniques: CHECK if an item/technique already exists before creating a new entry. Use fuzzy matching (e.g., "Jade Slip", "jade slip", "Jade-Slip" refer to the same item).
-- If an item/technique exists but has new powers/functions, use "update" action with addPowers/addFunctions.
-- When unsure, be conservative (fewer, higher-quality updates).
-- Return ONLY valid JSON that matches the schema below. No markdown.
+2. **STORY THREADS & PLOT**:
+   - Track ongoing plot lines (Conflicts, Mysteries, Promises, Quests).
+   - Update the status of existing threads (progressed, resolved).
+   - Create NEW threads for new plot points introduced.
 
-ACTIVE ARC:
-${activeArc ? `- id: ${activeArc.id}\n- title: ${activeArc.title}\n- description: ${truncateForExtraction(activeArc.description || '', 500)}\n- checklistItems: ${safeChecklist.map(i => `${i.id}::${i.label}::${i.completed ? 'completed' : 'open'}`).join(' | ')}` : 'None'}
+3. **WORLD BUILDING**:
+   - New locations (Territories), organizations (Sects), or history.
+   - Laws of the world or power systems.
 
-LATEST CHAPTER:
-- number: ${newChapter.number}
-- title: ${newChapter.title}
-- summary: ${truncateForExtraction(newChapter.summary || '', 1200)}
-- content: ${truncateForExtraction(newChapter.content || '', 15000)}
+4. **ITEMS & TECHNIQUES**:
+   - New treasures or weapons found/used.
+   - New martial arts or spells (Techniques) learned or displayed.
+   - Track who possesses/masters them.
 
-IMPORTANT: Pay special attention to plot-critical character developments:
-- If the chapter reveals a character is reincarnated/transmigrated (has memories from past life, was reborn, soul transfer, etc.), this MUST be added to their "background" field
-- If the chapter reveals a character possesses or discovers a system (cheat ability, game interface, special power system, etc.), this MUST be added to their "notes" field
-- These are critical plot points that should ALWAYS be extracted, even if the character only appears briefly in the chapter
+5. **ANTAGONISTS**:
+   - Identify threats, their power levels, and motivations.
 
-EXISTING CHARACTERS (names + key fields):
-${state.characterCodex
-  .slice(0, 80)
-  .map(c => `- ${c.name} | cultivation=${truncateForExtraction(c.currentCultivation || '', 40)} | status=${c.status} | appearance=${truncateForExtraction(c.appearance || '', 60)} | goals=${truncateForExtraction(c.goals || '', 60)} | flaws=${truncateForExtraction(c.flaws || '', 60)} | notes=${truncateForExtraction(c.notes || '', 120)}`)
-  .join('\n')}
+Be EXTREMELY THOROUGH. If a character is mentioned by name, they should likely be in the Codex. If a named move is used, it should be a Technique.`;
 
-EXISTING WORLD BIBLE TITLES:
-${state.worldBible
-  .slice(0, 120)
-  .map(w => `- [${w.category}] ${w.title}`)
-  .join('\n')}
+    // Build context from existing state
+    const characterContext = state.characterCodex.map(char =>
+      `- ${char.name} (${char.currentCultivation || 'Unknown cultivation'}, ${char.status})`
+    ).join('\n');
 
-EXISTING TERRITORIES:
-${state.territories
-  .slice(0, 120)
-  .map(t => `- ${t.name} (${t.type})`)
-  .join('\n')}
+    const itemsContext = state.novelItems?.map(item =>
+      `- ${item.name} (${item.category})`
+    ).join('\n') || 'No items recorded yet.';
 
-EXISTING ITEMS (canonical names for deduplication):
-${state.novelItems && state.novelItems.length > 0
-  ? state.novelItems
-      .slice(0, 100)
-      .map(item => `- ${item.name} (${item.category}) | powers: ${item.powers.slice(0, 3).join(', ')}`)
-      .join('\n')
-  : 'None'}
+    const techniquesContext = state.novelTechniques?.map(tech =>
+      `- ${tech.name} (${tech.category} - ${tech.type})`
+    ).join('\n') || 'No techniques recorded yet.';
 
-EXISTING TECHNIQUES (canonical names for deduplication):
-${state.novelTechniques && state.novelTechniques.length > 0
-  ? state.novelTechniques
-      .slice(0, 100)
-      .map(tech => `- ${tech.name} (${tech.category} ${tech.type}) | functions: ${tech.functions.slice(0, 3).join(', ')}`)
-      .join('\n')
-  : 'None'}
+    const arcContext = activeArc ?
+      `Current Arc: ${activeArc.title}\nArc Checklist: ${activeArc.checklist?.map(item => `- ${item.id}: ${item.completed ? '✅' : '❌'}`).join('\n') || 'No checklist items'}` :
+      'No active arc.';
 
-EXISTING ANTAGONISTS (for recognition and updates):
-${state.antagonists && state.antagonists.length > 0
-  ? state.antagonists
-      .slice(0, 50)
-      .map(ant => `- ${ant.name} (${ant.type}, ${ant.status}, ${ant.threatLevel} threat) | ${ant.motivation ? `motivation: ${ant.motivation.substring(0, 60)}` : ''}`)
-      .join('\n')
-  : 'None'}
+    const userPrompt = `CHAPTER ${newChapter.number}: ${newChapter.title}
 
-EXISTING CHARACTER SYSTEMS (for recognition and updates):
-${state.characterSystems && state.characterSystems.length > 0
-  ? state.characterSystems
-      .slice(0, 50)
-      .map(sys => `- ${sys.name} (${sys.type}, ${sys.category}, ${sys.status}) | ${sys.description ? `description: ${sys.description.substring(0, 60)}` : ''} | Features: ${sys.features.length}`)
-      .join('\n')
-  : 'None'}
+${newChapter.content || newChapter.summary || ''}
 
-⚠️ EXISTING STORY THREADS (CRITICAL - Match progressions to these existing threads):
-${state.storyThreads && state.storyThreads.length > 0
-  ? state.storyThreads
-      .filter(t => t.status === 'active')
-      .slice(0, 30)
-      .map(thread => `- "${thread.title}" (${thread.type}, ${thread.priority} priority, last ch.${thread.lastUpdatedChapter}) | ${thread.description ? thread.description.substring(0, 80) : 'No description'}`)
-      .join('\n')
-  : 'None'}
-${state.storyThreads && state.storyThreads.filter(t => t.status === 'active').length > 30 ? `... and ${state.storyThreads.filter(t => t.status === 'active').length - 30} more active threads` : ''}
+---
 
-CRITICAL THREAD MATCHING INSTRUCTIONS:
-- When the chapter references ANY of the above active threads, you MUST include it in threadUpdates with action="update"
-- Use the EXACT thread title from the list above for matching
-- If a thread is mentioned, referenced, or progressed in ANY way, report it as "progressed" with eventType="progressed"
-- Even minor references or mentions count as progression - include them
-- If you see content related to an existing thread but with a slightly different name, match it to the existing thread
-- Priority should be to UPDATE existing threads rather than creating new ones
+EXISTING CONTEXT:
 
-ITEM CATEGORIZATION GUIDE:
-- Treasure: Magical artifacts, powerful items with special properties (e.g., "Jade Slip", "Sword of Heaven", "Phoenix Feather")
-- Equipment: Tools, weapons, armor, regular items (e.g., "Iron Sword", "Cultivation Robes", "Storage Ring")
-- Consumable: Food, pills, talismans, one-time use items (e.g., "Healing Pill", "Spirit Fruit", "Escape Talisman")
-- Essential: Basic necessities, mundane items (e.g., "dried meat", "water skin", "torch", "rope")
+CHARACTERS:
+${characterContext}
 
-TECHNIQUE CATEGORIZATION GUIDE:
-- Category (importance):
-  * Core: Fundamental cultivation methods, signature moves, main techniques (e.g., "Nine Heavens Divine Art", "Phoenix Rebirth Technique")
-  * Important: Significant abilities, key skills (e.g., "Wind Sword Art", "Spirit Sense")
-  * Standard: Common techniques, widely used (e.g., "Basic Sword Art", "Energy Gathering")
-  * Basic: Entry-level skills (e.g., "Qi Circulation", "Meditation")
-- Type (function):
-  * Cultivation: Methods for advancing cultivation realm
-  * Combat: Battle techniques, attacks, defenses
-  * Support: Healing, buffs, utility abilities
-  * Secret: Hidden techniques, forbidden arts
-  * Other: Miscellaneous techniques
+ITEMS:
+${itemsContext}
 
-ITEMS/TECHNIQUES UPDATE LOGIC:
-- If item/technique name matches existing (fuzzy match): use "update" action with addPowers/addFunctions
-- If item/technique is completely new: use "create" action with full details
-- CRITICAL: EVERY itemUpdate MUST include "characterName" (the exact name of the character who possesses it)
-- CRITICAL: EVERY techniqueUpdate MUST include "characterName" (the exact name of the character who masters it)
-- Always include category and characterName
-- For techniques: include type and masteryLevel (e.g., "Novice", "Intermediate", "Expert", "Master")
-- If an item/technique appears in the chapter but no specific character is mentioned, omit it from itemUpdates/techniqueUpdates
+TECHNIQUES:
+${techniquesContext}
 
-ANTAGONIST EXTRACTION GUIDELINES:
-- Identify ANY opposing forces, threats, or conflicts mentioned or hinted at in the chapter
-- Check existing antagonists list FIRST - if an antagonist already exists, use "update" action
-- Types: individual (single person), group (organization/faction), system (laws/rules), society (cultural), abstract (concept/force)
-- Status: active (currently opposing), defeated (resolved), transformed (changed role), dormant (inactive but relevant), hinted (foreshadowed)
-- Threat Level: low (minor obstacle), medium (significant challenge), high (major threat), extreme (existential danger)
-- Duration Scope: chapter (single chapter), arc (one story arc), novel (entire novel), multi_arc (multiple arcs but not entire novel)
-- For new antagonists: provide description, motivation, power level, and threat assessment
-- For existing antagonists appearing: update status, power level if changed, and add chapter appearance notes
-- Presence Type: direct (physically present), mentioned (referenced), hinted (subtle foreshadowing), influence (affecting events indirectly)
-- Significance: major (primary conflict), minor (secondary), foreshadowing (future threat)
-- If antagonist is related to protagonist: specify relationshipWithProtagonist with type and intensity
-- If active arc exists: specify arcRole (primary, secondary, background, hinted)
+${arcContext}
 
-CHARACTER INFORMATION EXTRACTION GUIDELINES:
-CRITICAL: You MUST extract character updates from the ENTIRE chapter content, not just the beginning. Scan through all sections systematically.
+---
 
-- Update ALL character information fields when they appear or change ANYWHERE in the chapter:
-  * appearance: Physical description, visible changes (wounds, transformations, new features, clothing changes)
-  * background: Origin story updates, new backstory revelations, past events mentioned
-  * goals: Shifting motivations, new objectives, changed desires, character aspirations
-  * flaws: Revealed weaknesses, character defects shown, vulnerabilities exposed, character limitations
-  * currentCultivation: Realm/level changes, breakthroughs, cultivation progress (e.g., "Second Level of Qi Condensation", "Foundation Establishment")
-  * personality: Notable personality shifts, character development, behavioral changes
-  * age: Time passage if mentioned (e.g., "years later", "aged significantly")
-  * status: Life/death changes, significant state changes (Alive/Deceased/Unknown)
-  * notes: Special abilities, systems, unique traits, plot-critical information discovered in the chapter
-- Extract information even if character appears briefly - update what you can detect
-- MANDATORY: For EVERY character mentioned in the chapter, check if they appear in the existing character list and update their information if any details changed
-- MANDATORY: Include character updates in "characterUpserts" even if the character only appears in one sentence - any new information should be extracted
-- For realm/cultivation progression: Capture exact realm names and levels as stated in the chapter
-- For appearance: Update when character's physical description changes or new details are revealed
-- For background: Add new revelations to existing background information, ESPECIALLY reincarnation/transmigration events, origin story revelations, and major backstory discoveries
-- For goals: Update when character's objectives or motivations shift
-- For flaws: Update when character weaknesses or limitations are shown or revealed
-- CRITICAL: For plot-critical character discoveries, ALWAYS update character fields:
-  * Reincarnation/Transmigration: If a character is revealed to be reincarnated or has memories from a past life, add this to "background" field with details about their previous identity and the reincarnation event
-  * Special Abilities: Any unique powers, cheat abilities, or special traits revealed should be added to "notes" field
-  * Origin Revelations: Major revelations about character origin, true identity, or hidden past should be added to "background" field
-- When in doubt about where information belongs: Use "background" for past/origin information, and "notes" for current abilities/systems/traits
+Extract all updates from this chapter. Return ONLY a JSON object with this exact structure:
 
-CHARACTER SYSTEM EXTRACTION GUIDELINES:
-- Identify ANY systems that help the main character (cultivation systems, game interfaces, cheat abilities, special powers, etc.)
-- Check existing systems list FIRST - if a system already exists, use "update" action
-- Types: cultivation (cultivation technique system), game (game-like interface), cheat (cheat ability), ability (special ability), interface (UI system), evolution (evolution system), other
-- Categories: core (main/essential system), support (supporting system), evolution (growth/progression system), utility (utility features), combat (combat-related), passive (passive abilities)
-- Status: active (currently in use), dormant (inactive but available), upgraded (recently enhanced), merged (combined with another system), deactivated (no longer functional)
-- CRITICAL: EVERY systemUpdate MUST include "characterName" (the exact name of the protagonist who owns this system)
-- For NEW systems: use "create" action with name, type, category, description, characterName
-- For EXISTING systems: use "update" action with systemId or matching name
-- Track feature discovery: If new features/abilities are discovered, add them to "addFeatures" array
-- Track feature upgrades: If existing features are upgraded/improved, add them to "upgradeFeatures" array
-- Track level/version changes: If system level or version changes, include in currentLevel/currentVersion
-- Presence Type: direct (system actively used), mentioned (referenced), hinted (subtle mention), used (features used but system not explicitly mentioned)
-- Significance: major (significant system activity), minor (minor usage), foreshadowing (hint of future system use)
-- Extract system information when:
-  * A character discovers/activates a system
-  * A system's interface appears or is described
-  * New features/abilities are unlocked
-  * Existing features are upgraded or improved
-  * System level/version increases
-  * System merges with another system or transforms
-
-SCENE BREAKDOWN INSTRUCTIONS:
-- Break the chapter into 2-5 logical scenes based on location shifts, time jumps, or major plot beats.
-- Each scene should have: a clear title, a brief summary, and the first ~500 characters of that scene's content from the chapter.
-- Scenes should be numbered sequentially starting from 1.
-
-STORY THREAD EXTRACTION GUIDELINES (CRITICAL FOR STORY HEALTH):
-⚠️ Thread progression is CRITICAL for story health. Chapters without thread updates indicate stagnation.
-⚠️ ALWAYS check the "EXISTING STORY THREADS" list above FIRST before creating new threads.
-⚠️ When chapter content relates to an existing thread, use action="update" with the exact title from the existing threads list.
-
-- Identify narrative threads that are introduced, progressed, or resolved in this chapter
-- Thread types:
-  * enemy: Antagonist/opposition threads (rivalries, conflicts with enemies)
-  * technique: Technique-related threads (learning/mastering techniques, technique evolution)
-  * item: Item-related threads (powerful items, artifacts, treasures with ongoing significance)
-  * location: Territory/location threads (places of importance, locations with ongoing plot relevance)
-  * sect: Sect/organization threads (sect politics, organization conflicts, sect relationships)
-  * promise: Character promises that need fulfillment (vows, commitments, agreements between characters)
-  * mystery: Mysteries that need solving (unsolved questions, hidden truths, unexplained events)
-  * relationship: Relationship threads between characters (romance, friendship, rivalry, family bonds)
-  * power: Power progression/cultivation threads (realm breakthroughs, cultivation goals, power scaling)
-  * quest: Quests or missions (objectives, tasks, goals that need completion)
-  * revelation: Secrets/revelations that need revealing (hidden identities, backstories, plot twists)
-  * conflict: Ongoing conflicts that need resolution (disputes, wars, tensions between groups)
-  * alliance: Alliances/partnerships that form/break (temporary alliances, betrayals, partnerships)
-- For NEW threads: use action "create" with eventType "introduced"
-- For EXISTING threads: use action "update" with eventType "progressed" or "resolved"
-- Link threads to related entities when possible (character names, item names, technique names, location names, sect names)
-- Priority levels: critical (must address soon), high (important), medium (standard), low (background)
-- Significance: major (significant development), minor (small update), foreshadowing (hint for future)
-- When resolving a thread: include resolutionNotes and satisfactionScore (0-100)
-- Thread titles should be descriptive and specific (e.g., "The Jade Slip's Hidden Power", "Rivalry with Elder Zhang", "Mystery of the Ancient Sect", "Promise to Find the Lost Artifact", "Revelation of Protagonist's True Identity")
-- IMPORTANT: Extract ALL significant narrative threads, not just obvious ones. Look for:
-  * Character promises or commitments mentioned
-  * Mysteries or unanswered questions introduced
-  * Relationship developments or changes
-  * Power progression milestones or goals
-  * Quests or missions assigned
-  * Secrets hinted at or partially revealed
-  * Conflicts that emerge or escalate
-  * Alliances that form or break
-
-Return ONLY a JSON object with this exact shape:
 {
   "characterUpserts": [
     {
-      "name": string,
-      "isNew": boolean (optional),
-      "set": { "age"?: string, "personality"?: string, "currentCultivation"?: string, "notes"?: string, "status"?: "Alive"|"Deceased"|"Unknown", "appearance"?: string, "background"?: string, "goals"?: string, "flaws"?: string } (optional),
-      "addSkills": string[] (optional),
-      "addItems": string[] (optional),
+      "name": "Character Name",
+      "isNew": false,
+      "set": {
+        "age": "Updated age if changed",
+        "personality": "Updated personality if changed", 
+        "currentCultivation": "Updated cultivation if changed",
+        "status": "Alive/Deceased/Unknown",
+        "appearance": "Physical description if new/changed",
+        "background": "Background info if new/changed",
+        "goals": "Goals if new/changed",
+        "flaws": "Flaws if new/changed",
+        "notes": "General notes about character"
+      },
       "relationships": [
-        { "targetName": string, "type": string, "history"?: string, "impact"?: string }
-      ] (optional)
+        {
+          "targetName": "Other Character Name",
+          "type": "relationship type (friend, enemy, mentor, etc)",
+          "history": "How this relationship developed",
+          "impact": "Impact on the story"
+        }
+      ]
     }
   ],
   "worldEntryUpserts": [
-    { "title": string, "category": string, "content": string }
+    {
+      "title": "Entry Title",
+      "category": "Geography/Sects/PowerLevels/Laws/Systems/Techniques/Other",
+      "content": "Detailed description"
+    }
   ],
   "territoryUpserts": [
-    { "name": string, "type": string, "description": string }
+    {
+      "name": "Territory Name",
+      "type": "Empire/Kingdom/Neutral/Hidden", 
+      "description": "Description of the territory"
+    }
   ],
   "itemUpdates": [
-    { 
-      "name": string, 
-      "action": "create"|"update", 
-      "itemId": string (optional, if updating existing),
-      "category": "Treasure"|"Equipment"|"Consumable"|"Essential",
-      "description": string (optional),
-      "addPowers": string[] (optional, new abilities discovered),
-      "characterName": string
+    {
+      "name": "Item Name",
+      "action": "create/update",
+      "category": "Treasure/Equipment/Consumable/Essential",
+      "description": "Item description",
+      "addPowers": ["Power 1", "Power 2"],
+      "characterName": "Character who possesses it"
     }
-  ] (optional),
+  ],
   "techniqueUpdates": [
     {
-      "name": string,
-      "action": "create"|"update",
-      "techniqueId": string (optional, if updating existing),
-      "category": "Core"|"Important"|"Standard"|"Basic",
-      "type": "Cultivation"|"Combat"|"Support"|"Secret"|"Other",
-      "description": string (optional),
-      "addFunctions": string[] (optional, new abilities discovered),
-      "characterName": string,
-      "masteryLevel": string (optional, e.g., "Novice", "Expert", "Master")
+      "name": "Technique Name",
+      "action": "create/update", 
+      "category": "Core/Important/Standard/Basic",
+      "type": "Cultivation/Combat/Support/Secret/Other",
+      "description": "Technique description",
+      "addFunctions": ["Function 1", "Function 2"],
+      "characterName": "Character who uses it",
+      "masteryLevel": "Novice/Intermediate/Advanced/Master"
     }
-  ] (optional),
+  ],
   "scenes": [
-    { "number": number (1-based), "title": string, "summary": string, "contentExcerpt": string }
+    {
+      "number": 1,
+      "title": "Scene Title",
+      "summary": "Brief summary of what happens",
+      "contentExcerpt": "First 500 characters of scene content"
+    }
   ],
   "arcChecklistProgress": {
-    "arcId": string|null,
-    "completedItemIds": string[],
-    "notes": string (optional)
-  } | null,
+    "arcId": ${activeArc ? `"${activeArc.id}"` : 'null'},
+    "completedItemIds": ["id1", "id2"],
+    "notes": "Notes about arc progress"
+  },
   "antagonistUpdates": [
     {
-      "name": string,
-      "action": "create"|"update",
-      "antagonistId": string (optional, if updating existing),
-      "type": "individual"|"group"|"system"|"society"|"abstract",
-      "description": string (optional),
-      "motivation": string (optional),
-      "powerLevel": string (optional),
-      "status": "active"|"defeated"|"transformed"|"dormant"|"hinted",
-      "threatLevel": "low"|"medium"|"high"|"extreme",
-      "durationScope": "chapter"|"arc"|"novel"|"multi_arc",
-      "presenceType": "direct"|"mentioned"|"hinted"|"influence" (optional),
-      "significance": "major"|"minor"|"foreshadowing" (optional),
+      "name": "Antagonist Name",
+      "action": "create/update",
+      "type": "individual/group/system/society/abstract",
+      "description": "Description of antagonist",
+      "motivation": "Their motivation",
+      "powerLevel": "Power level description",
+      "status": "active/defeated/transformed/dormant/hinted",
+      "threatLevel": "low/medium/high/extreme",
+      "durationScope": "chapter/arc/novel/multi_arc",
       "relationshipWithProtagonist": {
-        "relationshipType": "primary_target"|"secondary_target"|"ally_of_antagonist"|"neutral",
-        "intensity": "rival"|"enemy"|"nemesis"|"opposition"
-      } (optional),
-      "arcRole": "primary"|"secondary"|"background"|"hinted" (optional),
-      "notes": string (optional)
+        "relationshipType": "primary_target/secondary_target/ally_of_antagonist/neutral",
+        "intensity": "rival/enemy/nemesis/opposition"
+      },
+      "arcRole": "primary/secondary/background/hinted",
+      "notes": "Additional notes"
     }
-  ] (optional),
-  "systemUpdates": [
-    {
-      "name": string,
-      "action": "create"|"update",
-      "systemId": string (optional, if updating existing),
-      "characterName": string,
-      "type": "cultivation"|"game"|"cheat"|"ability"|"interface"|"evolution"|"other" (optional),
-      "category": "core"|"support"|"evolution"|"utility"|"combat"|"passive" (optional),
-      "description": string (optional),
-      "currentLevel": string (optional),
-      "currentVersion": string (optional),
-      "status": "active"|"dormant"|"upgraded"|"merged"|"deactivated" (optional),
-      "addFeatures": string[] (optional, new features discovered/added),
-      "upgradeFeatures": string[] (optional, features that were upgraded),
-      "presenceType": "direct"|"mentioned"|"hinted"|"used" (optional),
-      "significance": "major"|"minor"|"foreshadowing" (optional),
-      "notes": string (optional)
-    }
-  ] (optional),
+  ],
   "threadUpdates": [
     {
-      "title": string,
-      "type": "enemy"|"technique"|"item"|"location"|"sect"|"promise"|"mystery"|"relationship"|"power"|"quest"|"revelation"|"conflict"|"alliance",
-      "action": "create"|"update"|"resolve",
-      "threadId": string (optional, if updating existing),
-      "description": string (optional),
-      "priority": "critical"|"high"|"medium"|"low" (optional),
-      "status": "active"|"paused"|"resolved"|"abandoned" (optional),
-      "eventType": "introduced"|"progressed"|"resolved"|"hinted",
-      "eventDescription": string,
-      "significance": "major"|"minor"|"foreshadowing",
-      "relatedEntityName": string (optional),
-      "relatedEntityType": string (optional),
-      "resolutionNotes": string (optional, if resolving),
-      "satisfactionScore": number (optional, 0-100, if resolving)
+      "title": "Thread Title",
+      "type": "enemy/technique/item/location/sect/promise/mystery/relationship/power/quest/revelation/conflict/alliance",
+      "action": "create/update/resolve",
+      "description": "Thread description",
+      "priority": "critical/high/medium/low",
+      "status": "active/paused/resolved/abandoned",
+      "eventType": "introduced/progressed/resolved/hinted",
+      "eventDescription": "What happened to this thread",
+      "significance": "major/minor/foreshadowing",
+      "relatedEntityName": "Related character/item/etc",
+      "relatedEntityType": "Character/Item/Technique/etc"
     }
-  ] (optional)
+  ]
 }
-  `.trim();
 
-  return rateLimiter.queueRequest(
-    'refine',
-    async () => {
-      const parsed = await routeJsonTask<PostChapterExtraction>('metadata_extraction', {
-        system: SYSTEM_INSTRUCTION,
-        user: prompt,
-        temperature: 0.3,
-        maxTokens: 8192, // Grok maximum output tokens (uses full 2M input context + 8K output)
-      });
+IMPORTANT: 
+- Only include information explicitly mentioned in the chapter
+- For empty arrays, return [] not null
+- If no changes for a section, return an empty object/array as appropriate
+- Do not invent details or make assumptions beyond what's in the text`;
 
-      const extraction: PostChapterExtraction = {
-        characterUpserts: parsed?.characterUpserts || [],
-        worldEntryUpserts: parsed?.worldEntryUpserts || [],
-        territoryUpserts: parsed?.territoryUpserts || [],
-        itemUpdates: parsed?.itemUpdates || [],
-        techniqueUpdates: parsed?.techniqueUpdates || [],
-        antagonistUpdates: parsed?.antagonistUpdates || [],
-        scenes: parsed?.scenes || [],
-        arcChecklistProgress: parsed?.arcChecklistProgress ?? null,
-        threadUpdates: parsed?.threadUpdates || [],
-      };
+    // Use the model orchestrator to call Gemini for extraction
+    const result = await routeJsonTask<PostChapterExtraction>('metadata_extraction', {
+      system: systemPrompt,
+      user: userPrompt,
+      temperature: 0.3, // Lower temperature for more consistent extraction
+      maxTokens: 8192, // Allow for large responses
+    });
 
-      // Log extraction results for debugging
-      logger.debug('Extraction completed', 'chapterGeneration', {
+    // Log what was extracted for debugging
+    console.log(`[extractPostChapterUpdates] Chapter ${newChapter.number} extraction results:`, {
+      characterUpserts: result.characterUpserts?.length || 0,
+      worldEntryUpserts: result.worldEntryUpserts?.length || 0,
+      territoryUpserts: result.territoryUpserts?.length || 0,
+      itemUpdates: result.itemUpdates?.length || 0,
+      techniqueUpdates: result.techniqueUpdates?.length || 0,
+      scenes: result.scenes?.length || 0,
+      antagonistUpdates: result.antagonistUpdates?.length || 0,
+      threadUpdates: result.threadUpdates?.length || 0,
+      arcChecklistProgress: result.arcChecklistProgress?.completedItemIds?.length || 0
+    });
+
+    if (result.characterUpserts && result.characterUpserts.length > 0) {
+      console.log(`[extractPostChapterUpdates] Character updates:`, result.characterUpserts.map(u => ({ name: u.name, isNew: u.isNew, relationships: u.relationships?.length || 0 })));
+    }
+
+    return result;
+  } catch (error) {
+    logger.error('Post-chapter extraction failed; returning empty extraction', 'ai',
+      error instanceof Error ? error : new Error(String(error)),
+      {
         chapterId: newChapter.id,
-        chapterNumber: newChapter.number,
-        characterUpsertsCount: extraction.characterUpserts.length,
-        characterUpserts: extraction.characterUpserts.map(u => ({
-          name: u.name,
-          hasSet: !!u.set,
-          fieldsInSet: u.set ? Object.keys(u.set) : [],
-          hasAddSkills: !!u.addSkills?.length,
-          hasAddItems: !!u.addItems?.length,
-        })),
-        worldEntryUpsertsCount: extraction.worldEntryUpserts.length,
-        territoryUpsertsCount: extraction.territoryUpserts.length,
-        itemUpdatesCount: extraction.itemUpdates?.length || 0,
-        techniqueUpdatesCount: extraction.techniqueUpdates?.length || 0,
-      });
+      }
+    );
 
-      return extraction;
-    },
-    `postchapter-extract-${state.id}-${newChapter.number}`
-  );
+    return {
+      characterUpserts: [],
+      worldEntryUpserts: [],
+      territoryUpserts: [],
+      itemUpdates: [],
+      techniqueUpdates: [],
+      scenes: [],
+      arcChecklistProgress: null,
+      antagonistUpdates: [],
+      systemUpdates: [],
+      threadUpdates: [],
+    };
+  }
 };
 
 export const planArc = async (state: NovelState) => {
@@ -2056,4 +2050,3 @@ export const editChapter = async (
 };
 
 // Portrait generation and TTS features use Grok for all AI operations
-

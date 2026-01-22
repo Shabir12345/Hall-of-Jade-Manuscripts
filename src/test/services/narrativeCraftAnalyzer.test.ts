@@ -142,6 +142,7 @@ describe('Narrative Craft Analyzer', () => {
         resultingValue: 'Knowledgeable',
         causalityType: 'Revelation',
       };
+      mockChapter.content = 'Alex decided he must investigate the core today. He had a plan to find the truth, but the path was dangerous. Then, he moved forward into the shadows.';
       const analysis = validateSceneIntent(mockChapter, mockState);
       expect(analysis.valueShift).toBe(true);
       expect(analysis.score).toBeGreaterThan(60);
@@ -168,7 +169,7 @@ describe('Narrative Craft Analyzer', () => {
 
   describe('analyzeDialogueNaturalness', () => {
     it('should detect interruptions in dialogue', () => {
-      const content = '"I was thinking—" "Don't say it," she interrupted. "But—" "No!"';
+      const content = '"I was thinking—" "Don\'t say it," she interrupted. "But—" "No!"';
       const analysis = analyzeDialogueNaturalness(content);
       expect(analysis.interruptions).toBeGreaterThan(0);
       expect(analysis.score).toBeGreaterThan(50);
@@ -204,21 +205,28 @@ describe('Narrative Craft Analyzer', () => {
     });
 
     it('should detect repetitive patterns', () => {
-      mockChapter.content = 'He walked. He walked. He walked. He walked.';
+      mockChapter.content = 'Suddenly everything changed. Suddenly everything changed. Suddenly everything changed. Suddenly everything changed. This is a filler. This is another filler. This is a third filler. This is a fourth filler. This is a fifth filler. This is a sixth filler. This is a seventh filler. This is an eighth filler.';
       const score = analyzeNarrativeCraft(mockChapter, mockState);
       expect(score.repetitivePatterns.length).toBeGreaterThan(0);
     });
 
     it('should detect overexplanation', () => {
-      mockChapter.content = 'In other words, to clarify, that is to say, to explain further, what I mean is...';
+      mockChapter.content = 'In other words, in other words, in other words, to clarify, to clarify, to clarify, that is to say, that is to say, that is to say...';
       const score = analyzeNarrativeCraft(mockChapter, mockState);
       expect(score.overexplanationFlags.length).toBeGreaterThan(0);
     });
 
     it('should detect neutral prose', () => {
-      mockChapter.content = 'It was. There was. It is. There are. It was. There were.';
+      mockChapter.id = 'final-neutral-prose-test-v5';
+      mockChapter.content = 'It was a cold winter night in the village. There was a sense of silence everywhere. It is known that the stars shine brighter here. There are many legends told by the elders. It was a truth that they all shared. There were no doubts remaining for anyone.';
       const score = analyzeNarrativeCraft(mockChapter, mockState);
       expect(score.neutralProseFlags.length).toBeGreaterThan(0);
+    });
+
+    it('should detect telegraphic prose', () => {
+      mockChapter.content = 'Throne chamber tremble. Core fracture. Alex felt energy. System analyze. Analysis initiate.';
+      const score = analyzeNarrativeCraft(mockChapter, mockState);
+      expect(score.neutralProseFlags.some(f => f.includes('Telegraphic'))).toBe(true);
     });
   });
 });

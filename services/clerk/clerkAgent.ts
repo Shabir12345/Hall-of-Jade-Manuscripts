@@ -15,7 +15,7 @@ import {
   DEFAULT_CLERK_CONFIG,
   ContinuityFlag,
 } from '../../types/clerk';
-import { geminiJson } from '../geminiService';
+import { deepseekJson } from '../deepseekService';
 import { logger } from '../loggingService';
 import { buildLoreBible } from '../loreBible/loreBibleService';
 import { CLERK_SYSTEM_PROMPT, buildClerkUserPrompt, buildQuickClerkPrompt } from './clerkPrompts';
@@ -56,9 +56,9 @@ export async function runClerkAudit(
     // Build the prompt
     const userPrompt = buildClerkUserPrompt(currentBible, chapter, state);
 
-    // Call Gemini
-    const rawResponse = await geminiJson<ClerkRawResponse>({
-      model: finalConfig.model,
+    // Call DeepSeek
+    const rawResponse = await deepseekJson<ClerkRawResponse>({
+      model: 'deepseek-chat', // Explicitly use deepseek-chat
       system: CLERK_SYSTEM_PROMPT,
       user: userPrompt,
       temperature: finalConfig.temperature,
@@ -90,7 +90,7 @@ export async function runClerkAudit(
     let validation = null;
     if (finalConfig.validateDeltas) {
       validation = validateClerkDelta(delta, currentBible, state);
-      
+
       if (!validation.valid) {
         logger.warn('Clerk delta validation found issues', 'clerk', {
           errors: validation.errors,
@@ -165,8 +165,8 @@ export async function runQuickClerkAudit(
     const currentBible = buildLoreBible(state, chapter.number - 1);
     const userPrompt = buildQuickClerkPrompt(currentBible, chapter);
 
-    const rawResponse = await geminiJson<ClerkRawResponse>({
-      model: finalConfig.model,
+    const rawResponse = await deepseekJson<ClerkRawResponse>({
+      model: 'deepseek-chat',
       system: CLERK_SYSTEM_PROMPT,
       user: userPrompt,
       temperature: finalConfig.temperature,
@@ -228,7 +228,7 @@ function normalizeType(type: unknown): ContinuityFlag['type'] {
     'relationship_change', 'timeline_issue', 'plot_hole_risk',
     'unresolved_promise', 'cultivation_jump'
   ];
-  
+
   if (typeof type === 'string' && validTypes.includes(type as ContinuityFlag['type'])) {
     return type as ContinuityFlag['type'];
   }
@@ -250,12 +250,12 @@ function normalizeSeverity(severity: unknown): ContinuityFlag['severity'] {
  */
 export function hasMeaningfulUpdates(delta: ClerkDelta): boolean {
   const updates = delta.updates;
-  
+
   // Check protagonist updates
   if (updates.protagonist) {
     const p = updates.protagonist;
     if (p.cultivation || p.techniques?.length || p.inventory?.length ||
-        p.emotionalState || p.physicalState || p.location || p.identity) {
+      p.emotionalState || p.physicalState || p.location || p.identity) {
       return true;
     }
   }
@@ -363,7 +363,7 @@ export function mergeDeltas(deltas: ClerkDelta[]): ClerkDelta {
  */
 function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
   const result = { ...target };
-  
+
   for (const key of Object.keys(source)) {
     const sourceValue = source[key];
     const targetValue = target[key];
@@ -379,7 +379,7 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
               if (typeof m !== 'object' || m === null) return false;
               const mObj = m as Record<string, unknown>;
               return (mObj.id && mObj.id === itemObj.id) ||
-                     (mObj.name && mObj.name === itemObj.name);
+                (mObj.name && mObj.name === itemObj.name);
             });
             if (existingIndex >= 0) {
               merged[existingIndex] = { ...merged[existingIndex] as object, ...itemObj };

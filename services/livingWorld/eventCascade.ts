@@ -17,7 +17,7 @@ import {
   WorldSimulationConfig,
   DEFAULT_WORLD_SIMULATION_CONFIG,
 } from '../../types/livingWorld';
-import { geminiJson } from '../geminiService';
+import { deepseekJson } from '../deepseekService';
 import { logger } from '../loggingService';
 import { generateUUID } from '../../utils/uuid';
 
@@ -60,7 +60,7 @@ const CASCADE_RULES: CascadeRule[] = [
     delayChapters: [10, 30],
     descriptionTemplate: 'The fall of {entity} has destabilized the region, leading to...',
   },
-  
+
   // War cascades
   {
     triggerEventType: 'war_outbreak',
@@ -78,7 +78,7 @@ const CASCADE_RULES: CascadeRule[] = [
     delayChapters: [5, 20],
     descriptionTemplate: 'In the aftermath of the war...',
   },
-  
+
   // Death cascades
   {
     triggerEventType: 'npc_death',
@@ -88,7 +88,7 @@ const CASCADE_RULES: CascadeRule[] = [
     delayChapters: [3, 15],
     descriptionTemplate: 'The death of {entity} has triggered...',
   },
-  
+
   // Alliance cascades
   {
     triggerEventType: 'alliance_broken',
@@ -106,7 +106,7 @@ const CASCADE_RULES: CascadeRule[] = [
     delayChapters: [10, 30],
     descriptionTemplate: 'The new alliance has shifted the balance...',
   },
-  
+
   // Treasure cascades
   {
     triggerEventType: 'treasure_discovery',
@@ -116,7 +116,7 @@ const CASCADE_RULES: CascadeRule[] = [
     delayChapters: [5, 20],
     descriptionTemplate: 'The discovery of {entity} has caused conflict...',
   },
-  
+
   // Calamity cascades
   {
     triggerEventType: 'calamity',
@@ -126,7 +126,7 @@ const CASCADE_RULES: CascadeRule[] = [
     delayChapters: [1, 10],
     descriptionTemplate: 'The calamity has left devastation in its wake...',
   },
-  
+
   // Advancement cascades
   {
     triggerEventType: 'npc_advancement',
@@ -136,7 +136,7 @@ const CASCADE_RULES: CascadeRule[] = [
     delayChapters: [10, 30],
     descriptionTemplate: 'The breakthrough of {entity} has changed the power balance...',
   },
-  
+
   // Secret revealed cascades
   {
     triggerEventType: 'secret_revealed',
@@ -171,28 +171,28 @@ export function checkForCascades(
   currentChapter: number
 ): PendingCascade[] {
   const pendingCascades: PendingCascade[] = [];
-  
+
   // Find applicable cascade rules
-  const applicableRules = CASCADE_RULES.filter(rule => 
+  const applicableRules = CASCADE_RULES.filter(rule =>
     rule.triggerEventType === event.eventType &&
     getImpactLevel(event.impact) >= getImpactLevel(rule.minimumImpact)
   );
-  
+
   for (const rule of applicableRules) {
     // Check probability
     if (Math.random() > rule.cascadeProbability) {
       continue;
     }
-    
+
     // Select a follow-up event type
     const followUpType = rule.possibleFollowUps[
       Math.floor(Math.random() * rule.possibleFollowUps.length)
     ];
-    
+
     // Calculate activation chapter
-    const delay = rule.delayChapters[0] + 
+    const delay = rule.delayChapters[0] +
       Math.floor(Math.random() * (rule.delayChapters[1] - rule.delayChapters[0]));
-    
+
     // Create pending cascade
     pendingCascades.push({
       id: generateUUID(),
@@ -209,13 +209,13 @@ export function checkForCascades(
       processed: false,
     });
   }
-  
+
   logger.debug('Checked event for cascades', 'livingWorld', {
     eventType: event.eventType,
     impact: event.impact,
     cascadesTriggered: pendingCascades.length,
   });
-  
+
   return pendingCascades;
 }
 
@@ -241,21 +241,21 @@ export async function processPendingCascades(
   currentChapter: number,
   config: WorldSimulationConfig = DEFAULT_WORLD_SIMULATION_CONFIG
 ): Promise<GlobalWorldEvent[]> {
-  const readyToActivate = pendingCascades.filter(c => 
+  const readyToActivate = pendingCascades.filter(c =>
     !c.processed && c.activationChapter <= currentChapter
   );
-  
+
   if (readyToActivate.length === 0) {
     return [];
   }
-  
+
   logger.info('Processing pending cascade events', 'livingWorld', {
     count: readyToActivate.length,
     chapter: currentChapter,
   });
-  
+
   const generatedEvents: GlobalWorldEvent[] = [];
-  
+
   for (const cascade of readyToActivate) {
     try {
       const event = await generateCascadeEvent(state, cascade, config);
@@ -270,7 +270,7 @@ export async function processPendingCascades(
       });
     }
   }
-  
+
   return generatedEvents;
 }
 
@@ -283,9 +283,9 @@ async function generateCascadeEvent(
   config: WorldSimulationConfig
 ): Promise<GlobalWorldEvent | null> {
   const prompt = buildCascadePrompt(state, cascade);
-  
+
   try {
-    const response = await geminiJson<{
+    const response = await deepseekJson<{
       description: string;
       summary: string;
       affectedEntities: Array<{ name: string; type: string }>;
@@ -300,11 +300,11 @@ async function generateCascadeEvent(
       temperature: config.temperature,
       maxTokens: 2048,
     });
-    
+
     if (!response.description) {
       return null;
     }
-    
+
     const event: GlobalWorldEvent = {
       id: generateUUID(),
       novelId: state.id,
@@ -325,17 +325,17 @@ async function generateCascadeEvent(
       createdAt: Date.now(),
       integratedIntoNarrative: false,
     };
-    
+
     logger.info('Generated cascade event', 'livingWorld', {
       cascadeId: cascade.id,
       sourceType: cascade.sourceEventType,
       resultType: event.eventType,
     });
-    
+
     return event;
-    
+
   } catch (error) {
-    logger.error('Failed to generate cascade event', 'livingWorld', 
+    logger.error('Failed to generate cascade event', 'livingWorld',
       error instanceof Error ? error : undefined
     );
     return null;
@@ -373,12 +373,12 @@ function buildCascadePrompt(state: NovelState, cascade: PendingCascade): string 
     .filter(w => w.category === 'Sects')
     .slice(0, 5)
     .map(s => s.title);
-  
+
   const characters = state.characterCodex
     .filter(c => !c.isProtagonist && c.status === 'Alive')
     .slice(0, 5)
     .map(c => `${c.name} (${c.currentCultivation || 'Unknown'})`);
-  
+
   return `=== CASCADE EVENT GENERATION ===
 
 TRIGGERING EVENT: ${cascade.sourceEventType}
@@ -465,14 +465,14 @@ export function addPendingCascades(novelId: string, newCascades: PendingCascade[
  */
 export function cleanupProcessedCascades(novelId: string, keepCount: number = 50): void {
   const cascades = getPendingCascades(novelId);
-  
+
   // Keep unprocessed + most recent processed
   const unprocessed = cascades.filter(c => !c.processed);
   const processed = cascades
     .filter(c => c.processed)
     .sort((a, b) => b.activationChapter - a.activationChapter)
     .slice(0, keepCount);
-  
+
   savePendingCascades(novelId, [...unprocessed, ...processed]);
 }
 
@@ -485,14 +485,14 @@ export function getCascadeStats(novelId: string): {
   byType: Record<string, number>;
 } {
   const cascades = getPendingCascades(novelId);
-  
+
   const pending = cascades.filter(c => !c.processed).length;
   const processed = cascades.filter(c => c.processed).length;
-  
+
   const byType: Record<string, number> = {};
   for (const cascade of cascades) {
     byType[cascade.cascadeType] = (byType[cascade.cascadeType] || 0) + 1;
   }
-  
+
   return { pending, processed, byType };
 }

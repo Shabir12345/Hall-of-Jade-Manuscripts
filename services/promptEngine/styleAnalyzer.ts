@@ -13,7 +13,7 @@ import { generateUUID } from '../../utils/uuid';
  */
 export function getStyleGuidelines(state: NovelState): string {
   const styleProfile = getCachedStyleProfile(state);
-  
+
   if (state.chapters.length === 0) {
     return 'No existing chapters to analyze. Use standard Xianxia/Xuanhuan writing style with rich descriptions and vivid imagery.';
   }
@@ -21,7 +21,7 @@ export function getStyleGuidelines(state: NovelState): string {
   const { metrics, styleGuidelines } = styleProfile;
 
   let guidelines = 'WRITING STYLE GUIDELINES (Maintain Consistency):\n\n';
-  
+
   guidelines += `Tone: ${metrics.tone.charAt(0).toUpperCase() + metrics.tone.slice(1)}\n`;
   guidelines += `Average Sentence Length: ${metrics.averageSentenceLength} words\n`;
   guidelines += `Pacing Pattern: ${metrics.pacingPattern.charAt(0).toUpperCase() + metrics.pacingPattern.slice(1)}\n`;
@@ -94,7 +94,7 @@ export function shouldEmphasizeStyleConsistency(state: NovelState): boolean {
   if (state.chapters.length < 3) {
     return false; // Not enough chapters to establish style
   }
-  
+
   const styleProfile = getCachedStyleProfile(state);
   return styleProfile.consistencyScore > 0.5; // Style is established
 }
@@ -207,11 +207,11 @@ function analyzeSentenceComplexity(chapters: Chapter[]): {
   variance: number;
 } {
   const allSentences = chapters
-    .map(ch => ch.content.split(/[.!?]+/).filter(s => s.trim().length > 0))
+    .map(ch => (ch.content || '').split(/[.!?]+/).filter(s => s.trim().length > 0))
     .flat();
-  
+
   const sentenceLengths = allSentences.map(s => s.trim().split(/\s+/).length);
-  
+
   if (sentenceLengths.length === 0) {
     return { min: 10, max: 20, average: 15, variance: 5 };
   }
@@ -219,7 +219,7 @@ function analyzeSentenceComplexity(chapters: Chapter[]): {
   const min = Math.min(...sentenceLengths);
   const max = Math.max(...sentenceLengths);
   const average = sentenceLengths.reduce((sum, len) => sum + len, 0) / sentenceLengths.length;
-  
+
   // Calculate variance
   const variance = sentenceLengths.reduce((sum, len) => {
     const diff = len - average;
@@ -243,7 +243,7 @@ function analyzeEmotionalToneRange(chapters: Chapter[]): {
   intensityRange: [number, number];
 } {
   const allContent = chapters.map(ch => ch.content).join(' ').toLowerCase();
-  
+
   // Emotional tone keywords
   const toneKeywords: Record<string, string[]> = {
     formal: ['thus', 'therefore', 'hence', 'whereas', 'furthermore', 'moreover', 'indeed', 'consequently'],
@@ -271,7 +271,7 @@ function analyzeEmotionalToneRange(chapters: Chapter[]): {
   const intensityScore = (toneScores.dramatic || 0) + (toneScores.emotional || 0);
   const maxIntensity = chapters.length * 10; // Rough estimate
   const intensity = Math.min(100, Math.max(0, (intensityScore / maxIntensity) * 100));
-  
+
   return {
     primary,
     secondary,
@@ -284,7 +284,7 @@ function analyzeEmotionalToneRange(chapters: Chapter[]): {
  */
 function extractThematicFocus(chapters: Chapter[], state: NovelState): string[] {
   const themes: string[] = [];
-  
+
   // Extract from grand saga if available
   if (state.grandSaga && state.grandSaga.length > 20) {
     const sagaLower = state.grandSaga.toLowerCase();
@@ -326,7 +326,7 @@ function extractStylisticQuirks(chapters: Chapter[]): {
 
   // Detect stylistic patterns
   const sentences = allContent.split(/[.!?]+/).filter(s => s.trim().length > 0);
-  
+
   // Check for sentence fragments (intentional imperfections)
   const fragmentPattern = /^[a-z][^.!?]*$/;
   const fragments = sentences.filter(s => fragmentPattern.test(s.trim()));
@@ -362,11 +362,11 @@ function extractStylisticQuirks(chapters: Chapter[]): {
       wordFreq[word] = (wordFreq[word] || 0) + 1;
     }
   });
-  
+
   const repeatedWords = Object.entries(wordFreq)
     .filter(([_, count]) => count > chapters.length * 3)
     .map(([word]) => word);
-  
+
   if (repeatedWords.length > 0 && repeatedWords.length < 10) {
     quirks.push(`Strategic repetition of key words: ${repeatedWords.slice(0, 3).join(', ')}`);
   }
@@ -387,13 +387,13 @@ function analyzeVocabularyPreferences(chapters: Chapter[]): {
 } {
   const allContent = chapters.map(ch => ch.content).join(' ');
   const words = allContent.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-  
+
   // Common words (appear frequently)
   const wordFreq: Record<string, number> = {};
   words.forEach(word => {
     wordFreq[word] = (wordFreq[word] || 0) + 1;
   });
-  
+
   const sortedWords = Object.entries(wordFreq)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 20)
@@ -409,12 +409,12 @@ function analyzeVocabularyPreferences(chapters: Chapter[]): {
   // Formality level
   const formalIndicators = ['thus', 'therefore', 'hence', 'whereas', 'furthermore', 'moreover'];
   const casualIndicators = ["'", "don't", "can't", "won't", "gonna", "wanna"];
-  
+
   const formalCount = formalIndicators.reduce((count, ind) => {
     const matches = allContent.match(new RegExp(ind, 'gi'));
     return count + (matches ? matches.length : 0);
   }, 0);
-  
+
   const casualCount = casualIndicators.reduce((count, ind) => {
     const matches = allContent.match(new RegExp(ind, 'gi'));
     return count + (matches ? matches.length : 0);
@@ -444,7 +444,7 @@ export function enforceVoiceConsistency(
 
   // Build voice consistency constraints
   const constraints: string[] = [];
-  
+
   // Sentence complexity constraints
   const { min, max, average } = voiceProfile.preferredSentenceComplexity;
   constraints.push(
@@ -500,8 +500,8 @@ export function enforceVoiceConsistency(
     ...prompt,
     specificConstraints: enhancedConstraints,
     // Add voice profile sample passages if available
-    userInstruction: prompt.userInstruction + 
-      (voiceProfile.stylisticQuirks.length > 0 
+    userInstruction: prompt.userInstruction +
+      (voiceProfile.stylisticQuirks.length > 0
         ? `\n\nVOICE CONSISTENCY: Preserve the authorial voice characteristics identified in the style profile.`
         : ''),
   };

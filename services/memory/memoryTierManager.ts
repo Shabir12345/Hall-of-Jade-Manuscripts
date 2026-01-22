@@ -10,7 +10,7 @@
  * for chapter generation.
  */
 
-import { NovelState, Chapter, Character } from '../../types';
+import { NovelState } from '../../types';
 import { LoreBible } from '../../types/loreBible';
 import { logger } from '../loggingService';
 import { buildLoreBible, formatLoreBibleForPrompt, formatLoreBibleCompact } from '../loreBible/loreBibleService';
@@ -189,11 +189,10 @@ async function gatherMidTermMemory(
   state: NovelState,
   options: MemoryGatherOptions
 ): Promise<MidTermContext> {
-  const currentChapter = state.chapters.length;
   const maxArcs = options.maxArcMemories || 3;
   
   // Get relevant arc memories
-  const arcMemories = getRelevantArcMemories(state, currentChapter, maxArcs);
+  const arcMemories = getRelevantArcMemories(state, state.chapters.length, maxArcs);
   
   // Format arc context
   const formattedContext = formatArcMemoriesCompact(arcMemories);
@@ -203,7 +202,7 @@ async function gatherMidTermMemory(
   const activeArcSummary = activeArc ? activeArc.summary : 'No active arc.';
   
   // Build character states summary
-  const characterStates = buildCharacterStatesSummary(state, currentChapter);
+  const characterStates = buildCharacterStatesSummary(state);
   
   // Build thread status summary
   const threadStatus = buildThreadStatusSummary(state);
@@ -225,7 +224,7 @@ async function gatherMidTermMemory(
 /**
  * Build character states summary for mid-term context
  */
-function buildCharacterStatesSummary(state: NovelState, currentChapter: number): string {
+function buildCharacterStatesSummary(state: NovelState): string {
   const sections: string[] = [];
   sections.push('[CHARACTER STATES]');
   
@@ -418,6 +417,7 @@ function formatSearchResults(results: {
 
 /**
  * Main function to gather complete memory context
+ * OPTIMIZED: Parallel execution with early termination for performance
  */
 export async function gatherMemoryContext(
   state: NovelState,
@@ -426,48 +426,184 @@ export async function gatherMemoryContext(
   const startTime = Date.now();
   const opts = { ...DEFAULT_OPTIONS, ...options };
   
-  logger.info('Gathering hierarchical memory context', 'memoryTierManager', {
+  logger.info('Gathering hierarchical memory context (OPTIMIZED)', 'memoryTierManager', {
     novelId: state.id,
     currentChapter: state.chapters.length,
   });
 
-  // Gather all three tiers in parallel
-  const [shortTerm, midTerm, longTerm] = await Promise.all([
+  // OPTIMIZATION: Run all three tiers in parallel with timeout protection
+  const memoryPromises = [
     gatherShortTermMemory(state, opts),
     gatherMidTermMemory(state, opts),
     gatherLongTermMemory(state, opts),
-  ]);
+  ];
 
-  // Build Lore Bible
-  const loreBible = buildLoreBible(state, state.chapters.length);
-  const formattedLoreBible = opts.compactFormat 
-    ? formatLoreBibleCompact(loreBible)
-    : formatLoreBibleForPrompt(loreBible);
+  // Add timeout protection (10 seconds max per tier)
+  const timeoutMs = 10000;
+  const timeoutPromise = (tier: string) => new Promise((_, reject) => 
+    setTimeout(() => reject(new Error(`${tier} memory timeout`)), timeoutMs)
+  );
 
-  // Calculate total token count
-  const loreBibleTokens = estimateTokens(formattedLoreBible);
-  const totalTokenCount = shortTerm.tokenCount + midTerm.tokenCount + 
-                          longTerm.tokenCount + loreBibleTokens;
+  try {
+    // Race each memory tier against timeout
+    const [shortTerm, midTerm, longTerm] = await Promise.allSettled([
+      Promise.race([memoryPromises[0], timeoutPromise('Short-term')]),
+      Promise.race([memoryPromises[1], timeoutPromise('Mid-term')]),
+      Promise.race([memoryPromises[2], timeoutPromise('Long-term')]),
+    ]);
 
-  const retrievalDuration = Date.now() - startTime;
+    // Handle settled results, fallback to empty context on failure
+    const finalShortTerm = shortTerm.status === 'fulfilled' ? shortTerm.value as ShortTermContext : createEmptyShortTermContext();
+    const finalMidTerm = midTerm.status === 'fulfilled' ? midTerm.value as MidTermContext : createEmptyMidTermContext();
+    const finalLongTerm = longTerm.status === 'fulfilled' ? longTerm.value as LongTermContext : createEmptyLongTermContext();
 
-  logger.info('Memory context gathered', 'memoryTierManager', {
-    shortTermTokens: shortTerm.tokenCount,
-    midTermTokens: midTerm.tokenCount,
-    longTermTokens: longTerm.tokenCount,
-    loreBibleTokens,
-    totalTokenCount,
-    retrievalDuration,
-  });
+    // Build Lore Bible in parallel to memory gathering
+    const loreBiblePromise = buildLoreBible(state, state.chapters.length);
+    const loreBible = await Promise.race([loreBiblePromise, 
+      new Promise(resolve => setTimeout(() => resolve(createEmptyLoreBible()), 5000))
+    ]) as LoreBible;
+    
+    const formattedLoreBible = opts.compactFormat 
+      ? formatLoreBibleCompact(loreBible)
+      : formatLoreBibleForPrompt(loreBible);
 
+    // Calculate total token count
+    const loreBibleTokens = estimateTokens(formattedLoreBible);
+    const totalTokenCount = finalShortTerm.tokenCount + finalMidTerm.tokenCount + 
+                            finalLongTerm.tokenCount + loreBibleTokens;
+
+    const retrievalDuration = Date.now() - startTime;
+
+    logger.info('Memory context gathered (OPTIMIZED)', 'memoryTierManager', {
+      shortTermTokens: finalShortTerm.tokenCount,
+      midTermTokens: finalMidTerm.tokenCount,
+      longTermTokens: finalLongTerm.tokenCount,
+      loreBibleTokens,
+      totalTokenCount,
+      retrievalDuration,
+      timeouts: [shortTerm.status, midTerm.status, longTerm.status].filter(s => s === 'rejected').length,
+    });
+
+    return {
+      shortTerm: finalShortTerm,
+      midTerm: finalMidTerm,
+      longTerm: finalLongTerm,
+      loreBible,
+      formattedLoreBible,
+      totalTokenCount,
+      retrievalDuration,
+    };
+  } catch (error) {
+    logger.error('Memory context gathering failed, using fallbacks', 'memoryTierManager', error instanceof Error ? error : new Error(String(error)));
+    
+    // Return empty contexts as ultimate fallback
+    const emptyContext = {
+      shortTerm: createEmptyShortTermContext(),
+      midTerm: createEmptyMidTermContext(), 
+      longTerm: createEmptyLongTermContext(),
+      loreBible: createEmptyLoreBible(),
+      formattedLoreBible: '',
+      totalTokenCount: 0,
+      retrievalDuration: Date.now() - startTime,
+    };
+    
+    return emptyContext;
+  }
+}
+
+/**
+ * Create empty short-term context fallback
+ */
+function createEmptyShortTermContext(): ShortTermContext {
   return {
-    shortTerm,
-    midTerm,
-    longTerm,
-    loreBible,
-    formattedLoreBible,
-    totalTokenCount,
-    retrievalDuration,
+    recentChaptersText: [],
+    chapterNumbers: [],
+    continuityBridge: '',
+    previousEnding: '',
+    styleProfile: '',
+    tokenCount: 0,
+  };
+}
+
+/**
+ * Create empty mid-term context fallback
+ */
+function createEmptyMidTermContext(): MidTermContext {
+  return {
+    arcMemories: [],
+    formattedContext: '',
+    activeArcSummary: '',
+    characterStates: '',
+    threadStatus: '',
+    tokenCount: 0,
+  };
+}
+
+/**
+ * Create empty long-term context fallback
+ */
+function createEmptyLongTermContext(): LongTermContext {
+  return {
+    searchResults: {
+      characters: [],
+      worldEntries: [],
+      plotElements: [],
+      powerElements: [],
+    },
+    formattedSearchContext: '',
+    queriesUsed: [],
+    vectorDbAvailable: false,
+    tokenCount: 0,
+  };
+}
+
+/**
+ * Create empty lore bible fallback
+ */
+function createEmptyLoreBible(): LoreBible {
+  return {
+    novelId: '',
+    asOfChapter: 0,
+    protagonist: {
+      identity: {
+        name: '',
+        aliases: [],
+        sect: '',
+      },
+      cultivation: {
+        realm: '',
+        stage: '',
+        foundationQuality: '',
+      },
+      techniques: [],
+      inventory: {
+        equipped: [],
+        storageRing: [],
+      },
+      lastUpdatedChapter: 0,
+    },
+    majorCharacters: [],
+    worldState: {
+      currentRealm: '',
+      currentLocation: '',
+      currentSituation: '',
+    },
+    narrativeAnchors: {
+      lastMajorEvent: '',
+      lastMajorEventChapter: 0,
+      currentObjective: '',
+      activeQuests: [],
+      pendingPromises: [],
+    },
+    powerSystem: {
+      currentProtagonistRank: '',
+      knownLevelHierarchy: [],
+      powerGaps: [],
+    },
+    activeConflicts: [],
+    karmaDebts: [],
+    updatedAt: Date.now(),
+    version: 1,
   };
 }
 

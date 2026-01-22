@@ -6,11 +6,13 @@
  * Now includes the Clerk Agent for Lore Bible updates (Heavenly Record-Keeper)
  */
 
-import { NovelState, Chapter, PostChapterExtraction, StoryThread } from '../types';
+import { NovelState, Chapter, StoryThread } from '../types';
 import { processThreadUpdates } from './storyThreadService';
 import { saveStoryThread, saveThreadProgressionEvent } from './threadService';
 import { getEntityStateTracker } from './entityStateTracker';
 import { logger } from './loggingService';
+import { detectThreadsFromChapter } from './automaticThreadDetector';
+import { generateUUID } from '../utils/uuid';
 
 // Clerk Agent imports
 import { runClerkAudit, hasMeaningfulUpdates, getDeltaSummary } from './clerk/clerkAgent';
@@ -21,6 +23,40 @@ import { ClerkConfig, DEFAULT_CLERK_CONFIG } from '../types/clerk';
  * Update context tracking after chapter generation
  * @param clerkConfig - Optional configuration for the Clerk agent
  */
+// Define PostChapterExtraction interface locally
+interface PostChapterExtraction {
+  threadUpdates?: Array<{
+    title?: unknown;
+    type?: unknown;
+    action?: unknown;
+    threadId?: unknown;
+    description?: unknown;
+    priority?: unknown;
+    status?: unknown;
+    eventType?: unknown;
+    eventDescription?: unknown;
+    significance?: unknown;
+    relatedEntityName?: unknown;
+    relatedEntityType?: unknown;
+    resolutionNotes?: unknown;
+    satisfactionScore?: unknown;
+  }>;
+  characterUpserts?: Array<{
+    name?: string;
+    set?: {
+      age?: string;
+      personality?: string;
+      currentCultivation?: string;
+      status?: string;
+      appearance?: string;
+      background?: string;
+      goals?: string[];
+      flaws?: string[];
+      notes?: string;
+    };
+  }>;
+}
+
 export async function updateContextAfterChapter(
   state: NovelState,
   newChapter: Chapter,
@@ -28,7 +64,125 @@ export async function updateContextAfterChapter(
   clerkConfig?: Partial<ClerkConfig>
 ): Promise<void> {
   try {
-    // Update thread progression events
+    // =========================================================================
+    // AUTOMATIC THREAD DETECTION
+    // Analyze chapter content to detect new threads and update existing ones
+    // =========================================================================
+    const automaticDetection = await detectThreadsFromChapter(
+      newChapter,
+      state,
+      state.storyThreads || []
+    );
+
+    // Process automatically detected threads
+    if (automaticDetection.detectedThreads.length > 0) {
+      logger.info(`Processing ${automaticDetection.detectedThreads.length} automatically detected threads`, 'threadDetector');
+      
+      const autoThreadUpdates = automaticDetection.detectedThreads.map(detected => ({
+        title: detected.title,
+        type: detected.type,
+        action: 'create' as const,
+        description: detected.description,
+        priority: detected.priority,
+        status: 'active' as const,
+        eventType: 'introduced' as const,
+        eventDescription: `Automatically detected: ${detected.description}`,
+        significance: 'minor' as const,
+        relatedEntityName: detected.relatedCharacters[0],
+        relatedEntityType: 'character',
+      }));
+
+      const autoThreadResults = processThreadUpdates(
+        autoThreadUpdates,
+        state.storyThreads || [],
+        state.id,
+        newChapter.number,
+        newChapter.id,
+        state
+      );
+
+      // Save automatically detected threads
+      for (const result of autoThreadResults) {
+        try {
+          await saveStoryThread(result.thread);
+          
+          if (result.progressionEvent) {
+            await saveThreadProgressionEvent(result.progressionEvent);
+          }
+          
+          logger.debug(`Created auto-detected thread: ${result.thread.title}`, 'threadDetector');
+        } catch (error) {
+          console.error(`Failed to save auto-detected thread ${result.thread.id}:`, error);
+        }
+      }
+    }
+
+    // Process automatically detected thread progressions/resolutions
+    if (automaticDetection.updatedThreads.length > 0) {
+      logger.info(`Processing ${automaticDetection.updatedThreads.length} thread updates`, 'threadDetector');
+      
+      for (const update of automaticDetection.updatedThreads) {
+        const existingThread = (state.storyThreads || []).find(t => t.id === update.threadId);
+        if (!existingThread) continue;
+
+        let updatedThread: StoryThread;
+        
+        if (update.eventType === 'resolved') {
+          updatedThread = {
+            ...existingThread,
+            status: 'resolved',
+            resolvedChapter: newChapter.number,
+            lastUpdatedChapter: newChapter.number,
+            resolutionNotes: `Automatically detected resolution: ${update.evidence.join(', ')}`,
+            chaptersInvolved: [...(existingThread.chaptersInvolved || []), newChapter.number].filter((v, i, a) => a.indexOf(v) === i),
+            updatedAt: Date.now(),
+          };
+        } else {
+          updatedThread = {
+            ...existingThread,
+            lastUpdatedChapter: newChapter.number,
+            chaptersInvolved: [...(existingThread.chaptersInvolved || []), newChapter.number].filter((v, i, a) => a.indexOf(v) === i),
+            progressionNotes: [
+              ...(existingThread.progressionNotes || []),
+              {
+                chapterNumber: newChapter.number,
+                note: `Automatically detected progression: ${update.evidence.join(', ')}`,
+                significance: 'minor',
+              },
+            ],
+            updatedAt: Date.now(),
+          };
+        }
+
+        try {
+          await saveStoryThread(updatedThread);
+          
+          const progressionEvent = {
+            id: generateUUID(),
+            threadId: updatedThread.id,
+            chapterNumber: newChapter.number,
+            chapterId: newChapter.id,
+            eventType: update.eventType,
+            description: update.evidence.join(', '),
+            significance: 'minor' as const,
+            createdAt: Date.now(),
+          };
+          
+          await saveThreadProgressionEvent(progressionEvent);
+          
+          logger.debug(`Updated thread ${update.eventType}: ${updatedThread.title}`, 'threadDetector');
+        } catch (error) {
+          console.error(`Failed to update thread ${updatedThread.id}:`, error);
+        }
+      }
+    }
+
+    // Log automatic detection summary
+    if (automaticDetection.summary) {
+      logger.info(automaticDetection.summary, 'threadDetector');
+    }
+
+    // Update thread progression events from manual extraction
     if (extraction.threadUpdates && extraction.threadUpdates.length > 0) {
       const threadResults = processThreadUpdates(
         extraction.threadUpdates,

@@ -15,7 +15,7 @@ import {
   getMaxThreadAge,
   getWarningAge,
   determineArcPosition,
-  calculateThreadDensity as calcDensity,
+  calculateThreadDensity,
   calculateAverageResolutionTime,
   getProgressionSuggestion,
   calculateStoryHealthScore,
@@ -167,9 +167,7 @@ export function analyzeThreadHealth(
     : 0;
 
   // Calculate thread density (threads per chapter)
-  analysis.threadDensity = currentChapter > 0
-    ? Math.round((totalThreads / currentChapter) * 10) / 10
-    : 0;
+  analysis.threadDensity = calculateThreadDensity(threads, currentChapter);
 
   // Calculate average thread lifespan by type
   const lifespanByType: Record<string, number[]> = {};

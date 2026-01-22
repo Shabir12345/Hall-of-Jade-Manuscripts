@@ -28,7 +28,8 @@ import {
   EventImpact,
   DEFAULT_WORLD_SIMULATION_CONFIG,
 } from '../../types/livingWorld';
-import { geminiJson } from '../geminiService';
+import { isLivingWorldPineconeReady, getSimulationCandidates, storeWorldEvents } from './pineconeIntegration';
+import { deepseekJson } from '../deepseekService';
 import { logger } from '../loggingService';
 import { generateUUID } from '../../utils/uuid';
 
@@ -123,7 +124,7 @@ Remember: These events create EMERGENT STORYTELLING. The MC should return to a w
  */
 export function detectSeclusion(chapter: Chapter): SeclusionDetection {
   const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
-  
+
   // Keywords indicating seclusion
   const seclusionKeywords = [
     'closed-door cultivation',
@@ -140,26 +141,26 @@ export function detectSeclusion(chapter: Chapter): SeclusionDetection {
     'years of cultivation',
     'months of cultivation',
   ];
-  
+
   for (const keyword of seclusionKeywords) {
     if (content.includes(keyword)) {
       // Try to extract duration
       const durationMatch = content.match(
         /(\d+)\s*(years?|months?|days?|weeks?)\s*(of\s*)?(seclusion|cultivation|retreat|meditation)/i
       );
-      
+
       const typeMatch = content.includes('closed-door') || content.includes('closed door')
         ? 'closed_door'
         : content.includes('meditat')
-        ? 'meditation'
-        : content.includes('training')
-        ? 'training'
-        : 'retreat';
-      
+          ? 'meditation'
+          : content.includes('training')
+            ? 'training'
+            : 'retreat';
+
       return {
         detected: true,
         type: typeMatch,
-        estimatedDuration: durationMatch 
+        estimatedDuration: durationMatch
           ? `${durationMatch[1]} ${durationMatch[2]}`
           : undefined,
         chapter: chapter.number,
@@ -167,7 +168,7 @@ export function detectSeclusion(chapter: Chapter): SeclusionDetection {
       };
     }
   }
-  
+
   return { detected: false, chapter: chapter.number };
 }
 
@@ -181,11 +182,11 @@ export function detectTimeSkip(
   if (!previousChapter) {
     return { detected: false, chapter: currentChapter.number };
   }
-  
+
   const content = currentChapter.content.toLowerCase();
   const summary = (currentChapter.summary || '').toLowerCase();
   const combinedContent = content + ' ' + summary;
-  
+
   // Time skip indicators
   const timeSkipPatterns = [
     /(\d+)\s*years?\s*(later|passed|have passed|had passed)/i,
@@ -198,7 +199,7 @@ export function detectTimeSkip(
     /(\d+)\s*months?\s*(later|passed|have passed)/i,
     /half\s*a\s*year\s*(later|passed)/i,
   ];
-  
+
   for (const pattern of timeSkipPatterns) {
     const match = combinedContent.match(pattern);
     if (match) {
@@ -208,10 +209,10 @@ export function detectTimeSkip(
       const isSeveral = match[0].toLowerCase().includes('several');
       const isMany = match[0].toLowerCase().includes('many');
       const isHalfYear = match[0].toLowerCase().includes('half a year');
-      
+
       let years = 0;
       let months = 0;
-      
+
       if (isDecade) {
         years = match[0].includes('decades') ? 20 : 10;
       } else if (isSeveral) {
@@ -225,7 +226,7 @@ export function detectTimeSkip(
       } else {
         years = parseInt(timeValue) || 1;
       }
-      
+
       return {
         detected: years >= 1 || months >= 6,
         yearsSkipped: years,
@@ -235,7 +236,7 @@ export function detectTimeSkip(
       };
     }
   }
-  
+
   return { detected: false, chapter: currentChapter.number };
 }
 
@@ -251,7 +252,7 @@ export function shouldRunSimulation(
   if (!config.enabled) {
     return null;
   }
-  
+
   // Check chapter interval trigger
   if (config.chapterInterval > 0 && currentChapter > 0) {
     const chaptersSinceLastSim = currentChapter - lastSimulationChapter;
@@ -263,7 +264,7 @@ export function shouldRunSimulation(
       };
     }
   }
-  
+
   // Check seclusion trigger
   if (config.seclusionTrigger && state.chapters.length > 0) {
     const latestChapter = state.chapters[state.chapters.length - 1];
@@ -276,13 +277,13 @@ export function shouldRunSimulation(
       };
     }
   }
-  
+
   // Check time skip trigger
   if (state.chapters.length >= 2) {
     const latestChapter = state.chapters[state.chapters.length - 1];
     const previousChapter = state.chapters[state.chapters.length - 2];
     const timeSkip = detectTimeSkip(latestChapter, previousChapter);
-    
+
     if (timeSkip.detected && (timeSkip.yearsSkipped || 0) >= config.timeSkipThreshold) {
       return {
         type: 'time_skip',
@@ -291,7 +292,7 @@ export function shouldRunSimulation(
       };
     }
   }
-  
+
   return null;
 }
 
@@ -304,9 +305,9 @@ export function buildWorldStateSnapshot(
   config: WorldSimulationConfig
 ): WorldStateSnapshot {
   const entities: SimulationEntitySnapshot[] = [];
-  
+
   // Add sects from world bible
-  const sects = (state.worldBible || []).filter(w => 
+  const sects = (state.worldBible || []).filter(w =>
     w.category === 'Sects' || w.content.toLowerCase().includes('sect')
   );
   for (const sect of sects.slice(0, 15)) {
@@ -322,9 +323,9 @@ export function buildWorldStateSnapshot(
       isProtected: config.protectedEntityIds.includes(sect.id),
     });
   }
-  
+
   // Add key NPCs (non-protagonist characters)
-  const npcs = (state.characterCodex || []).filter(c => 
+  const npcs = (state.characterCodex || []).filter(c =>
     !c.isProtagonist && c.status === 'Alive'
   );
   for (const npc of npcs.slice(0, 20)) {
@@ -345,7 +346,7 @@ export function buildWorldStateSnapshot(
       isProtected: config.protectedEntityIds.includes(npc.id),
     });
   }
-  
+
   // Add territories
   for (const territory of (state.territories || []).slice(0, 10)) {
     entities.push({
@@ -360,7 +361,7 @@ export function buildWorldStateSnapshot(
       isProtected: config.protectedEntityIds.includes(territory.id),
     });
   }
-  
+
   // Add antagonists
   for (const antagonist of (state.antagonists || []).filter(a => a.status === 'active').slice(0, 10)) {
     entities.push({
@@ -375,28 +376,28 @@ export function buildWorldStateSnapshot(
       isProtected: config.protectedEntityIds.includes(antagonist.id),
     });
   }
-  
+
   // Get current realm
   const currentRealm = state.realms.find(r => r.id === state.currentRealmId);
-  
+
   // Calculate world tension from active threads
   const activeThreads = (state.storyThreads || []).filter(t => t.status === 'active');
   const conflictThreads = activeThreads.filter(t => t.type === 'conflict' || t.type === 'enemy');
   const worldTensionLevel = Math.min(100, 30 + conflictThreads.length * 10);
-  
+
   // Get ongoing conflicts
   const ongoingConflicts = conflictThreads.slice(0, 5).map(t => ({
     name: t.title,
     parties: [t.relatedEntityType || 'Unknown'],
     status: 'active' as const,
   }));
-  
+
   // Get MC situation
   const protagonist = state.characterCodex.find(c => c.isProtagonist);
   const mcSituation = protagonist
     ? `${protagonist.name} at ${protagonist.currentCultivation || 'unknown'} cultivation`
     : 'Main character status unknown';
-  
+
   return {
     novelId: state.id,
     chapterNumber: trigger.triggerChapter,
@@ -406,7 +407,7 @@ export function buildWorldStateSnapshot(
     ongoingConflicts,
     recentMajorEvents: [],
     mcSituation,
-    narrativeTimePassed: trigger.seclusionDuration || 
+    narrativeTimePassed: trigger.seclusionDuration ||
       (trigger.timeSkipYears ? `${trigger.timeSkipYears} years` : undefined),
   };
 }
@@ -416,7 +417,7 @@ export function buildWorldStateSnapshot(
  */
 function extractPowerLevel(content: string): string {
   const lowerContent = content.toLowerCase();
-  
+
   // Common cultivation realms
   const realms = [
     'supreme', 'emperor', 'immortal', 'saint', 'sovereign',
@@ -424,13 +425,13 @@ function extractPowerLevel(content: string): string {
     'golden core', 'spirit realm', 'qi condensation', 'body refinement',
     'major', 'top-tier', 'first-rate', 'second-rate', 'third-rate'
   ];
-  
+
   for (const realm of realms) {
     if (lowerContent.includes(realm)) {
       return realm.charAt(0).toUpperCase() + realm.slice(1);
     }
   }
-  
+
   return 'Unknown';
 }
 
@@ -468,35 +469,33 @@ export async function runWorldSimulation(
 ): Promise<WorldSimulationResult> {
   const startTime = Date.now();
   const { usePinecone = true, storeEventsInPinecone = true } = options;
-  
+
   logger.info('Running Living World simulation', 'livingWorld', {
     trigger: trigger.type,
     chapter: trigger.triggerChapter,
     volatility: config.volatilityLevel,
     usePinecone,
   });
-  
+
   try {
     // Build world state snapshot
     let worldState = buildWorldStateSnapshot(state, trigger, config);
-    
+
     // Try to enhance with Pinecone if available
     if (usePinecone) {
       try {
-        const { getSimulationCandidates, isLivingWorldPineconeReady } = await import('./pineconeIntegration');
-        
         if (await isLivingWorldPineconeReady()) {
           const enhancedEntities = await getSimulationCandidates(state.id, worldState, {
             maxCandidates: 25,
             includeConflictParties: true,
           });
-          
+
           if (enhancedEntities.length > 0) {
             worldState = {
               ...worldState,
               entities: enhancedEntities,
             };
-            
+
             logger.debug('Enhanced world state with Pinecone entities', 'livingWorld', {
               entityCount: enhancedEntities.length,
             });
@@ -508,7 +507,7 @@ export async function runWorldSimulation(
         });
       }
     }
-    
+
     if (worldState.entities.length === 0) {
       logger.warn('No entities available for simulation', 'livingWorld');
       return {
@@ -520,19 +519,19 @@ export async function runWorldSimulation(
         trigger,
       };
     }
-    
+
     // Build user prompt
     const userPrompt = buildSimulationPrompt(worldState, trigger, config);
-    
-    // Call Gemini Flash
-    const rawResponse = await geminiJson<LivingWorldRawResponse>({
+
+    // Call DeepSeek
+    const rawResponse = await deepseekJson<LivingWorldRawResponse>({
       model: config.model,
       system: LIVING_WORLD_SYSTEM_PROMPT,
       user: userPrompt,
       temperature: config.temperature,
       maxTokens: config.maxTokens,
     });
-    
+
     // Process response into events
     const events = processSimulationResponse(
       rawResponse,
@@ -540,15 +539,13 @@ export async function runWorldSimulation(
       trigger,
       config
     );
-    
+
     // Store events in Pinecone for future retrieval
     if (storeEventsInPinecone && events.length > 0) {
       try {
-        const { storeWorldEvents, isLivingWorldPineconeReady } = await import('./pineconeIntegration');
-        
         if (await isLivingWorldPineconeReady()) {
           const storeResult = await storeWorldEvents(state.id, events);
-          
+
           if (storeResult.success) {
             logger.debug('Stored world events in Pinecone', 'livingWorld', {
               storedCount: storeResult.storedCount,
@@ -561,18 +558,18 @@ export async function runWorldSimulation(
         });
       }
     }
-    
+
     // Check for cascade events from major events
     let cascadeEvents: GlobalWorldEvent[] = [];
     try {
-      const { 
-        checkForCascades, 
-        addPendingCascades, 
-        getPendingCascades, 
+      const {
+        checkForCascades,
+        addPendingCascades,
+        getPendingCascades,
         processPendingCascades,
-        cleanupProcessedCascades 
+        cleanupProcessedCascades
       } = await import('./eventCascade');
-      
+
       // Check new events for cascades
       for (const event of events) {
         const newCascades = checkForCascades(event, trigger.triggerChapter);
@@ -584,7 +581,7 @@ export async function runWorldSimulation(
           });
         }
       }
-      
+
       // Process any pending cascades that are ready
       const pendingCascades = getPendingCascades(state.id);
       if (pendingCascades.length > 0) {
@@ -594,28 +591,28 @@ export async function runWorldSimulation(
           trigger.triggerChapter,
           config
         );
-        
+
         if (cascadeEvents.length > 0) {
           logger.info('Generated cascade events', 'livingWorld', {
             count: cascadeEvents.length,
           });
         }
       }
-      
+
       // Cleanup old processed cascades
       cleanupProcessedCascades(state.id, 50);
-      
+
     } catch (cascadeError) {
       logger.debug('Cascade processing skipped', 'livingWorld', {
         error: cascadeError instanceof Error ? cascadeError.message : String(cascadeError),
       });
     }
-    
+
     // Combine all events
     const allEvents = [...events, ...cascadeEvents];
-    
+
     const durationMs = Date.now() - startTime;
-    
+
     logger.info('Living World simulation completed', 'livingWorld', {
       eventCount: allEvents.length,
       directEvents: events.length,
@@ -623,7 +620,7 @@ export async function runWorldSimulation(
       durationMs,
       trigger: trigger.type,
     });
-    
+
     return {
       success: true,
       events: allEvents,
@@ -632,11 +629,11 @@ export async function runWorldSimulation(
       durationMs,
       trigger,
     };
-    
+
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error('Living World simulation failed', 'livingWorld', error instanceof Error ? error : undefined);
-    
+
     return {
       success: false,
       events: [],
@@ -662,23 +659,23 @@ function buildSimulationPrompt(
     moderate: 'The world has normal levels of conflict and change. Events happen with reasonable frequency.',
     chaotic: 'The world is in turmoil. Many factions are in conflict, and major changes are common.',
   };
-  
+
   const triggerDescriptions = {
     chapter_interval: `Regular world update at chapter ${trigger.milestoneChapter}.`,
     seclusion: `The MC has entered seclusion for ${trigger.seclusionDuration || 'an extended period'}.`,
     time_skip: `${trigger.timeSkipYears || 'Several'} years have passed in the narrative.`,
     manual: 'Manual simulation trigger.',
   };
-  
+
   const entityList = worldState.entities.map(e => {
     const protectedTag = e.isProtected ? ' [PROTECTED]' : '';
     return `- ${e.name} (${e.type})${protectedTag}: ${e.powerLevel}, Status: ${e.status}`;
   }).join('\n');
-  
+
   const conflictList = worldState.ongoingConflicts.length > 0
     ? worldState.ongoingConflicts.map(c => `- ${c.name}: ${c.parties.join(' vs ')}`).join('\n')
     : 'No major conflicts ongoing';
-  
+
   return `=== LIVING WORLD SIMULATION REQUEST ===
 
 TRIGGER: ${triggerDescriptions[trigger.type]}
@@ -729,46 +726,46 @@ function processSimulationResponse(
   if (!raw.events || !Array.isArray(raw.events)) {
     return [];
   }
-  
+
   const events: GlobalWorldEvent[] = [];
-  
+
   for (const rawEvent of raw.events.slice(0, config.maxEventsPerSimulation)) {
     try {
       // Map entity IDs
       const affectedEntityIds: string[] = [];
       const affectedEntityNames: string[] = [];
       const affectedEntityTypes: string[] = [];
-      
+
       for (const affected of (rawEvent.affectedEntities || [])) {
         const name = affected.name;
         affectedEntityNames.push(name);
         affectedEntityTypes.push(affected.type);
-        
+
         // Try to find entity ID
-        const character = state.characterCodex.find(c => 
+        const character = state.characterCodex.find(c =>
           c.name.toLowerCase() === name.toLowerCase()
         );
         if (character) {
           affectedEntityIds.push(character.id);
           continue;
         }
-        
-        const worldEntry = state.worldBible.find(w => 
+
+        const worldEntry = state.worldBible.find(w =>
           w.title.toLowerCase() === name.toLowerCase()
         );
         if (worldEntry) {
           affectedEntityIds.push(worldEntry.id);
           continue;
         }
-        
-        const territory = state.territories.find(t => 
+
+        const territory = state.territories.find(t =>
           t.name.toLowerCase() === name.toLowerCase()
         );
         if (territory) {
           affectedEntityIds.push(territory.id);
         }
       }
-      
+
       const event: GlobalWorldEvent = {
         id: generateUUID(),
         novelId: state.id,
@@ -792,7 +789,7 @@ function processSimulationResponse(
         createdAt: Date.now(),
         integratedIntoNarrative: false,
       };
-      
+
       events.push(event);
     } catch (error) {
       logger.warn('Failed to process simulation event', 'livingWorld', {
@@ -800,7 +797,7 @@ function processSimulationResponse(
       });
     }
   }
-  
+
   return events;
 }
 
@@ -809,20 +806,20 @@ function processSimulationResponse(
  */
 function normalizeEventType(type: string | undefined): WorldEventType {
   if (!type) return 'power_shift';
-  
+
   const normalized = type.toLowerCase().replace(/[^a-z_]/g, '_');
-  
+
   const validTypes: WorldEventType[] = [
     'sect_destruction', 'sect_rise', 'power_shift', 'npc_death', 'npc_advancement',
     'territory_conquest', 'alliance_formed', 'alliance_broken', 'treasure_discovery',
     'war_outbreak', 'war_conclusion', 'calamity', 'cultivation_shift',
     'political_change', 'secret_revealed'
   ];
-  
+
   if (validTypes.includes(normalized as WorldEventType)) {
     return normalized as WorldEventType;
   }
-  
+
   // Map variations
   if (normalized.includes('destroy') || normalized.includes('fall')) return 'sect_destruction';
   if (normalized.includes('rise') || normalized.includes('grow')) return 'sect_rise';
@@ -835,7 +832,7 @@ function normalizeEventType(type: string | undefined): WorldEventType {
   if (normalized.includes('war') && (normalized.includes('start') || normalized.includes('begin'))) return 'war_outbreak';
   if (normalized.includes('war') && (normalized.includes('end') || normalized.includes('conclu'))) return 'war_conclusion';
   if (normalized.includes('disaster') || normalized.includes('calam') || normalized.includes('beast')) return 'calamity';
-  
+
   return 'power_shift';
 }
 
@@ -844,12 +841,12 @@ function normalizeEventType(type: string | undefined): WorldEventType {
  */
 function normalizeUrgency(urgency: string | undefined): EventUrgency {
   if (!urgency) return 'background';
-  
+
   const normalized = urgency.toLowerCase();
-  
+
   if (normalized.includes('immediate') || normalized.includes('urgent')) return 'immediate';
   if (normalized.includes('future') || normalized.includes('later')) return 'future_plot';
-  
+
   return 'background';
 }
 
@@ -858,12 +855,12 @@ function normalizeUrgency(urgency: string | undefined): EventUrgency {
  */
 function normalizeImpact(impact: string | undefined): EventImpact {
   if (!impact) return 'moderate';
-  
+
   const normalized = impact.toLowerCase();
-  
+
   if (normalized.includes('minor') || normalized.includes('small')) return 'minor';
   if (normalized.includes('major') || normalized.includes('significant')) return 'major';
   if (normalized.includes('catastroph') || normalized.includes('world')) return 'catastrophic';
-  
+
   return 'moderate';
 }

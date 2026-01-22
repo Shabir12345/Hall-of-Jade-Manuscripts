@@ -304,6 +304,7 @@ export function processThreadUpdates(
           description: update.description ? String(update.description).trim() : '',
           introducedChapter: chapterNumber,
           lastUpdatedChapter: chapterNumber,
+          lastActiveChapter: chapterNumber, // Initialize with current chapter
           progressionNotes: eventDescription ? [{
             chapterNumber,
             note: eventDescription,

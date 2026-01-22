@@ -29,19 +29,19 @@ export function analyzeNarrativeCraft(
     return cached.score;
   }
   const content = chapter.content || '';
-  
+
   const burstinessScore = calculateBurstiness(content);
   const perplexityScore = calculatePerplexity(content);
   const subtextAnalysis = analyzeSubtext(content);
   const interiorityAnalysis = analyzeInteriority(content, state.characterCodex);
   const sceneIntentAnalysis = validateSceneIntent(chapter, state);
   const dialogueAnalysis = analyzeDialogueNaturalness(content);
-  
+
   // Detect patterns
   const repetitivePatterns = detectRepetitivePatterns(content);
   const overexplanationFlags = detectOverexplanation(content);
   const neutralProseFlags = detectNeutralProse(content);
-  
+
   // Calculate overall craft score (weighted average)
   const overallCraftScore = Math.round(
     burstinessScore * 0.15 +
@@ -69,13 +69,13 @@ export function analyzeNarrativeCraft(
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-  
+
   // Cache the result
   craftAnalysisCache.set(cacheKey, {
     timestamp: Date.now(),
     score,
   });
-  
+
   // Clean old cache entries (keep last 10)
   if (craftAnalysisCache.size > 10) {
     const entries = Array.from(craftAnalysisCache.entries());
@@ -84,7 +84,7 @@ export function analyzeNarrativeCraft(
     craftAnalysisCache.clear();
     toKeep.forEach(([key, value]) => craftAnalysisCache.set(key, value));
   }
-  
+
   return score;
 }
 
@@ -103,33 +103,33 @@ export function calculateBurstiness(content: string): number {
   }
 
   const sentenceLengths = sentences.map(s => s.trim().split(/\s+/).length);
-  
+
   // Calculate mean
   const mean = sentenceLengths.reduce((sum, len) => sum + len, 0) / sentenceLengths.length;
-  
+
   // Calculate standard deviation
   const variance = sentenceLengths.reduce((sum, len) => {
     const diff = len - mean;
     return sum + (diff * diff);
   }, 0) / sentenceLengths.length;
-  
+
   const stdDev = Math.sqrt(variance);
-  
+
   // Coefficient of variation (CV) = stdDev / mean
   // Higher CV = more variation = higher burstiness
   const coefficientOfVariation = mean > 0 ? stdDev / mean : 0;
-  
+
   // Convert to 0-100 score (CV of 0.5+ is excellent variation)
   // Scale: 0.0 = 0, 0.3 = 60, 0.5 = 80, 0.7+ = 100
   let score = Math.min(100, Math.max(0, (coefficientOfVariation / 0.5) * 80));
-  
+
   // Bonus for having both very short and very long sentences
   const hasShortSentences = sentenceLengths.some(len => len <= 5);
   const hasLongSentences = sentenceLengths.some(len => len >= 25);
   if (hasShortSentences && hasLongSentences) {
     score = Math.min(100, score + 10);
   }
-  
+
   return Math.round(score);
 }
 
@@ -158,10 +158,10 @@ export function calculatePerplexity(content: string): number {
 
   const uniqueWords = Object.keys(wordFreq).length;
   const totalWords = words.length;
-  
+
   // Unique word ratio
   const uniqueRatio = uniqueWords / totalWords;
-  
+
   // Calculate entropy (measure of unpredictability)
   let entropy = 0;
   Object.values(wordFreq).forEach(freq => {
@@ -170,42 +170,42 @@ export function calculatePerplexity(content: string): number {
       entropy -= probability * Math.log2(probability);
     }
   });
-  
+
   // Convert to 0-100 score
   // Higher entropy = more unpredictable = better
   // Typical entropy for English text: 4-6 bits per word
   // Scale: 3.0 = 50, 4.0 = 70, 5.0 = 85, 6.0+ = 100
   let score = Math.min(100, Math.max(0, ((entropy - 3.0) / 3.0) * 50 + 50));
-  
+
   // Bonus for unique ratio > 0.5 (high vocabulary diversity)
   if (uniqueRatio > 0.5) {
     score = Math.min(100, score + 5);
   }
-  
+
   // Detect and penalize repetitive word patterns
   const wordFreqArray = Object.entries(wordFreq).sort((a, b) => b[1] - a[1]);
   const topWords = wordFreqArray.slice(0, 10); // Top 10 most frequent words
   const topWordsTotalFreq = topWords.reduce((sum, [_, freq]) => sum + freq, 0);
   const topWordsRatio = topWordsTotalFreq / totalWords;
-  
+
   // Penalize if top words make up too much of the text (indicates repetition)
   if (topWordsRatio > 0.4) {
     score = Math.max(0, score - 10); // Penalty for high repetition
   }
-  
+
   // Bonus for using synonyms instead of repetition
   // Check if there's good vocabulary variety (many unique words relative to total)
   if (uniqueRatio > 0.6) {
     score = Math.min(100, score + 5);
   }
-  
+
   // Weight less common words more heavily
   // Calculate average frequency - lower average = more varied vocabulary
   const avgFrequency = totalWords / uniqueWords;
   if (avgFrequency < 2.0) { // Very varied vocabulary
     score = Math.min(100, score + 5);
   }
-  
+
   return Math.round(score);
 }
 
@@ -229,7 +229,7 @@ export function analyzeSubtext(content: string): {
 
   // Extract dialogue
   const dialogueMatches = content.match(/["'""]([^"'"]{20,200})["'"]/g) || [];
-  
+
   // Subtext indicators in dialogue
   const subtextIndicators = [
     /(but|however|though|although|yet|still|even though)/gi,
@@ -269,15 +269,15 @@ export function analyzeSubtext(content: string): {
   });
 
   const totalInstances = dialogueSubtextCount + impliedMeaningCount;
-  
+
   // Score based on instances per 1000 words
   const wordCount = content.split(/\s+/).length;
   const instancesPerThousand = (totalInstances / wordCount) * 1000;
-  
+
   // Target: 3+ instances per 1000 words = good subtext
   // Scale: 0 = 0, 1 = 30, 2 = 60, 3 = 80, 5+ = 100
   let score = Math.min(100, Math.max(0, (instancesPerThousand / 3) * 80));
-  
+
   // Bonus for having both dialogue and implied meaning
   if (dialogueSubtextCount > 0 && impliedMeaningCount > 0) {
     score = Math.min(100, score + 10);
@@ -296,7 +296,7 @@ export function analyzeSubtext(content: string): {
  * Analyzes character interiority depth
  * ADJUSTED: More lenient scoring with expanded indicators
  */
-export function analyzeInteriority(content: string, characters: Character[]): {
+export function analyzeInteriority(content: string, _characters: Character[]): {
   score: number; // 0-100
   depth: number;
   naturalness: number;
@@ -355,7 +355,7 @@ export function analyzeInteriority(content: string, characters: Character[]): {
 
   // Depth score: percentage of paragraphs with interiority
   const depth = paragraphsToCheck.length > 0 ? (interiorityParagraphs / paragraphsToCheck.length) * 100 : 0;
-  
+
   // Naturalness: variety of interiority expressions
   const uniqueIndicators = new Set<string>();
   paragraphsToCheck.forEach(paragraph => {
@@ -390,7 +390,7 @@ export function analyzeInteriority(content: string, characters: Character[]): {
   // Adjusted target: 25%+ paragraphs with interiority (reduced from 40%)
   const targetDepth = 25;
   const depthScore = Math.min(100, (depth / targetDepth) * 100);
-  
+
   // Add base score of 30 - having some content is already good
   const baseScore = 30;
   const overallScore = Math.round(Math.min(100,
@@ -412,7 +412,7 @@ export function analyzeInteriority(content: string, characters: Character[]): {
 /**
  * Validates scene intent (value shift, purpose clarity, momentum)
  */
-export function validateSceneIntent(chapter: Chapter, state: NovelState): {
+export function validateSceneIntent(chapter: Chapter, _state: NovelState): {
   score: number; // 0-100
   valueShift: boolean;
   purposeClarity: number;
@@ -421,14 +421,14 @@ export function validateSceneIntent(chapter: Chapter, state: NovelState): {
 } {
   const issues: string[] = [];
   let valueShift = false;
-  
+
   // Check logic audit for value shift
   if (chapter.logicAudit) {
     const { startingValue, resultingValue } = chapter.logicAudit;
-    valueShift = startingValue !== resultingValue && 
-                 startingValue.length > 5 && 
-                 resultingValue.length > 5;
-    
+    valueShift = startingValue !== resultingValue &&
+      startingValue.length > 5 &&
+      resultingValue.length > 5;
+
     if (!valueShift) {
       issues.push('No clear value shift detected in logic audit');
     }
@@ -440,22 +440,22 @@ export function validateSceneIntent(chapter: Chapter, state: NovelState): {
   const content = chapter.content || '';
   const summary = chapter.summary || '';
   const combined = (content + ' ' + summary).toLowerCase();
-  
+
   // Purpose indicators
   const purposeIndicators = [
     /(goal|objective|purpose|aim|intent|plan)/gi,
     /(must|need|should|have to|required)/gi,
     /(decided|chose|determined|resolved)/gi,
   ];
-  
+
   const purposeCount = purposeIndicators.reduce((count, pattern) => {
     return count + (combined.match(pattern) || []).length;
   }, 0);
-  
+
   const wordCount = combined.split(/\s+/).length;
   const purposeDensity = wordCount > 0 ? (purposeCount / wordCount) * 1000 : 0;
   const purposeClarity = Math.min(100, (purposeDensity / 3) * 100); // 3 per 1000 words = clear purpose
-  
+
   if (purposeClarity < 50) {
     issues.push('Chapter purpose may be unclear');
   }
@@ -466,14 +466,14 @@ export function validateSceneIntent(chapter: Chapter, state: NovelState): {
     /(progress|advance|move forward|continue|proceed)/gi,
     /(but|however|yet|still|nevertheless)/gi, // Conflict creates momentum
   ];
-  
+
   const momentumCount = momentumIndicators.reduce((count, pattern) => {
     return count + (content.match(pattern) || []).length;
   }, 0);
-  
+
   const momentumDensity = wordCount > 0 ? (momentumCount / wordCount) * 1000 : 0;
   const momentum = Math.min(100, (momentumDensity / 5) * 100); // 5 per 1000 words = good momentum
-  
+
   if (momentum < 40) {
     issues.push('Narrative momentum may be low');
   }
@@ -483,7 +483,7 @@ export function validateSceneIntent(chapter: Chapter, state: NovelState): {
   if (valueShift) score += 40;
   score += purposeClarity * 0.3;
   score += momentum * 0.3;
-  
+
   score = Math.round(Math.min(100, Math.max(0, score)));
 
   return {
@@ -517,7 +517,7 @@ export function analyzeDialogueNaturalness(content: string): {
   // Extract dialogue - improved regex to catch more dialogue patterns
   const dialogueMatches = content.match(/["'""]([^"'"]{5,300})["'"]/g) || [];
   const dialogueCount = dialogueMatches.length;
-  
+
   if (dialogueCount === 0) {
     // No dialogue is okay for some chapters (action scenes, introspective moments)
     return { score: 60, interruptions: 0, ambiguity: 0, subtext: 0, naturalPatterns: [], issues: ['No dialogue detected'] };
@@ -534,7 +534,7 @@ export function analyzeDialogueNaturalness(content: string): {
     /wait/gi, // Interruption indicator
     /—/g, // Em dash
   ];
-  
+
   let interruptions = 0;
   dialogueMatches.forEach(dialogue => {
     interruptionPatterns.forEach(pattern => {
@@ -553,7 +553,7 @@ export function analyzeDialogueNaturalness(content: string): {
     /(seems|seemed|appears|appeared|looks like|sounds like)/gi,
     /(not sure|unsure|uncertain|don't know|no idea)/gi,
   ];
-  
+
   let ambiguityCount = 0;
   dialogueMatches.forEach(dialogue => {
     ambiguityPatterns.forEach(pattern => {
@@ -563,7 +563,7 @@ export function analyzeDialogueNaturalness(content: string): {
       }
     });
   });
-  
+
   // Adjusted: Less harsh calculation - any ambiguity is good
   const ambiguity = dialogueCount > 0 ? Math.min(100, (ambiguityCount / dialogueCount) * 50 + 30) : 30;
 
@@ -576,7 +576,7 @@ export function analyzeDialogueNaturalness(content: string): {
     /(really|actually|honestly|truly)/gi, // Emphasis words suggest subtext
     /(if|unless|whether)/gi, // Conditional statements
   ];
-  
+
   let subtextCount = 0;
   dialogueMatches.forEach(dialogue => {
     let hasSubtext = false;
@@ -589,7 +589,7 @@ export function analyzeDialogueNaturalness(content: string): {
       subtextCount++;
     }
   });
-  
+
   // Adjusted: More lenient subtext scoring
   const subtext = dialogueCount > 0 ? Math.min(100, (subtextCount / dialogueCount) * 100 + 20) : 20;
 
@@ -616,16 +616,16 @@ export function analyzeDialogueNaturalness(content: string): {
   // Give a base score of 40 - dialogue existing is already good
   // Then add bonuses for natural elements
   let baseScore = 40;
-  
+
   // Interruption bonus (up to 20 points)
   const interruptionBonus = Math.min(20, (interruptions / Math.max(1, dialogueCount)) * 100);
-  
+
   // Subtext bonus (up to 25 points)
   const subtextBonus = Math.min(25, (subtextCount / Math.max(1, dialogueCount)) * 50);
-  
+
   // Ambiguity bonus (up to 15 points)
   const ambiguityBonus = Math.min(15, (ambiguityCount / Math.max(1, dialogueCount)) * 30);
-  
+
   const overallScore = Math.round(Math.min(100, baseScore + interruptionBonus + subtextBonus + ambiguityBonus));
 
   return {
@@ -644,7 +644,7 @@ export function analyzeDialogueNaturalness(content: string): {
  */
 function detectRepetitivePatterns(content: string): string[] {
   const patterns: string[] = [];
-  
+
   // Common words that naturally begin many sentences - exclude from repetition check
   const excludedFirstWords = new Set([
     'the', 'a', 'an', 'he', 'she', 'it', 'they', 'i', 'we', 'you',
@@ -653,7 +653,7 @@ function detectRepetitivePatterns(content: string): string[] {
     'but', 'and', 'or', 'so', 'yet', 'for',
     'as', 'when', 'while', 'if', 'then', 'now',
   ]);
-  
+
   // Check for repeated sentence beginnings
   const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 5);
   if (sentences.length > 10) {
@@ -661,7 +661,7 @@ function detectRepetitivePatterns(content: string): string[] {
       const words = s.trim().split(/\s+/);
       return words.slice(0, 3).join(' ').toLowerCase();
     });
-    
+
     const beginningFreq: Record<string, number> = {};
     beginnings.forEach(beg => {
       // Skip if it starts with a common excluded word
@@ -670,30 +670,30 @@ function detectRepetitivePatterns(content: string): string[] {
         beginningFreq[beg] = (beginningFreq[beg] || 0) + 1;
       }
     });
-    
+
     // Increased threshold from 3 to 4 for less strict detection
     const repeated = Object.entries(beginningFreq)
       .filter(([_, count]) => count >= 4)
       .map(([beg]) => `Repeated sentence beginning: "${beg}"`);
-    
+
     patterns.push(...repeated.slice(0, 2)); // Only report top 2
   }
 
   // Check for repeated phrases (3-5 word phrases)
   const words = content.toLowerCase().split(/\s+/);
   const phraseFreq: Record<string, number> = {};
-  
+
   for (let i = 0; i < words.length - 3; i++) {
     const phrase = words.slice(i, i + 4).join(' ');
     if (phrase.length > 15 && phrase.length < 50) {
       phraseFreq[phrase] = (phraseFreq[phrase] || 0) + 1;
     }
   }
-  
+
   const repeatedPhrases = Object.entries(phraseFreq)
     .filter(([_, count]) => count >= 3)
     .map(([phrase]) => `Repeated phrase: "${phrase}"`);
-  
+
   patterns.push(...repeatedPhrases.slice(0, 3));
 
   return patterns;
@@ -704,19 +704,19 @@ function detectRepetitivePatterns(content: string): string[] {
  */
 function detectOverexplanation(content: string): string[] {
   const flags: string[] = [];
-  
+
   // Overexplanation indicators
   const overexplanationPatterns = [
     /(in other words|that is to say|to put it simply|to clarify|to explain)/gi,
     /(because|since|as|due to|owing to).*?(because|since|as)/gi, // Double explanation
     /(showed|demonstrated|revealed).*?(showed|demonstrated|revealed)/gi, // Redundant showing
   ];
-  
+
   overexplanationPatterns.forEach(pattern => {
     const matches = content.match(pattern);
-    // Raised threshold from 2 to 8 to reduce false positives
+    // Raised threshold from 2 to 5 to reduce false positives
     // Some explanatory phrases are normal in prose, only flag excessive use
-    if (matches && matches.length > 8) {
+    if (matches && matches.length > 5) {
       flags.push(`Overexplanation detected: ${matches.length} instances of explanatory phrases`);
     }
   });
@@ -737,29 +737,49 @@ function detectOverexplanation(content: string): string[] {
  */
 function detectNeutralProse(content: string): string[] {
   const flags: string[] = [];
-  
+
   // Neutral/encyclopedic indicators
-  const neutralPatterns = [
-    /(it is|there is|there are|it was|there were)/gi,
-    /(according to|it is known that|it is said that|it is believed that)/gi,
-    /(the fact that|the reality that|the truth that)/gi,
-  ];
-  
   const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 10);
+  const wordCount = content.split(/\s+/).length;
   let neutralCount = 0;
-  
+
+  const neutralPattern = /\b(it is|there is|there are|it was|there were|there was|it has been|it will be|according to|it is known that|it is said that|it is believed that|the fact that|the reality that|the truth that)\b/i;
+
   sentences.forEach(sentence => {
-    neutralPatterns.forEach(pattern => {
-      if (pattern.test(sentence)) {
-        neutralCount++;
-      }
-    });
+    if (neutralPattern.test(sentence.trim())) {
+      neutralCount++;
+    }
   });
-  
+
   const neutralRatio = sentences.length > 0 ? neutralCount / sentences.length : 0;
-  
+
   if (neutralRatio > 0.2) {
     flags.push(`High neutral prose ratio: ${Math.round(neutralRatio * 100)}% of sentences use neutral constructions`);
+  }
+
+  // Check for telegraphic prose (missing articles)
+  const articlesCount = (content.match(/\b(the|a|an)\b/gi) || []).length;
+  const articlesDensity = wordCount > 0 ? (articlesCount / wordCount) * 100 : 0;
+
+  // Typical English prose has 6-10% articles. Less than 3% is a strong sign of telegraphic/AI style.
+  if (articlesDensity < 3) {
+    flags.push(`Telegraphic prose detected: Abnormally low article density (${articlesDensity.toFixed(1)}%). prose may be fragmented.`);
+  }
+
+  // Check for noun-heavy fragments
+  const telegraphicPatterns = [
+    /^[A-Z]\w+\s+[a-z]\w+\s*[.!?]$/gm, // Single word actions like "Blade flashed."
+    /^(?:\w+\s+){1,2}\w+[.!?]\s+(?:\w+\s+){1,2}\w+[.!?]$/gm, // Rapid fire fragments
+  ];
+
+  let telegraphicCount = 0;
+  telegraphicPatterns.forEach(pattern => {
+    const matches = content.match(pattern);
+    if (matches) telegraphicCount += matches.length;
+  });
+
+  if (telegraphicCount > 5) {
+    flags.push(`Excessive fragmented sentences (${telegraphicCount} instances) detected. Prose lacks flow.`);
   }
 
   // Check for lack of emotional language
@@ -787,15 +807,14 @@ function detectNeutralProse(content: string): string[] {
     'dread', 'terror', 'rage', 'fury', 'bliss', 'agony', 'misery',
     'longing', 'yearning', 'aching', 'sorrow', 'grief', 'regret',
   ];
-  
-  const wordCount = content.split(/\s+/).length;
+
   const emotionalCount = emotionalWords.reduce((count, word) => {
     const regex = new RegExp(`\\b${word}\\w*`, 'gi');
     return count + (content.match(regex) || []).length;
   }, 0);
-  
+
   const emotionalDensity = wordCount > 0 ? (emotionalCount / wordCount) * 1000 : 0;
-  
+
   // Lowered threshold from 2 to 1 since we now have more comprehensive detection
   // Typical prose should have 3-10 emotional indicators per 1000 words
   if (emotionalDensity < 1) {

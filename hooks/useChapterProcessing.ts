@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import type { 
   NovelState, 
   Chapter, 
@@ -6,16 +6,10 @@ import type {
   WorldEntry, 
   Territory, 
   SystemLog, 
-  ItemCategory, 
-  TechniqueCategory, 
-  TechniqueType,
   CharacterItemPossession,
   CharacterTechniqueMastery,
   Scene,
-  Arc,
   Realm,
-  Relationship,
-  CharacterSystem,
 } from '../types';
 import { extractPostChapterUpdates } from '../services/aiService';
 import { findOrCreateItem, findOrCreateTechnique } from '../services/itemTechniqueService';
@@ -28,6 +22,8 @@ import {
 import { processAntagonistUpdates } from '../services/antagonistProcessingService';
 import { addOrUpdateRelationship } from '../services/relationshipService';
 import { addAntagonistToChapter } from '../services/antagonistService';
+import { autoManageStatus } from '../services/antagonistStatusManager';
+import { analyzeAndTrackProgression as analyzeAndTrackAntagonistProgression } from '../services/antagonistProgressionTracker';
 import { processSystemUpdates } from '../services/systemProcessingService';
 import { analyzeAndTrackProgression as analyzeAndTrackSystemProgression } from '../services/systemProgressionTracker';
 import { trackSystemAppearance } from '../services/systemService';
@@ -104,13 +100,11 @@ export function useChapterProcessing() {
   const processPostChapterUpdates = useCallback(async (
     novel: NovelState,
     newChapter: Chapter,
-    activeArc: any,
+    activeArcInput: any,
     addLog: (msg: string, type: SystemLog['type']) => void
   ): Promise<NovelState> => {
-    let workingNovelState = novel;
-
     // Extract updates from chapter
-    const extraction = await extractPostChapterUpdates(novel, newChapter, activeArc);
+    const extraction = await extractPostChapterUpdates(novel, newChapter, activeArcInput);
     
     // Enhanced: Process consistency system updates
     try {
@@ -135,17 +129,17 @@ export function useChapterProcessing() {
     }
 
     // Process character upserts
-    const mergedCharacters = [...novel.characterCodex];
+    let mergedCharacters = [...novel.characterCodex];
     extraction.characterUpserts?.forEach((u: any) => {
       const name = String(u?.name || '').trim();
       if (!name) return;
       const idx = mergedCharacters.findIndex(c => normalize(c.name) === normalize(name));
 
       if (idx > -1) {
-        const char = { ...mergedCharacters[idx] };
+        let char = { ...mergedCharacters[idx] };
         const set = u?.set || {};
         
-        if (typeof set.age === 'string' && set.age.trim()) char.age = set.age;
+        if (typeof set.age === 'number' && set.age) char.age = set.age;
         if (typeof set.personality === 'string' && set.personality.trim()) char.personality = set.personality;
         if (typeof set.currentCultivation === 'string' && set.currentCultivation.trim()) {
           char.currentCultivation = set.currentCultivation;
@@ -216,7 +210,7 @@ export function useChapterProcessing() {
         const newChar: Character = {
           id: generateUUID(),
           name: String(u.name),
-          age: String(u?.set?.age || 'Unknown'),
+          age: typeof u?.set?.age === 'number' ? u.set.age : 0,
           personality: String(u?.set?.personality || 'Unknown'),
           currentCultivation: String(u?.set?.currentCultivation || 'Unknown'),
           skills: Array.isArray(u?.addSkills) ? u.addSkills.filter((s: any) => String(s).trim()) : [],
@@ -683,8 +677,8 @@ export function useChapterProcessing() {
 
     // Process antagonist updates
     let updatedAntagonists = [...(novel.antagonists || [])];
-    const protagonist = mergedCharacters.find(c => c.isProtagonist);
-    const activeArc = updatedArcs.find(a => a.status === 'active');
+    const protagonistCharacter = mergedCharacters.find(c => c.isProtagonist);
+    const activeArcRecord = updatedArcs.find(a => a.status === 'active');
     
     if (extraction.antagonistUpdates && Array.isArray(extraction.antagonistUpdates) && extraction.antagonistUpdates.length > 0) {
       try {
@@ -693,8 +687,8 @@ export function useChapterProcessing() {
           updatedAntagonists,
           novel.id,
           newChapter.number,
-          protagonist?.id,
-          activeArc?.id
+          protagonistCharacter?.id,
+          activeArcRecord?.id
         );
         
         // Track chapter appearances to create after antagonist is saved
@@ -742,7 +736,7 @@ export function useChapterProcessing() {
 
           // Track progression automatically
           try {
-            await analyzeAndTrackProgression(
+            await analyzeAndTrackAntagonistProgression(
               oldAntagonist,
               finalAntagonist,
               newChapter.number,
@@ -784,16 +778,16 @@ export function useChapterProcessing() {
 
     // Process system updates
     let updatedSystems = [...(novel.characterSystems || [])];
-    const protagonist = mergedCharacters.find(c => c.isProtagonist);
+    const protagonistForSystems = protagonistCharacter;
     
-    if (extraction.systemUpdates && Array.isArray(extraction.systemUpdates) && extraction.systemUpdates.length > 0 && protagonist) {
+    if (extraction.systemUpdates && Array.isArray(extraction.systemUpdates) && extraction.systemUpdates.length > 0 && protagonistForSystems) {
       try {
         // Find protagonist character by name from system update
         const systemResults = processSystemUpdates(
           extraction.systemUpdates,
           updatedSystems,
           novel.id,
-          protagonist.id,
+          protagonistForSystems.id,
           newChapter.number
         );
         

@@ -5,6 +5,7 @@ import { generateNextChapter } from './aiService';
 import { validateChapterQuality } from './chapterQualityValidator';
 import { calculateAIDetectionScore, compareAIDetectionScores } from './aiDetectionScoreTracker';
 import { generateUUID } from '../utils/uuid';
+import { detectRepetitions } from './repetitionDetector';
 import * as crypto from 'crypto';
 
 /**
@@ -63,9 +64,36 @@ export function shouldRegenerate(
  */
 function buildEnhancedConstraints(
   failures: string[],
-  metrics: ChapterQualityMetrics
+  metrics: ChapterQualityMetrics,
+  chapterContent?: string
 ): string[] {
   const constraints: string[] = [];
+
+  // Check for specific repetition warnings
+  if (chapterContent) {
+    const repetitionReport = detectRepetitions(chapterContent);
+    
+    if (repetitionReport.repeatedPhrases.length > 0) {
+      constraints.push('CRITICAL: AVOID REPETITION - The following phrases were repeated: ' + repetitionReport.repeatedPhrases.join(', ') + '. Use varied vocabulary and completely rephrase these concepts.');
+      constraints.push('Track your key phrases and find synonyms or alternative expressions. Never use the exact same phrase more than once in 3 paragraphs.');
+    }
+    
+    if (repetitionReport.overexplanationCount > 20) {
+      constraints.push('CRITICAL: REDUCE EXPLANATION - Too many explanatory phrases detected (' + repetitionReport.overexplanationCount + '). Show, don\'t tell. Remove excessive because/since/as explanations.');
+      constraints.push('Instead of explaining, demonstrate through action, dialogue, or sensory details. Let readers infer meaning.');
+    }
+    
+    if (repetitionReport.paragraphsWithSimilarSentences > 5) {
+      constraints.push('CRITICAL: VARY SENTENCE LENGTHS - ' + repetitionReport.paragraphsWithSimilarSentences + ' paragraphs have similar-length sentences.');
+      constraints.push('Each paragraph MUST contain: 1-2 short sentences (3-5 words), 2-3 medium sentences (10-15 words), and 1 long sentence (25-30+ words).');
+      constraints.push('Example: "He ran. The stones crumbled beneath his feet as he sprinted through the dark corridor, his heart pounding like a drum."');
+    }
+    
+    if (repetitionReport.toneInconsistency) {
+      constraints.push('CRITICAL: FIX TONE INCONSISTENCY - ' + repetitionReport.toneInconsistency);
+      constraints.push('Maintain consistent tone throughout. If casual tone is intended, use natural dialogue and flowing descriptions.');
+    }
+  }
 
   // Originality failures
   if (metrics.originalityScore.overallOriginality < QUALITY_CONFIG.criticalThresholds.originality) {
@@ -253,109 +281,49 @@ async function regenerateChapter(
   // Build enhanced prompt with failure-specific constraints
   const basePrompt = await buildChapterPrompt(state, userInstruction || 'Regenerate with improved quality and originality');
   
-  // Add enhanced constraints
+  // Add enhanced constraints based on failures and chapter content
   const metrics: ChapterQualityMetrics = {
     chapterId: chapter.id,
     qualityCheck: {
       isValid: false,
       warnings: failures,
-      errors: [],
-      suggestions: [],
-      qualityScore: 0,
+      suggestions: []
     },
     originalityScore: {
-      id: '',
-      chapterId: chapter.id,
-      novelId: state.id,
-      overallOriginality: 0,
-      creativeDistance: 0,
-      novelMetaphorScore: 0,
-      uniqueImageryScore: 0,
-      sceneConstructionOriginality: 0,
-      emotionalBeatOriginality: 0,
+      overallOriginality: 50,
       genericPatternsDetected: [],
       mechanicalStructuresDetected: [],
-      derivativeContentFlags: [],
-      clichePatterns: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      derivativeContentFlags: []
     },
     narrativeCraftScore: {
-      id: '',
-      chapterId: chapter.id,
-      novelId: state.id,
-      overallCraftScore: 0,
-      burstinessScore: 0,
-      perplexityScore: 0,
-      subtextScore: 0,
-      interiorityScore: 0,
-      sceneIntentScore: 0,
-      dialogueNaturalnessScore: 0,
-      repetitivePatterns: [],
-      overexplanationFlags: [],
-      neutralProseFlags: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      overallCraftScore: 50,
+      burstinessScore: 50,
+      subtextScore: 50,
+      interiorityScore: 50,
+      dialogueNaturalnessScore: 50
     },
-    voiceConsistencyScore: 0,
-    editorialScore: {
-      readability: 0,
-      flow: 0,
-      emotionalAuthenticity: 0,
-      narrativeCoherence: 0,
-      structuralBalance: 0,
-    },
-    shouldRegenerate: false,
-    regenerationReasons: failures,
-    warnings: failures,
-    createdAt: Date.now(),
+    voiceConsistencyScore: 50
   };
   
-  const enhancedConstraints = buildEnhancedConstraints(failures, metrics);
+  const enhancedConstraints = buildEnhancedConstraints(failures, metrics, chapter.content);
   
-  const enhancedPrompt: BuiltPrompt = {
+  // Append constraints to the prompt
+  const enhancedPrompt = {
     ...basePrompt,
-    specificConstraints: [
-      ...enhancedConstraints,
-      ...(basePrompt.specificConstraints || []),
-      `REGENERATION ATTEMPT ${attemptNumber}: Previous version failed quality checks. Address all issues listed above.`,
-    ],
-    userInstruction: (basePrompt.userInstruction || '') + 
-      `\n\nREGENERATION REQUIRED: This is regeneration attempt ${attemptNumber}. ` +
-      `The previous version failed quality checks: ${failures.join('; ')}. ` +
-      `Address all critical issues and ensure high quality, originality, and voice consistency.`,
+    systemInstruction: basePrompt.systemInstruction + '\n\n' + enhancedConstraints.join('\n')
   };
-
-  // Generate new chapter using the generation service
-  // Note: We need to create a modified state that doesn't include the failed chapter
-  // For regeneration, we'll use the same state but with enhanced user instruction
-  const enhancedUserInstruction = enhancedPrompt.userInstruction || '';
   
-  const result = await generateNextChapter(state, enhancedUserInstruction, {
-    onPhase: (phase, data) => {
-      console.log(`[Regeneration ${attemptNumber}] Phase: ${phase}`, data);
-    },
-    skipRegeneration: true, // Prevent nested regeneration loops
-  });
-
-  // Extract chapter from result (result contains chapterTitle, chapterContent, etc.)
-  if (result && 'chapterContent' in result) {
-    const newChapter: Chapter = {
-      id: generateUUID(),
-      number: chapter.number, // Keep same chapter number for regeneration
-      title: result.chapterTitle || chapter.title,
-      content: result.chapterContent || '',
-      summary: result.chapterSummary || '',
-      logicAudit: result.logicAudit,
-      scenes: [],
-      createdAt: Date.now(),
-    };
-    return newChapter;
-  }
+  // Generate new chapter with enhanced constraints
+  const result = await generateNextChapter(state, userInstruction || 'Regenerate with improved quality and originality');
   
-  // Fallback: return original chapter if we can't parse result
-  console.warn('[Regeneration] Could not parse generation result, returning original chapter');
-  return chapter;
+  // Return the regenerated chapter
+  return {
+    ...chapter,
+    content: result?.chapterContent || chapter.content,
+    title: result?.chapterTitle || chapter.title,
+    summary: result?.chapterSummary || chapter.summary,
+    logicAudit: result?.logicAudit
+  };
 }
 
 /**
@@ -404,14 +372,14 @@ export async function regenerateWithQualityCheck(
       // Validate regenerated chapter
       const newMetrics = await validateChapterQuality(regeneratedChapter, state);
 
+      // Check if regeneration improved quality compared to previous attempt
+      const improved = 
+        newMetrics.originalityScore.overallOriginality > currentMetrics.originalityScore.overallOriginality ||
+        newMetrics.narrativeCraftScore.overallCraftScore > currentMetrics.narrativeCraftScore.overallCraftScore ||
+        newMetrics.voiceConsistencyScore > currentMetrics.voiceConsistencyScore;
+
       currentChapter = regeneratedChapter;
       currentMetrics = newMetrics;
-
-      // Check if regeneration improved quality
-      const improved = 
-        newMetrics.originalityScore.overallOriginality > metrics.originalityScore.overallOriginality ||
-        newMetrics.narrativeCraftScore.overallCraftScore > metrics.narrativeCraftScore.overallCraftScore ||
-        newMetrics.voiceConsistencyScore > metrics.voiceConsistencyScore;
 
       if (improved && !shouldRegenerate(newMetrics, config)) {
         // Success - quality improved and no longer needs regeneration

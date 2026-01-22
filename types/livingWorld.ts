@@ -114,7 +114,7 @@ export interface WorldSimulationConfig {
   /** Protect certain entities from random death */
   protectedEntityIds: string[];
   /** Model to use for simulation */
-  model: 'gemini-2.5-flash' | 'gemini-2.0-flash';
+  model: 'deepseek-chat' | 'deepseek-reasoner';
   /** Temperature for generation */
   temperature: number;
   /** Maximum tokens for response */
@@ -134,7 +134,7 @@ export const DEFAULT_WORLD_SIMULATION_CONFIG: WorldSimulationConfig = {
   minEventsPerSimulation: 1,
   majorEventChance: 0.2,
   protectedEntityIds: [], // Protagonist and critical NPCs
-  model: 'gemini-2.5-flash',
+  model: 'deepseek-chat',
   temperature: 0.8,
   maxTokens: 4096,
 };

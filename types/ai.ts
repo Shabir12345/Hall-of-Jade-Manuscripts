@@ -8,7 +8,7 @@ import type { LogicAudit, Character, WorldEntry, Territory } from '../types';
 // Character update from AI extraction
 export interface CharacterUpdate {
   name: string;
-  updateType: 'new' | 'cultivation' | 'skill' | 'item' | 'status' | 'notes' | 'relationship';
+  updateType: 'new' | 'cultivation' | 'skill' | 'item' | 'status' | 'notes' | 'relationship' | 'appearance' | 'location';
   newValue: string;
   targetName?: string; // For relationship updates
 }

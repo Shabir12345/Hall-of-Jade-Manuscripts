@@ -18,7 +18,7 @@ import {
   getMaxThreadAge,
   getWarningAge,
   determineArcPosition,
-  calculateThreadDensity,
+  calculateThreadDensity, // Use the updated calculation method
   calculateAverageResolutionTime,
   getProgressionSuggestion,
   calculateStoryHealthScore,
@@ -32,7 +32,7 @@ import {
 // Types
 // ============================================================================
 
-export type WarningCategory = 
+export type WarningCategory =
   | 'thread_progression'
   | 'character_presence'
   | 'arc_pacing'
@@ -115,17 +115,17 @@ function analyzeThreadProgression(
   const warnings: ChapterGenerationWarning[] = [];
   const threads = state.storyThreads || [];
   const activeThreads = threads.filter(t => t.status === 'active');
-  
+
   // Check for stalled threads
   activeThreads.forEach(thread => {
     const chaptersSinceUpdate = currentChapter - thread.lastUpdatedChapter;
     const threshold = getStaleThreshold(thread.type, thread.priority);
-    
+
     if (chaptersSinceUpdate >= threshold) {
-      const severity: WarningSeverity = 
+      const severity: WarningSeverity =
         thread.priority === 'critical' ? 'critical' :
-        chaptersSinceUpdate > threshold * 1.5 ? 'high' : 'medium';
-      
+          chaptersSinceUpdate > threshold * 1.5 ? 'high' : 'medium';
+
       const suggestion = getProgressionSuggestion(thread);
       warnings.push({
         id: generateUUID(),
@@ -147,10 +147,10 @@ function analyzeThreadProgression(
       });
     }
   });
-  
+
   // Check for no progression in recent chapters
   const recentProgressions = countRecentProgressions(threads, currentChapter, 3);
-  
+
   if (recentProgressions === 0 && activeThreads.length > 0) {
     // Get the top 3 highest-priority active threads to suggest
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -158,7 +158,7 @@ function analyzeThreadProgression(
       .sort((a, b) => (priorityOrder[a.priority] || 3) - (priorityOrder[b.priority] || 3))
       .slice(0, 3);
     const threadNames = topThreads.map(t => `"${t.title}"`).join(', ');
-    
+
     warnings.push({
       id: generateUUID(),
       category: 'thread_progression',
@@ -178,17 +178,17 @@ function analyzeThreadProgression(
       timestamp: Date.now(),
     });
   }
-  
+
   // Check for lack of major progressions
   const recentChapters = state.chapters.slice(-3);
   const majorProgressionsRecent = threads.filter(t => {
-    const hasRecentMajor = t.progressionNotes?.some(note => 
-      note.significance === 'major' && 
+    const hasRecentMajor = t.progressionNotes?.some(note =>
+      note.significance === 'major' &&
       note.chapterNumber >= currentChapter - 3
     );
     return hasRecentMajor;
   }).length;
-  
+
   if (majorProgressionsRecent === 0 && currentChapter > 3 && activeThreads.length > 0) {
     warnings.push({
       id: generateUUID(),
@@ -203,7 +203,7 @@ function analyzeThreadProgression(
       timestamp: Date.now(),
     });
   }
-  
+
   return warnings;
 }
 
@@ -216,9 +216,10 @@ function analyzeThreadDensity(
 ): ChapterGenerationWarning[] {
   const warnings: ChapterGenerationWarning[] = [];
   const threads = state.storyThreads || [];
-  const density = calculateThreadDensity(threads, currentChapter);
-  
-  if (density < THREAD_DENSITY_STANDARDS.critical.low) {
+  const density = calculateThreadDensity(threads, currentChapter); // Update to use the new calculation method
+
+  // Only issue critical warning if we have enough chapters to establish a pattern
+  if (density < THREAD_DENSITY_STANDARDS.critical.low && state.chapters.length > 5) {
     warnings.push({
       id: generateUUID(),
       category: 'thread_density',
@@ -275,7 +276,7 @@ function analyzeThreadDensity(
       timestamp: Date.now(),
     });
   }
-  
+
   return warnings;
 }
 
@@ -290,17 +291,17 @@ function analyzeResolutionUrgency(
   const warnings: ChapterGenerationWarning[] = [];
   const threads = state.storyThreads?.filter(t => t.status === 'active') || [];
   const remainingChapters = totalPlannedChapters - currentChapter;
-  
+
   // Check if we have enough chapters to resolve all threads
   const criticalThreads = threads.filter(t => t.priority === 'critical');
   const highThreads = threads.filter(t => t.priority === 'high');
   const avgResolutionTime = calculateAverageResolutionTime(state.storyThreads || []);
-  
+
   // Estimate chapters needed (assuming some parallel resolution)
   const estimatedChaptersNeeded = Math.ceil(
     (criticalThreads.length + highThreads.length * 0.5) * (avgResolutionTime / 2)
   );
-  
+
   if (estimatedChaptersNeeded > remainingChapters * 1.5 && remainingChapters > 0) {
     warnings.push({
       id: generateUUID(),
@@ -321,13 +322,13 @@ function analyzeResolutionUrgency(
       timestamp: Date.now(),
     });
   }
-  
+
   // Individual thread urgency - approaching max age
   threads.forEach(thread => {
     const threadAge = currentChapter - thread.introducedChapter;
     const maxAge = getMaxThreadAge(thread.type, thread.priority);
     const warningAge = getWarningAge(thread.type, thread.priority);
-    
+
     if (threadAge > maxAge) {
       warnings.push({
         id: generateUUID(),
@@ -367,7 +368,7 @@ function analyzeResolutionUrgency(
       });
     }
   });
-  
+
   // Check for no resolutions in a long time
   const recentResolutions = countRecentResolutions(state.storyThreads || [], currentChapter, 8);
   if (recentResolutions === 0 && currentChapter > 8 && threads.length > 3) {
@@ -384,7 +385,7 @@ function analyzeResolutionUrgency(
       timestamp: Date.now(),
     });
   }
-  
+
   return warnings;
 }
 
@@ -398,11 +399,11 @@ function analyzePlotHoleRisks(
   const warnings: ChapterGenerationWarning[] = [];
   const threads = state.storyThreads || [];
   const atRiskThreads = getAtRiskThreads(threads, currentChapter);
-  
+
   if (atRiskThreads.length > 0) {
     // Group by severity
     const criticalRisk = atRiskThreads.filter(t => t.priority === 'critical' || t.priority === 'high');
-    
+
     if (criticalRisk.length >= 3) {
       warnings.push({
         id: generateUUID(),
@@ -438,7 +439,7 @@ function analyzePlotHoleRisks(
       });
     }
   }
-  
+
   return warnings;
 }
 
@@ -453,17 +454,17 @@ function analyzeCharacterPresence(
   const characters = state.characterCodex || [];
   const chapters = state.chapters || [];
   const previousChapter = chapters[chapters.length - 1];
-  
+
   if (!previousChapter) return warnings;
-  
+
   // Get protagonist
   const protagonist = characters.find(c => c.isProtagonist);
-  
+
   // Check if protagonist was mentioned in previous chapter
   if (protagonist) {
     const prevContent = (previousChapter.content + ' ' + (previousChapter.summary || '')).toLowerCase();
     const protagonistMentioned = prevContent.includes(protagonist.name.toLowerCase());
-    
+
     // Check chapters since protagonist appeared
     let chaptersSinceProtagonist = 0;
     for (let i = chapters.length - 1; i >= 0; i--) {
@@ -473,7 +474,7 @@ function analyzeCharacterPresence(
       }
       chaptersSinceProtagonist++;
     }
-    
+
     if (chaptersSinceProtagonist > 1) {
       warnings.push({
         id: generateUUID(),
@@ -489,13 +490,13 @@ function analyzeCharacterPresence(
       });
     }
   }
-  
+
   // Check for characters mentioned at end of previous chapter
   const lastParagraph = previousChapter.content.slice(-500);
-  const charactersMentionedAtEnd = characters.filter(c => 
+  const charactersMentionedAtEnd = characters.filter(c =>
     lastParagraph.toLowerCase().includes(c.name.toLowerCase())
   );
-  
+
   // These characters should likely appear in the next chapter
   if (charactersMentionedAtEnd.length > 0) {
     const nonProtagonists = charactersMentionedAtEnd.filter(c => !c.isProtagonist);
@@ -514,7 +515,7 @@ function analyzeCharacterPresence(
       });
     }
   }
-  
+
   // Check for characters absent too long
   characters.filter(c => !c.isProtagonist).forEach(character => {
     const lastAppearance = findLastCharacterAppearance(character, chapters);
@@ -536,7 +537,7 @@ function analyzeCharacterPresence(
       }
     }
   });
-  
+
   return warnings;
 }
 
@@ -566,13 +567,13 @@ function analyzeArcPacing(
   const requirements = ARC_POSITION_STANDARDS[position];
   const threads = state.storyThreads || [];
   const activeThreads = threads.filter(t => t.status === 'active');
-  
+
   // Check thread progression rate for arc position
   const recentProgressions = countRecentProgressions(threads, currentChapter, 3);
-  const progressionRate = activeThreads.length > 0 
-    ? (recentProgressions / activeThreads.length) * 100 
+  const progressionRate = activeThreads.length > 0
+    ? (recentProgressions / activeThreads.length) * 100
     : 0;
-  
+
   if (progressionRate < requirements.threadProgressionRate * 0.7) {
     warnings.push({
       id: generateUUID(),
@@ -593,13 +594,13 @@ function analyzeArcPacing(
       timestamp: Date.now(),
     });
   }
-  
+
   // Check for new threads in late stages
   if (!requirements.allowNewThreads) {
-    const recentNewThreads = threads.filter(t => 
+    const recentNewThreads = threads.filter(t =>
       t.introducedChapter >= currentChapter - 3 && t.status === 'active'
     ).length;
-    
+
     if (recentNewThreads > 0) {
       warnings.push({
         id: generateUUID(),
@@ -615,12 +616,12 @@ function analyzeArcPacing(
       });
     }
   }
-  
+
   // Check for resolution requirements
   if (requirements.requiredResolutions > 0) {
     const recentResolutions = countRecentResolutions(threads, currentChapter, 5);
     const criticalThreads = activeThreads.filter(t => t.priority === 'critical');
-    
+
     if (position === 'climax' || position === 'resolution') {
       const unresolvedCritical = criticalThreads.length;
       if (unresolvedCritical > 0) {
@@ -639,7 +640,7 @@ function analyzeArcPacing(
       }
     }
   }
-  
+
   return warnings;
 }
 
@@ -660,7 +661,7 @@ export function generateChapterWarnings(
     state.chapters.length + 20,
     state.plotLedger?.find(a => a.status === 'active')?.targetEndChapter || state.chapters.length + 30
   );
-  
+
   // Generate all warnings
   const allWarnings: ChapterGenerationWarning[] = [
     ...analyzeThreadProgression(state, nextChapterNumber),
@@ -670,11 +671,11 @@ export function generateChapterWarnings(
     ...analyzeCharacterPresence(state, nextChapterNumber),
     ...analyzeArcPacing(state, nextChapterNumber, estimatedTotal),
   ];
-  
+
   // Separate blockers (critical severity)
   const blockers = allWarnings.filter(w => w.severity === 'critical');
   const warnings = allWarnings.filter(w => w.severity !== 'critical');
-  
+
   // Collect prompt constraints (prioritize by severity)
   const promptConstraints = allWarnings
     .filter(w => w.promptConstraint)
@@ -684,7 +685,7 @@ export function generateChapterWarnings(
     })
     .slice(0, 5) // Limit to top 5 constraints
     .map(w => w.promptConstraint!);
-  
+
   // Build thread summary
   const threads = state.storyThreads || [];
   const activeThreads = threads.filter(t => t.status === 'active');
@@ -692,22 +693,22 @@ export function generateChapterWarnings(
     const threshold = getStaleThreshold(t.type, t.priority);
     return (nextChapterNumber - t.lastUpdatedChapter) >= threshold;
   });
-  
+
   const threadProgressionSummary: ThreadProgressionSummary = {
     activeThreads: activeThreads.length,
     stalledThreads: stalledThreads.length,
     progressedRecently: countRecentProgressions(threads, nextChapterNumber, 3),
     resolvedRecently: countRecentResolutions(threads, nextChapterNumber, 5),
     atRiskOfPlotHole: getAtRiskThreads(threads, nextChapterNumber).length,
-    threadDensity: calculateThreadDensity(threads, nextChapterNumber),
+    threadDensity: calculateThreadDensity(threads, nextChapterNumber), // Use the updated calculation method
     criticalThreadsCount: activeThreads.filter(t => t.priority === 'critical').length,
     highPriorityThreadsCount: activeThreads.filter(t => t.priority === 'high').length,
   };
-  
+
   // Build arc position analysis
   const position = determineArcPosition(nextChapterNumber, estimatedTotal);
   const requirements = ARC_POSITION_STANDARDS[position];
-  
+
   const arcPositionAnalysis: ArcPositionAnalysis = {
     currentPosition: position,
     positionName: requirements.name,
@@ -720,10 +721,10 @@ export function generateChapterWarnings(
     missingElements: [],
     chaptersRemaining: estimatedTotal - nextChapterNumber,
   };
-  
+
   // Calculate overall health
   const overallHealth = calculateStoryHealthScore(threads, nextChapterNumber, estimatedTotal);
-  
+
   return {
     chapterNumber: nextChapterNumber,
     timestamp: Date.now(),
@@ -740,15 +741,15 @@ export function generateChapterWarnings(
  * Log chapter generation report to console in a structured format
  */
 export function logChapterGenerationReport(report: ChapterGenerationReport): void {
-  const healthEmoji = report.overallHealth >= 80 ? '✅' : 
-                      report.overallHealth >= 60 ? '⚠️' : '❌';
-  
+  const healthEmoji = report.overallHealth >= 80 ? '✅' :
+    report.overallHealth >= 60 ? '⚠️' : '❌';
+
   console.group(`📊 Chapter ${report.chapterNumber} Generation Health Report`);
-  
+
   // Overall health
   console.log(`${healthEmoji} Overall Health: ${report.overallHealth}/100`);
   console.log(`📍 Arc Position: ${report.arcPositionAnalysis.positionName} (${report.arcPositionAnalysis.progressPercentage}%)`);
-  
+
   // Thread summary
   console.group('📚 Thread Summary');
   console.log(`Active Threads: ${report.threadProgressionSummary.activeThreads}`);
@@ -758,7 +759,7 @@ export function logChapterGenerationReport(report: ChapterGenerationReport): voi
   console.log(`Recent Progressions: ${report.threadProgressionSummary.progressedRecently}`);
   console.log(`Recent Resolutions: ${report.threadProgressionSummary.resolvedRecently}`);
   console.groupEnd();
-  
+
   // Blockers
   if (report.blockers.length > 0) {
     console.group('🚫 BLOCKERS (Must Address)');
@@ -768,7 +769,7 @@ export function logChapterGenerationReport(report: ChapterGenerationReport): voi
     });
     console.groupEnd();
   }
-  
+
   // High priority warnings
   const highWarnings = report.warnings.filter(w => w.severity === 'high');
   if (highWarnings.length > 0) {
@@ -779,7 +780,7 @@ export function logChapterGenerationReport(report: ChapterGenerationReport): voi
     });
     console.groupEnd();
   }
-  
+
   // Medium/Low warnings
   const otherWarnings = report.warnings.filter(w => w.severity === 'medium' || w.severity === 'low');
   if (otherWarnings.length > 0) {
@@ -789,14 +790,14 @@ export function logChapterGenerationReport(report: ChapterGenerationReport): voi
     });
     console.groupEnd();
   }
-  
+
   // Prompt constraints
   if (report.promptConstraints.length > 0) {
     console.group('📋 Prompt Constraints Added');
     report.promptConstraints.forEach((c, i) => console.log(`${i + 1}. ${c}`));
     console.groupEnd();
   }
-  
+
   console.groupEnd();
 }
 
@@ -805,20 +806,20 @@ export function logChapterGenerationReport(report: ChapterGenerationReport): voi
  */
 export function getReportSummary(report: ChapterGenerationReport): string {
   const lines: string[] = [];
-  
-  const healthEmoji = report.overallHealth >= 80 ? '✅' : 
-                      report.overallHealth >= 60 ? '⚠️' : '❌';
-  
+
+  const healthEmoji = report.overallHealth >= 80 ? '✅' :
+    report.overallHealth >= 60 ? '⚠️' : '❌';
+
   lines.push(`${healthEmoji} Health: ${report.overallHealth}/100 | ${report.arcPositionAnalysis.positionName}`);
   lines.push(`📚 Threads: ${report.threadProgressionSummary.activeThreads} active, ${report.threadProgressionSummary.stalledThreads} stalled, ${report.threadProgressionSummary.atRiskOfPlotHole} at risk`);
-  
+
   if (report.blockers.length > 0) {
     lines.push(`🚫 ${report.blockers.length} blocker(s)`);
   }
-  
+
   if (report.warnings.filter(w => w.severity === 'high').length > 0) {
     lines.push(`⚠️ ${report.warnings.filter(w => w.severity === 'high').length} high-priority warning(s)`);
   }
-  
+
   return lines.join('\n');
 }

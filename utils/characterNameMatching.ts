@@ -53,19 +53,19 @@ export function classifyName(fullName: string): NameClassification {
   const nameLower = fullName.toLowerCase().trim();
   const nameParts = nameLower.split(/\s+/).filter(part => part.length > 0);
   const wordCount = nameParts.length;
-  
+
   // Check if name contains common words
   const hasCommonWords = nameParts.some(part => COMMON_WORDS.has(part));
-  
+
   // Check if name parts look like proper nouns
-  const properNounCount = nameParts.filter(part => 
-    PROPER_NOUN_INDICATORS.has(part) || 
+  const properNounCount = nameParts.filter(part =>
+    PROPER_NOUN_INDICATORS.has(part) ||
     /^[A-Z]/.test(part) || // Starts with capital (in original)
     part.length <= 4 // Short words are often names
   ).length;
-  
+
   const isLikelyProperName = properNounCount >= wordCount / 2;
-  
+
   // Determine type
   let type: NameType;
   if (wordCount === 1) {
@@ -81,7 +81,7 @@ export function classifyName(fullName: string): NameClassification {
     // Mixed case
     type = 'mixed';
   }
-  
+
   return {
     type,
     hasCommonWords,
@@ -119,26 +119,26 @@ export function getNameMatchStrategy(fullName: string): NameMatchStrategy {
   const classification = classifyName(fullName);
   const nameLower = fullName.toLowerCase().trim();
   const nameParts = nameLower.split(/\s+/).filter(part => part.length > 0);
-  
+
   const patterns: RegExp[] = [];
   const variations: string[] = [];
-  
+
   // Always include full name with word boundaries
   patterns.push(createWordBoundaryPattern(fullName));
   variations.push(nameLower);
-  
+
   // For proper names or mixed names, allow first/last name matching
   if (classification.type === 'proper' || classification.type === 'mixed') {
     if (nameParts.length > 1) {
       const firstName = nameParts[0];
       const lastName = nameParts[nameParts.length - 1];
-      
+
       // Only add first name if it's not a common word
       if (!COMMON_WORDS.has(firstName) && firstName.length >= 2) {
         patterns.push(createWordBoundaryPattern(firstName));
         variations.push(firstName);
       }
-      
+
       // Only add last name if it's different from first name and not a common word
       if (lastName !== firstName && !COMMON_WORDS.has(lastName) && lastName.length >= 2) {
         patterns.push(createWordBoundaryPattern(lastName));
@@ -146,7 +146,7 @@ export function getNameMatchStrategy(fullName: string): NameMatchStrategy {
       }
     }
   }
-  
+
   // For descriptive names, require full name match (already added above)
   // But also check if any individual word is unique enough
   if (classification.type === 'descriptive' && nameParts.length > 1) {
@@ -160,7 +160,7 @@ export function getNameMatchStrategy(fullName: string): NameMatchStrategy {
       }
     }
   }
-  
+
   return {
     patterns,
     variations,
@@ -173,17 +173,17 @@ export function getNameMatchStrategy(fullName: string): NameMatchStrategy {
  */
 export function textContainsCharacterName(text: string, fullName: string): boolean {
   if (!text || !fullName) return false;
-  
+
   const strategy = getNameMatchStrategy(fullName);
   const textLower = text.toLowerCase();
-  
+
   // Try regex patterns first (word boundary matching)
   for (const pattern of strategy.patterns) {
     if (pattern.test(text)) {
       return true;
     }
   }
-  
+
   // Fallback: check variations (but only for proper names)
   // This handles cases where word boundaries might not work perfectly
   if (strategy.requireFullMatch) {
@@ -195,10 +195,65 @@ export function textContainsCharacterName(text: string, fullName: string): boole
   }
 }
 
+export interface NamedEntity {
+  name: string;
+  [key: string]: any;
+}
+
 /**
- * Gets all name variations for a character (for display/debugging purposes)
+ * Finds the best character match for an extracted name.
+ * Prioritizes exact matches, then variation matches.
  */
-export function getNameVariations(fullName: string): string[] {
-  const strategy = getNameMatchStrategy(fullName);
-  return strategy.variations;
+export function findBestMatch<T extends NamedEntity>(
+  extractedName: string,
+  entities: T[]
+): T | undefined {
+  if (!extractedName || !entities || entities.length === 0) return undefined;
+
+  const normExtracted = extractedName.toLowerCase().trim();
+
+  // 1. Exact match (fastest)
+  const exact = entities.find(e => e.name.toLowerCase().trim() === normExtracted);
+  if (exact) return exact;
+
+  // 2. Check for variations
+  // We look for the character whose name variations appear in the extracted name
+  // e.g. extracted "Elder Zhang" matches character "Zhang San" because "Zhang" is a variation of "Zhang San"
+  // and "Elder Zhang" contains "Zhang".
+
+  let bestMatch: T | undefined;
+  let maxScore = 0;
+
+  for (const entity of entities) {
+    const strategy = getNameMatchStrategy(entity.name);
+
+    // Check if extracted name IS a variation (e.g. extracted "Wei" matches "Li Wei")
+    if (strategy.variations.includes(normExtracted)) {
+      // This is a strong match
+      return entity;
+    }
+
+    // Check if extracted name contains a variation (e.g. "Elder Zhang" contains "Zhang")
+    // Only for proper names/mixed, not descriptive (too generic)
+    if (strategy.requireFullMatch) continue;
+
+    for (const variation of strategy.variations) {
+      // Skip very short variations to avoid false positives (e.g. "Li" might match "Light")
+      // getNameMatchStrategy already filters common words and short words mostly, but be safe
+      if (variation.length < 2) continue;
+
+      // Use word boundary check for containment
+      const regex = new RegExp(`\\b${escapeRegex(variation)}\\b`, 'i');
+      if (regex.test(normExtracted)) {
+        // Match found!
+        // Prefer the match with the longest variation (most specific)
+        if (variation.length > maxScore) {
+          maxScore = variation.length;
+          bestMatch = entity;
+        }
+      }
+    }
+  }
+
+  return bestMatch;
 }

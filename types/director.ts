@@ -164,7 +164,7 @@ export const DEFAULT_DIRECTOR_CONFIG: DirectorConfig = {
   defaultTargetWordCount: 3000,
   enableClimaxProtection: true,
   climaxProtectionThreshold: 3, // Start protecting 3 chapters before climax
-  useReasonerMode: true,
+  useReasonerMode: false, // Disabled for faster performance (was true)
   temperature: 0.7,
   maxTokens: 4096,
 };

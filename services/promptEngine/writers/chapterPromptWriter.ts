@@ -2,7 +2,7 @@ import { NovelState, BuiltPrompt, Character } from '../../../types';
 import { buildPrompt } from '../promptBuilder';
 import { SYSTEM_INSTRUCTION } from '../../../constants';
 import { parseAndResolveReferences } from '../../referenceService';
-import { analyzeForeshadowing, getArcChapters } from '../arcContextAnalyzer';
+import { getArcChapters } from '../arcContextAnalyzer';
 import { generateConsistencyConstraints } from '../consistencyConstraints';
 import { textContainsCharacterName } from '../../../utils/characterNameMatching';
 import { getActivePatterns } from '../../patternDetectionService';
@@ -50,30 +50,29 @@ export async function buildChapterPrompt(
   const nextChapterNumber = state.chapters.length + 1;
   const activeArc = state.plotLedger.find(a => a.status === 'active');
   const protagonists = findProtagonists(state);
-  const protagonist = protagonists.length > 0 ? protagonists[0] : null;
-  
+
   // Run pre-generation quality checks to detect issues before prompt building
   const qualityCheck = validateChapterGenerationQuality(state, nextChapterNumber);
   const originalityCheck = checkOriginalityPreparation(state, nextChapterNumber);
-  
+
   // Parse and resolve @ references from user instruction
   const referenceContext = parseAndResolveReferences(userInstruction, state);
-  
+
   // Determine narrative momentum based on recent chapters
   const recentChapters = state.chapters.slice(-3);
   const narrativeMomentum = determineNarrativeMomentum(state, recentChapters);
-  
+
   // Determine appropriate chapter structure
   const chapterStructure = determineChapterStructure(state, nextChapterNumber);
-  
+
   // Build character development needs
   const characterNeeds = identifyCharacterDevelopmentNeeds(state);
   const arcStageHint = (() => {
     if (!activeArc) return '';
-    
+
     // Get actual arc chapters to determine position
     const arcChapters = getArcChapters(activeArc, state.chapters, state.plotLedger);
-    
+
     // Calculate position in arc (0-indexed from start)
     let idx: number;
     if (activeArc.startedAtChapter && activeArc.startedAtChapter > 0 && activeArc.startedAtChapter <= state.chapters.length + 1) {
@@ -86,7 +85,7 @@ export async function buildChapterPrompt(
       // No chapters yet and no valid startedAtChapter - treat as beginning
       idx = 0;
     }
-    
+
     // Determine stage based on position
     if (idx === 0) return 'Arc Stage: BEGINNING (set-up, stakes, first irreversible step).';
     if (idx <= 2) return 'Arc Stage: EARLY (complications, rising pressure, lines drawn).';
@@ -340,12 +339,49 @@ Write dialogue that sounds like real people talking, not formal or academic spee
   • Incomplete thoughts: Some dialogue should trail off or be cut short. Example: "Well, if you really think..." or "I mean, it's just—"
   • Character voice variation: Each character should have unique speech patterns (formal vs casual, verbose vs terse, direct vs indirect). Don't make all characters sound the same.
   • Avoid: Overly formal dialogue, perfect grammar in all speech, characters saying exactly what they mean, identical speech patterns for all characters.
-  • Target score: Dialogue naturalness should score 50-70/100 (currently often 20-40/100 - too formal). Focus on making dialogue feel like natural conversation, not written prose.
+  • Target score: Dialogue naturalness should score 50-70/100. Focus on making dialogue feel like natural conversation - character-specific, indirect, and emotionally resonant.
+
+[PROSE FLOW & GRAMMATICAL INTEGRITY - CRITICAL]
+
+Your primary goal is to write FLUID, EVOCATIVE NARRATIVE. AI detection evasion must NEVER come at the cost of basic grammar or readability.
+
+🚫 FORBIDDEN: TELEGRAPHIC PROSE (THE "AI TELLS") 🚫
+- NO noun-heavy fragments (e.g., "Blade flash. Blood spray. Alex move.")
+- NO removal of articles/conjunctions to hit word count targets (e.g., "The sun rose" NOT "Sun rose")
+- NO stripping of auxiliary verbs ("He was running" NOT "He running")
+- NO "list-like" narrative where sentences are just short, disconnected observations of objects.
+
+✅ REQUIRED: COHESIVE SENTENCES ✅
+- Use complex and compound sentences to connect ideas naturally.
+- Ensure every sentence has a clear subject and verb.
+- Use transition words (yet, however, although, while) to weave scenes together.
+- Prioritize the RHYTHM of a master storyteller over mathematical sentence variation.
 
 Rejection Criteria: Reject output that:
   • Overexplains (shows AND tells instead of showing)
   • Sounds neutral or encyclopedic
   • Uses repetitive phrasing or structural symmetry
+
+CRITICAL REPETITION PREVENTION REQUIREMENTS:
+- NEVER repeat the same phrase within 3 paragraphs
+- Track key phrases and vary your wording consistently
+- If describing an object, use different descriptors each time
+- Avoid using the same adjective/verb combination more than once per chapter
+- Vary sentence beginnings: never start more than 2 sentences in a paragraph with the same word
+- Use synonyms and rephrase concepts to avoid repetition
+
+TONE CONSISTENCY REQUIREMENTS:
+- Maintain consistent tone throughout the chapter
+- If casual tone is intended: use natural dialogue, contractions, and flowing descriptions
+- Avoid mixing formal language with casual tone
+- Check every paragraph against the target tone
+- Ensure character voices remain consistent
+
+ENHANCED SENTENCE STRUCTURE REQUIREMENTS:
+- Each paragraph must contain: 1-2 short sentences (3-5 words), 2-3 medium sentences (10-15 words), and 1 long sentence (25-30+ words)
+- Example: "He ran. The stones crumbled beneath his feet as he sprinted through the dark corridor, his heart pounding like a drum against his ribs while the echoes of pursuit followed him like a shadow."
+- Vary sentence beginnings: avoid starting multiple sentences with the same word
+- Create natural rhythm with varied sentence lengths
   • Lacks character-specific voice and interiority
   • Has unclear scene purpose or nothing changes
 
@@ -392,7 +428,7 @@ Rejection Criteria: Flag output that feels:
 HUMAN-LIKE WRITING PATTERNS FOR AI DETECTION EVASION (CRITICAL):
 The following techniques are essential to create prose that reads as authentically human-written:
 
-- VARY SENTENCE LENGTH: Dramatically vary sentence length throughout the chapter. Mix very short sentences (3-5 words) for impact with longer sentences (25-30+ words) for complex thoughts. Use sentence fragments strategically for emphasis or rhythm. Alternate between simple, compound, and complex sentences. Occasionally break conventional patterns - start sentences unconventionally when it serves the narrative. Avoid sequences of similar-length sentences. CRITICAL: Never have more than 2 consecutive sentences with similar lengths (±12% variance, stricter). If you detect this pattern, immediately break it by inserting a very short or very long sentence. Track sentence starters (first 3 words) and ensure <25% repetition (stricter) - avoid patterns like "He... He... He..." or "The... The... The...".
+- VARY SENTENCE LENGTH: Naturally vary sentence length throughout the chapter. Mix short, punchy sentences for impact with longer, flowing sentences for complex thoughts or detailed descriptions. Avoid monotonous, robotic sentence rhythms. CRITICAL: While variation is required, every sentence MUST be grammatically complete and fluid. Do NOT use fragments merely to vary length unless it serves a specific stylistic purpose in a high-tension moment.
 
 ${getForbiddenWordsPromptText()}
 
@@ -465,8 +501,8 @@ The ending should feel like the chapter was cut off mid-scene, mid-action, or mi
   * Rhetorical questions: Add 3-5 rhetorical questions throughout the chapter where appropriate (increased from 2-3)
   * Strategic repetition: Occasionally repeat a word or phrase for emphasis (1-2 instances per chapter, but not excessively - this creates natural variation)
   * Irregular punctuation: Use dashes, ellipses, and other punctuation creatively to create natural pauses and emphasis
-  * Thought interruptions: Show characters' thoughts being interrupted mid-sentence, creating natural breaks
-  * Dialogue interruptions: 12-18% of dialogue exchanges should have interruptions, incomplete thoughts, or mid-sentence breaks (increased from 10-15%)
+  * Thought interruptions: Show characters' thoughts being interrupted naturally, using standard punctuation (— or ...).
+  * Dialogue interruptions: 12-18% of dialogue exchanges should have interruptions or trailing thoughts. Use punctuation sparingly and ONLY where it makes grammatical sense. Do NOT add dashes randomly in the middle of sentences where they don't belong.
   * Sensory details: Include at least 4 unique sensory descriptions per scene (sight, sound, smell, touch, taste) - be specific and unexpected (the smell of old wood, the texture of worn fabric, the taste of dust) - increased from 3
   * Time markers variation: Use varied time markers ("moments later", "after what felt like hours", "before he could react") instead of uniform patterns
   * Action/description interweaving: Alternate between action and description at irregular intervals, not in predictable patterns
@@ -486,21 +522,23 @@ The ending should feel like the chapter was cut off mid-scene, mid-action, or mi
   * Lexical balance: Balance content words and function words (target 45-55% lexical density)
   * N-gram variation: Avoid repeating common 3-word and 4-word phrases - restructure sentences
 
-⚠️ CRITICAL BURSTINESS REQUIREMENT (SENTENCE LENGTH VARIATION) ⚠️
-AI-generated text is detected by sequences of similar-length sentences within paragraphs. You MUST dramatically vary sentence lengths WITHIN each paragraph:
+⚠️ CRITICAL BURSTINESS & FLOW REQUIREMENT ⚠️
+Human-written prose flows with a natural rhythm. While AI detection evasion is important, your first priority is engaging, grammatically correct prose.
 
-MANDATORY PATTERN (follow this for EVERY paragraph with 3+ sentences):
-- If one sentence is 8-12 words, the next should be EITHER very short (3-5 words) OR much longer (20-30 words)
-- NEVER write 3+ consecutive sentences of similar length (e.g., all 10-15 word sentences = VIOLATION)
-- Each paragraph should contain a MIX of: very short (3-5 words), short (6-10 words), medium (11-18 words), and long (19-30+ words) sentences
+MANDATORY PATTERN (follow this for natural rhythm):
+- Vary sentence structures (Simple, Compound, Complex).
+- Use a mix of short, medium, and long sentences based on the MOOD of the scene.
+- Action scenes: Shorter, punchier sentences.
+- Description/Reflection: Longer, more fluid sentences.
+- NO telegraphic fragments or stripped-down prose. Use articles (the, a, an) and auxiliary verbs naturally.
 
-EXAMPLE OF BAD PARAGRAPH (FORBIDDEN - similar lengths trigger AI detection):
-"The courtyard was empty. The sun was setting slowly. The wind blew through the trees. He walked toward the gate." 
-[ALL sentences are 4-6 words - this SCREAMS "AI generated"]
+EXAMPLE OF BAD PROSE (FORBIDDEN - Telegraphic AI style):
+"Throne chamber tremble. Core fracture. Alex felt energy. System analyze. Analysis initiate."
+[This is ungrammatical and looks like a list - EXTREMELY BAD]
 
-EXAMPLE OF GOOD PARAGRAPH (required pattern):
-"The courtyard stretched empty before him. Silence. The last rays of sun painted everything in shades of amber and crimson as if the sky itself was bleeding, mourning the end of another day that had brought no answers. He walked toward the gate."
-[Varied lengths: 6 words, 1 word, 28 words, 7 words - this reads as human-written]
+EXAMPLE OF GOOD PROSE (Required):
+"The throne chamber trembled as the guardian beast's fractured core roared to life. Alex could feel the immortal energy surging through the stone floor, a chaotic wave that made the air crackle with violet lightning."
+[This is fluid, connected, and grammatically correct - GOOD]
 
 SELF-CHECK: Before finalizing each paragraph, count word lengths:
 1. Are there 3+ consecutive sentences of similar length? → REWRITE those sentences
@@ -547,7 +585,7 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
     if (activePatterns && activePatterns.length > 0) {
       patternConstraints = await buildIssuePreventionConstraints(activePatterns);
       console.log(`[Chapter Prompt] Injected ${patternConstraints.length} pattern-based constraints from ${activePatterns.length} active patterns`);
-      
+
       // Log which patterns were included
       activePatterns.forEach(pattern => {
         if (pattern.occurrenceCount >= pattern.thresholdCount) {
@@ -561,7 +599,7 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
 
   // Convert detected repetitive patterns and issues from quality check into prompt constraints
   const qualityBasedConstraints: string[] = [];
-  
+
   // Add constraints for detected repetitive patterns (e.g., "the" as sentence starter)
   if (originalityCheck.repetitivePatterns.length > 0) {
     originalityCheck.repetitivePatterns.forEach(pattern => {
@@ -572,24 +610,24 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
       }
     });
   }
-  
+
   // Add constraints for overused tropes
   if (originalityCheck.overusedTropes.length > 0) {
     qualityBasedConstraints.push(`CRITICAL: These tropes are overused: ${originalityCheck.overusedTropes.join(', ')}. Either subvert them creatively, avoid them entirely, or give them a fresh unique twist in this chapter.`);
   }
-  
+
   // Add constraints for derivative scene structures
   if (originalityCheck.derivativeStructures.length > 0) {
     qualityBasedConstraints.push(`IMPORTANT: Recent chapters used these common scene structures: ${originalityCheck.derivativeStructures.join(', ')}. Create unique scene construction in this chapter - avoid formulaic patterns.`);
   }
-  
+
   // Add suggestions from originality check as constraints
   if (originalityCheck.suggestions.length > 0) {
     originalityCheck.suggestions.slice(0, 3).forEach(suggestion => {
       qualityBasedConstraints.push(`IMPORTANT: ${suggestion}`);
     });
   }
-  
+
   // Add other quality check suggestions if relevant
   if (qualityCheck.suggestions.length > 0) {
     qualityCheck.suggestions.slice(0, 2).forEach(suggestion => {
@@ -685,9 +723,9 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
       previousChapter?.summary || '',
       activeArc?.description || '',
     ].join(' ');
-    
+
     const economicDetection = detectEconomicScene(textToCheck);
-    
+
     // Always include economic context if market data exists (for consistency)
     // More detailed context for economic scenes, compact for others
     if (economicDetection.hasEconomicContent && economicDetection.confidence > 0.3) {
@@ -702,20 +740,19 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
       console.log(`[Chapter Prompt] Economic scene detected (${economicDetection.suggestedContext}, confidence: ${economicDetection.confidence.toFixed(2)}). Injecting full market context.`);
     } else if (state.globalMarketState.standardItems.length > 0) {
       // Compact economic reminder for non-economic scenes
-      const compactMarket = `[ECONOMIC REFERENCE: Primary currency is ${
-        state.globalMarketState.currencies.find(c => c.isPrimary)?.name || 'Spirit Stones'
-      }. If any transactions occur, reference established prices for consistency.]`;
+      const compactMarket = `[ECONOMIC REFERENCE: Primary currency is ${state.globalMarketState.currencies.find(c => c.isPrimary)?.name || 'Spirit Stones'
+        }. If any transactions occur, reference established prices for consistency.]`;
       enhancedUserInstruction = `${compactMarket}\n\n${enhancedUserInstruction}`;
     }
   }
 
   // Enhanced: Add consistency constraints
   const charactersInEnding = previousChapter
-    ? state.characterCodex.filter(c => 
-        textContainsCharacterName(previousChapter.content.slice(-1000), c.name)
-      ).map(c => c.id)
+    ? state.characterCodex.filter(c =>
+      textContainsCharacterName(previousChapter.content.slice(-1000), c.name)
+    ).map(c => c.id)
     : state.characterCodex.filter(c => c.isProtagonist).map(c => c.id);
-  
+
   const consistencyConstraints = generateConsistencyConstraints(state, charactersInEnding);
   const enhancedConstraints = [
     ...specificConstraints,
@@ -726,12 +763,12 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
 
   // Get model-specific context limits if model provider is specified
   const modelLimits = modelProvider ? getContextLimitsForModel(modelProvider) : null;
-  
+
   // Use model-specific limits if available, otherwise use defaults optimized for continuity
-  const configMaxContextLength = modelLimits 
-    ? modelLimits.maxContextLength 
+  const configMaxContextLength = modelLimits
+    ? modelLimits.maxContextLength
     : 4000; // Default for Claude/smaller context windows
-  
+
   const builtPrompt = await buildPrompt(state, {
     role: 'You are the "Apex Sovereign Author," a world-class novelist and master literary architect specializing in Xianxia, Xuanhuan, and System epics. You write with the precision of a master surgeon and the soul of a poet. CRITICAL: Every chapter you write MUST be at least 1500 words - this is a non-negotiable minimum requirement.',
     taskDescription,
@@ -803,7 +840,7 @@ function determineChapterStructure(
   if (activeArc) {
     // Get actual arc chapters to determine position
     const arcChapters = getArcChapters(activeArc, state.chapters, state.plotLedger);
-    
+
     // Calculate position in arc (0-indexed from start)
     let indexInArc: number;
     if (activeArc.startedAtChapter && activeArc.startedAtChapter > 0 && activeArc.startedAtChapter <= state.chapters.length + 1) {
@@ -887,7 +924,7 @@ function identifyCharacterDevelopmentNeeds(state: NovelState): string {
     return 'CHARACTER DEVELOPMENT: Continue developing characters naturally through their actions and interactions.';
   }
 
-  const characterMentions = state.chapters.filter(c => 
+  const characterMentions = state.chapters.filter(c =>
     c.content.toLowerCase().includes(mainCharacter.name.toLowerCase()) ||
     c.summary.toLowerCase().includes(mainCharacter.name.toLowerCase())
   ).length;
@@ -898,8 +935,8 @@ function identifyCharacterDevelopmentNeeds(state: NovelState): string {
 
   // Check for cultivation/power progression needs
   const needsBreakthrough = mainCharacter.currentCultivation.toLowerCase().includes('condensation') ||
-                           mainCharacter.currentCultivation.toLowerCase().includes('foundation');
-  
+    mainCharacter.currentCultivation.toLowerCase().includes('foundation');
+
   if (needsBreakthrough && characterMentions > 5) {
     return `CHARACTER DEVELOPMENT: ${mainCharacter.name} may be ready for a cultivation breakthrough or significant power advancement. Consider this in the chapter.`;
   }

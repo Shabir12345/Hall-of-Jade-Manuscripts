@@ -1,4 +1,5 @@
 import { env } from '../utils/env';
+import { recordCacheHit, recordCacheMiss } from './promptCacheMonitor';
 
 /**
  * DeepSeek Service - "The Writer"
@@ -43,6 +44,13 @@ interface DeepSeekChatCompletionResponse {
     message?: { role: DeepSeekRole; content?: string };
     finish_reason?: string;
   }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+  };
 }
 
 function getDeepSeekApiKey(): string {
@@ -55,7 +63,20 @@ function getDeepSeekApiKey(): string {
   return key;
 }
 
-async function deepseekChat(request: DeepSeekChatCompletionRequest): Promise<string> {
+/**
+ * Simple hash function for generating cache keys
+ */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+async function deepseekChat(request: DeepSeekChatCompletionRequest): Promise<{ text: string; usage?: DeepSeekChatCompletionResponse['usage'] }> {
   const apiKey = getDeepSeekApiKey();
 
   const res = await fetch('https://api.deepseek.com/chat/completions', {
@@ -74,7 +95,10 @@ async function deepseekChat(request: DeepSeekChatCompletionRequest): Promise<str
 
   const data = (await res.json()) as DeepSeekChatCompletionResponse;
   const content = data.choices?.[0]?.message?.content;
-  return content ?? '';
+  return {
+    text: content ?? '',
+    usage: data.usage
+  };
 }
 
 /**
@@ -100,17 +124,136 @@ export async function deepseekText(opts: {
 
   // Default to deepseek-chat which uses the latest V3.2 model
   const model = opts.model || 'deepseek-chat';
-  
+
   // DeepSeek-V3.2 supports up to 8192 output tokens
   const maxTokens = opts.maxTokens ? Math.min(opts.maxTokens, 8192) : undefined;
-  
-  return deepseekChat({
+
+  const result = await deepseekChat({
     model,
     messages,
     temperature: opts.temperature,
     top_p: opts.topP,
     max_tokens: maxTokens,
   });
+
+  // Track cache usage
+  if (result.usage) {
+    const cacheHit = result.usage.prompt_cache_hit_tokens || 0;
+    const totalPromptTokens = result.usage.prompt_tokens;
+    const cacheKey = `deepseek:${model}:${simpleHash(opts.user.substring(0, 500))}`;
+
+    if (cacheHit > 0) {
+      recordCacheHit('deepseek', cacheKey, cacheHit, totalPromptTokens);
+    } else {
+      recordCacheMiss('deepseek', cacheKey, totalPromptTokens);
+    }
+  }
+
+  return result.text;
+}
+
+/**
+ * Strips markdown code blocks from JSON response
+ */
+function stripMarkdownCodeBlocks(text: string): string {
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
+
+  let cleaned = text.trim();
+
+  // First, try to match complete markdown code blocks with language identifier
+  const completeJsonBlock = /^```\s*json\s*\n?([\s\S]*?)\n?```\s*$/i;
+  if (completeJsonBlock.test(cleaned)) {
+    const match = cleaned.match(completeJsonBlock);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // Try generic code block pattern
+  const completeCodeBlock = /^```\s*\n?([\s\S]*?)\n?```\s*$/;
+  if (completeCodeBlock.test(cleaned)) {
+    const match = cleaned.match(completeCodeBlock);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // Fallback removals
+  if (/^```json/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^```json\s*\n?/i, '');
+  } else if (/^```/.test(cleaned)) {
+    cleaned = cleaned.replace(/^```\s*\n?/, '');
+  }
+
+  cleaned = cleaned.replace(/\s*\n?```\s*$/, '');
+  cleaned = cleaned.replace(/^`+/, '').replace(/`+$/, '');
+
+  return cleaned.trim();
+}
+
+/**
+ * Fixes control characters in JSON strings
+ */
+function fixControlCharacters(jsonString: string): string {
+  return jsonString.replace(/([^\\]|^)([\x00-\x1F\x7F])/g, (match, prefix, char) => {
+    if (prefix === '\\') return match;
+    const code = char.charCodeAt(0);
+    if (code === 0x0A) return prefix + '\\n';
+    if (code === 0x0D) return prefix + '\\r';
+    if (code === 0x09) return prefix + '\\t';
+    return prefix + '\\u' + ('0000' + code.toString(16)).slice(-4);
+  });
+}
+
+/**
+ * Fixes common JSON issues like trailing commas
+ */
+function fixCommonJsonIssues(jsonString: string): string {
+  let fixed = jsonString;
+  fixed = fixed.replace(/,(\s*[}\]])/g, '$1');
+  fixed = fixed.replace(/,(\s*])/g, '$1');
+
+  try {
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < fixed.length; i++) {
+      const char = fixed[i];
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+      if (char === '"') {
+        if (!inString) {
+          inString = true;
+          result += char;
+        } else {
+          const rest = fixed.substring(i + 1).trim();
+          if (rest.startsWith(',') || rest.startsWith('}') || rest.startsWith(']') ||
+            rest.startsWith(':') || i === fixed.length - 1) {
+            inString = false;
+            result += char;
+          } else {
+            result += '\\"';
+          }
+        }
+      } else {
+        result += char;
+      }
+    }
+    return result;
+  } catch (e) {
+    return fixed;
+  }
 }
 
 /**
@@ -119,11 +262,11 @@ export async function deepseekText(opts: {
  */
 function tryFixTruncatedJson(jsonString: string): string {
   let fixed = jsonString.trim();
-  
+
   if (!fixed || fixed.length === 0) {
     return '{}';
   }
-  
+
   // If it doesn't end with }, try to close it
   if (!fixed.endsWith('}') && !fixed.endsWith(']')) {
     // Count unclosed brackets and strings
@@ -134,32 +277,32 @@ function tryFixTruncatedJson(jsonString: string): string {
     let lastStringStart = -1;
     let lastSafePosition = -1; // Last position where we had complete fix entries
     let fixesArrayStart = -1;
-    
+
     // Find the fixes array if it exists
     const fixesArrayMatch = fixed.match(/"fixes"\s*:\s*\[/);
     if (fixesArrayMatch) {
       fixesArrayStart = fixesArrayMatch.index! + fixesArrayMatch[0].length;
     }
-    
+
     for (let i = 0; i < fixed.length; i++) {
       const char = fixed[i];
-      
+
       if (escapeNext) {
         escapeNext = false;
         continue;
       }
-      
+
       if (char === '\\') {
         escapeNext = true;
         continue;
       }
-      
+
       if (char === '"' && !escapeNext) {
         if (!inString) {
           lastStringStart = i;
         }
         inString = !inString;
-        
+
         // If we're closing a string, mark this as a safe position if we're past the fixes array
         if (!inString && fixesArrayStart > 0 && i > fixesArrayStart) {
           // Check if we just closed a fix object
@@ -178,9 +321,9 @@ function tryFixTruncatedJson(jsonString: string): string {
         }
         continue;
       }
-      
+
       if (inString) continue;
-      
+
       if (char === '{') openBraces++;
       if (char === '}') {
         openBraces--;
@@ -192,7 +335,7 @@ function tryFixTruncatedJson(jsonString: string): string {
       if (char === '[') openBrackets++;
       if (char === ']') openBrackets--;
     }
-    
+
     // If we're in a string and it's very long (likely truncated chapter content)
     if (inString && fixesArrayStart > 0 && lastStringStart > fixesArrayStart) {
       const stringLength = fixed.length - lastStringStart;
@@ -202,15 +345,15 @@ function tryFixTruncatedJson(jsonString: string): string {
         if (lastSafePosition > 0 && lastSafePosition < fixed.length && lastSafePosition > fixesArrayStart) {
           console.warn('[JSON Repair] Detected truncated long string in fixes array. Removing incomplete fix entry.');
           fixed = fixed.substring(0, lastSafePosition);
-          
+
           // Ensure proper JSON structure
           fixed = fixed.trim();
-          
+
           // Remove trailing comma if present
           while (fixed.endsWith(',') || fixed.endsWith(' ')) {
             fixed = fixed.slice(0, -1).trim();
           }
-          
+
           // Close the fixes array if needed
           if (!fixed.endsWith(']')) {
             // Check if we're inside the fixes array by counting brackets
@@ -223,7 +366,7 @@ function tryFixTruncatedJson(jsonString: string): string {
               fixed += ']';
             }
           }
-          
+
           // Close the main object if needed
           if (!fixed.endsWith('}')) {
             fixed += '}';
@@ -249,7 +392,7 @@ function tryFixTruncatedJson(jsonString: string): string {
               const lastPeriod = searchArea.lastIndexOf('. ');
               const lastNewline = searchArea.lastIndexOf('\\n');
               const cutPoint = Math.max(lastPeriod, lastNewline);
-              
+
               if (cutPoint > 50) {
                 fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
                 fixed += '"';
@@ -270,7 +413,7 @@ function tryFixTruncatedJson(jsonString: string): string {
             const lastPeriod = searchArea.lastIndexOf('. ');
             const lastNewline = searchArea.lastIndexOf('\\n');
             const cutPoint = Math.max(lastPeriod, lastNewline);
-            
+
             if (cutPoint > 50) {
               fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
               fixed += '"';
@@ -293,7 +436,7 @@ function tryFixTruncatedJson(jsonString: string): string {
         const lastPeriod = searchArea.lastIndexOf('. ');
         const lastNewline = searchArea.lastIndexOf('\\n');
         const cutPoint = Math.max(lastPeriod, lastNewline);
-        
+
         if (cutPoint > 20) {
           fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
           fixed += '"';
@@ -315,7 +458,7 @@ function tryFixTruncatedJson(jsonString: string): string {
       const lastPeriod = searchArea.lastIndexOf('. ');
       const lastNewline = searchArea.lastIndexOf('\\n');
       const cutPoint = Math.max(lastPeriod, lastNewline);
-      
+
       if (cutPoint > 20) {
         fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
         fixed += '"';
@@ -329,20 +472,20 @@ function tryFixTruncatedJson(jsonString: string): string {
         inString = false;
       }
     }
-    
+
     // Close arrays first (they're inside objects)
     while (openBrackets > 0) {
       fixed += ']';
       openBrackets--;
     }
-    
+
     // Close objects
     while (openBraces > 0) {
       fixed += '}';
       openBraces--;
     }
   }
-  
+
   return fixed;
 }
 
@@ -356,11 +499,11 @@ function tryExtractPartialJson<T>(jsonString: string): Partial<T> | null {
     const fixesArrayMatch = jsonString.match(/"fixes"\s*:\s*\[/);
     if (fixesArrayMatch) {
       const fixesArrayStart = fixesArrayMatch.index! + fixesArrayMatch[0].length;
-      
+
       // Check if we're in a truncated string within the fixes array
       // If so, try to extract everything before the fixes array and create an empty fixes array
       const beforeFixes = jsonString.substring(0, fixesArrayStart);
-      
+
       // Try to find the last complete property before fixes array
       let lastCompletePos = -1;
       for (let i = beforeFixes.length - 1; i >= 0; i--) {
@@ -387,13 +530,13 @@ function tryExtractPartialJson<T>(jsonString: string): Partial<T> | null {
           if (foundIssuesStart) break;
         }
       }
-      
+
       // If we found a good cut point, try to reconstruct
       if (lastCompletePos > 0) {
         const partialJson = jsonString.substring(0, lastCompletePos).trim();
         // Remove trailing comma if present
         const cleaned = partialJson.endsWith(',') ? partialJson.slice(0, -1) : partialJson;
-        
+
         // Try to add empty fixes array and readiness object if missing
         let reconstructed = cleaned;
         if (!reconstructed.includes('"fixes"')) {
@@ -405,27 +548,27 @@ function tryExtractPartialJson<T>(jsonString: string): Partial<T> | null {
         if (!reconstructed.endsWith('}')) {
           reconstructed += '\n}';
         }
-        
+
         const fixed = tryFixTruncatedJson(reconstructed);
         return JSON.parse(fixed) as Partial<T>;
       }
     }
-    
+
     // Strategy 2: Try to find the last complete object/array before the error
     // Look for patterns like: "key": "value" or "key": [ ... ] or "key": { ... }
-    
+
     // Find the last complete property before truncation
     const lastCompleteMatch = jsonString.match(/"([^"]+)":\s*("[^"]*"|\[[^\]]*\]|\{[^}]*\})/g);
     if (lastCompleteMatch && lastCompleteMatch.length > 0) {
       // Try to reconstruct a minimal valid JSON
       const lastComplete = lastCompleteMatch[lastCompleteMatch.length - 1];
       const beforeLast = jsonString.substring(0, jsonString.lastIndexOf(lastComplete) + lastComplete.length);
-      
+
       // Try to close it properly
       const fixed = tryFixTruncatedJson(beforeLast);
       return JSON.parse(fixed) as Partial<T>;
     }
-    
+
     // Strategy 3: Try to extract just the analysis section if it exists
     const analysisMatch = jsonString.match(/"analysis"\s*:\s*(\{[^}]*\})/);
     if (analysisMatch) {
@@ -441,7 +584,7 @@ function tryExtractPartialJson<T>(jsonString: string): Partial<T> | null {
             blockingIssues: [],
             suggestedImprovements: []
           }
-        } as Partial<T>;
+        } as unknown as Partial<T>;
       } catch (e) {
         // Analysis parsing failed, continue
       }
@@ -449,7 +592,7 @@ function tryExtractPartialJson<T>(jsonString: string): Partial<T> | null {
   } catch (e) {
     // Extraction failed, return null
   }
-  
+
   return null;
 }
 
@@ -473,11 +616,11 @@ export async function deepseekJson<T>(opts: {
 
   // Default to deepseek-chat which uses the latest V3.2 model
   const model = opts.model || 'deepseek-chat';
-  
+
   // DeepSeek-V3.2 supports up to 8192 output tokens
   const maxTokens = opts.maxTokens ? Math.min(opts.maxTokens, 8192) : 8192;
-  
-  const raw = await deepseekChat({
+
+  const result = await deepseekChat({
     model,
     messages,
     temperature: opts.temperature,
@@ -486,56 +629,89 @@ export async function deepseekJson<T>(opts: {
     response_format: { type: 'json_object' },
   });
 
-  // First, try to parse as-is
+  const rawResponse = result.text;
+
+  // Track cache usage
+  if (result.usage) {
+    const cacheHit = result.usage.prompt_cache_hit_tokens || 0;
+    const totalPromptTokens = result.usage.prompt_tokens;
+    const cacheKey = `deepseek:${model}:${simpleHash(opts.user.substring(0, 500))}`;
+
+    if (cacheHit > 0) {
+      recordCacheHit('deepseek', cacheKey, cacheHit, totalPromptTokens);
+    } else {
+      recordCacheMiss('deepseek', cacheKey, totalPromptTokens);
+    }
+  }
+
+  // Strip markdown, fix control characters, and common issues
+  const trimmedRaw = rawResponse.trim();
+
+  // First, try to parse raw as-is (DeepSeek in json_object mode is often perfect)
   try {
-    return JSON.parse(raw) as T;
-  } catch (e) {
-    // Try to fix truncated JSON
+    return JSON.parse(trimmedRaw) as T;
+  } catch (rawError) {
+    // If raw fails, try stripping markdown code blocks
+    let cleaned = stripMarkdownCodeBlocks(rawResponse);
+
     try {
-      const fixed = tryFixTruncatedJson(raw);
-      const parsed = JSON.parse(fixed) as T;
-      
-      // Log a warning if we had to fix the JSON
-      console.warn('[DeepSeek] JSON response was truncated and required fixing. Consider increasing maxTokens or reducing response size.');
-      
-      return parsed;
-    } catch (fixError) {
-      // Try to extract partial data as last resort
-      const partial = tryExtractPartialJson<T>(raw);
-      if (partial) {
-        console.warn('[DeepSeek] JSON was severely corrupted. Returning partial data. Some fields may be missing.');
-        return partial as T;
+      return JSON.parse(cleaned) as T;
+    } catch (stripError) {
+      // If still fails, try fixing control characters and common issues
+      cleaned = fixControlCharacters(cleaned);
+      cleaned = fixCommonJsonIssues(cleaned);
+
+      try {
+        return JSON.parse(cleaned) as T;
+      } catch (e) {
+        // Try to fix truncated JSON
+        try {
+          const fixed = tryFixTruncatedJson(cleaned);
+          const parsed = JSON.parse(fixed) as T;
+
+          // Log a warning if we had to fix the JSON
+          console.warn('[DeepSeek] JSON response was truncated and required fixing. Consider increasing maxTokens or reducing response size.');
+
+          return parsed;
+        } catch (fixError) {
+          // Try to extract partial data as last resort
+          const partial = tryExtractPartialJson<T>(rawResponse);
+          if (partial) {
+            console.warn('[DeepSeek] JSON was severely corrupted. Returning partial data. Some fields may be missing.');
+            return partial as unknown as T;
+          }
+
+          // If all else fails, throw with detailed error
+          const posMatch = e instanceof Error ? e.message.match(/position (\d+)/) : null;
+          const errorPositionStr = posMatch ? posMatch[1] : 'unknown';
+          const errorPosition = errorPositionStr !== 'unknown' ? parseInt(errorPositionStr, 10) : null;
+
+          const preview = errorPosition !== null
+            ? rawResponse.substring(Math.max(0, errorPosition - 100), errorPosition + 100)
+            : rawResponse.substring(0, 500);
+
+          // Detect if this is likely a truncation issue (response ends mid-string/object)
+          const isLikelyTruncation = rawResponse.length > 30000 ||
+            (errorPosition !== null && errorPosition > rawResponse.length * 0.95) ||
+            (!rawResponse.endsWith('}') && !rawResponse.endsWith(']'));
+
+          let suggestion = '';
+          if (isLikelyTruncation) {
+            suggestion = `\n\nSUGGESTION: This appears to be a response truncation issue. The response was cut off at ${rawResponse.length} characters. ` +
+              `This commonly happens when analyzing too many chapters at once (typically more than 5 chapters). ` +
+              `Try analyzing smaller batches of chapters (3-5 chapters at a time) to avoid truncation.`;
+          }
+
+          throw new Error(
+            `DeepSeek returned invalid JSON.\n` +
+            `Parse error: ${e instanceof Error ? e.message : String(e)}\n` +
+            `Attempted fix also failed: ${fixError instanceof Error ? fixError.message : String(fixError)}\n` +
+            `Response length: ${rawResponse.length} characters\n` +
+            `Preview around error: ...${preview}...${suggestion}\n\n` +
+            `Full response (first 2000 chars):\n${rawResponse.substring(0, 2000)}...`
+          );
+        }
       }
-      
-      // If all else fails, throw with detailed error
-      const errorPosition = e instanceof Error && e.message.includes('position') 
-        ? e.message.match(/position (\d+)/)?.[1] 
-        : 'unknown';
-      
-      const preview = errorPosition !== 'unknown' 
-        ? raw.substring(Math.max(0, parseInt(errorPosition) - 100), parseInt(errorPosition) + 100)
-        : raw.substring(0, 500);
-      
-      // Detect if this is likely a truncation issue (response ends mid-string/object)
-      const isLikelyTruncation = raw.length > 30000 || 
-                                  (errorPosition !== 'unknown' && parseInt(errorPosition) > raw.length * 0.95) ||
-                                  (!raw.endsWith('}') && !raw.endsWith(']'));
-      
-      let suggestion = '';
-      if (isLikelyTruncation) {
-        suggestion = `\n\nSUGGESTION: This appears to be a response truncation issue. The response was cut off at ${raw.length} characters. ` +
-                     `This commonly happens when analyzing too many chapters at once (typically more than 5 chapters). ` +
-                     `Try analyzing smaller batches of chapters (3-5 chapters at a time) to avoid truncation.`;
-      }
-      
-      throw new Error(
-        `DeepSeek returned invalid JSON.\n` +
-        `Parse error: ${e instanceof Error ? e.message : String(e)}\n` +
-        `Attempted fix also failed: ${fixError instanceof Error ? fixError.message : String(fixError)}\n` +
-        `Response length: ${raw.length} characters\n` +
-        `Preview around error: ...${preview}...${suggestion}\n\n` +
-        `Full response (first 2000 chars):\n${raw.substring(0, 2000)}...`
-      );
     }
   }
 }

@@ -1,4 +1,3 @@
-
 export interface Relationship {
   characterId: string;
   type: string;
@@ -244,6 +243,7 @@ export interface StoryThread {
   introducedChapter: number;
   lastUpdatedChapter: number;
   resolvedChapter?: number;
+  lastActiveChapter: number;
   relatedEntityId?: string;
   relatedEntityType?: string;
   progressionNotes: Array<{
@@ -389,9 +389,10 @@ export interface NovelState {
   globalMarketState?: import('./types/market').GlobalMarketState;
   updatedAt: number;
   createdAt: number;
+  narrativeForensicsScan?: ExcavationResult;
 }
 
-export type ViewType = 'dashboard' | 'world-bible' | 'characters' | 'chapters' | 'editor' | 'planning' | 'library' | 'world-map' | 'storyboard' | 'timeline' | 'beatsheet' | 'matrix' | 'analytics' | 'search' | 'goals' | 'antagonists' | 'character-systems' | 'story-threads' | 'structure-visualizer' | 'engagement-dashboard' | 'tension-curve' | 'theme-evolution' | 'character-psychology' | 'device-dashboard' | 'draft-comparison' | 'excellence-scorecard' | 'improvement-history' | 'memory-dashboard' | 'face-graph';
+export type ViewType = 'dashboard' | 'world-bible' | 'characters' | 'chapters' | 'editor' | 'planning' | 'library' | 'world-map' | 'storyboard' | 'timeline' | 'beatsheet' | 'matrix' | 'analytics' | 'search' | 'goals' | 'antagonists' | 'character-systems' | 'story-threads' | 'loom' | 'structure-visualizer' | 'engagement-dashboard' | 'tension-curve' | 'theme-evolution' | 'character-psychology' | 'device-dashboard' | 'draft-comparison' | 'excellence-scorecard' | 'improvement-history' | 'memory-dashboard' | 'face-graph' | 'narrative-forensics';
 
 // Style Analysis Types
 export interface WritingStyleMetrics {
@@ -1331,6 +1332,14 @@ export interface AuthorialVoiceProfile {
   updatedAt: number;
 }
 
+export interface ChapterQualityCheck {
+  isValid: boolean;
+  warnings: string[];
+  errors: string[];
+  suggestions: string[];
+  qualityScore: number; // 0-100
+}
+
 export interface ChapterQualityMetrics {
   chapterId: string;
   qualityCheck: ChapterQualityCheck;
@@ -1378,3 +1387,24 @@ export interface RegenerationResult {
   }>;
 }
 
+export interface CharacterUpdate {
+  chapterId: string;
+  chapterNumber: number;
+  changes: string[];
+  relationshipChange?: {
+    targetId: string;
+    type: string;
+    description: string;
+  };
+}
+
+export interface CharacterUpdate {
+  chapterId: string;
+  chapterNumber: number;
+  changes: string[];
+  relationshipChange?: {
+    targetId: string;
+    type: string;
+    description: string;
+  };
+}

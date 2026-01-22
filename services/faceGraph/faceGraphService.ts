@@ -1073,7 +1073,7 @@ export async function getFaceGraphConfig(novelId: string): Promise<FaceGraphConf
       .from('face_graph_config')
       .select('*')
       .eq('novel_id', novelId)
-      .single();
+      .maybeSingle();
 
     if (error || !data) {
       return DEFAULT_FACE_GRAPH_CONFIG;

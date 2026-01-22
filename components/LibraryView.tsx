@@ -197,15 +197,16 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
 
           {sortedNovels.map((novel) => {
             const isSelected = selectedNovels.has(novel.id);
+            const sagaPreview = (novel.grandSaga ? novel.grandSaga.replace(/\s+/g, ' ').trim() : '') || 'No grand saga defined yet...';
             return (
               <div
                 key={novel.id}
-                className={`group relative h-48 xs:h-56 md:h-64 min-h-[192px] xs:min-h-[224px] md:min-h-[256px] bg-zinc-900/60 border rounded-xl xs:rounded-2xl hover:shadow-xl hover:shadow-amber-900/10 transition-all duration-300 ${
+                className={`group relative min-h-[192px] xs:min-h-[224px] md:min-h-[256px] bg-gradient-to-b from-zinc-900/70 via-zinc-900/60 to-zinc-950/70 border rounded-xl xs:rounded-2xl overflow-hidden backdrop-blur-[2px] transition-all duration-300 ${
                   isBulkMode
                     ? isSelected
-                      ? 'border-amber-500 bg-amber-950/20'
-                      : 'border-zinc-700 hover:border-zinc-600'
-                    : 'border-zinc-700 hover:border-amber-600/50'
+                      ? 'border-amber-500/80 bg-amber-950/25'
+                      : 'border-zinc-700/80 hover:border-zinc-600'
+                    : 'border-zinc-700/80 hover:border-amber-600/50 hover:-translate-y-1'
                 }`}
               >
                 {isBulkMode && (
@@ -223,12 +224,12 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
                 <button
                   type="button"
                   onClick={() => handleNovelClick(novel.id)}
-                  className="w-full h-full p-3 xs:p-4 md:p-6 flex flex-col justify-between text-left cursor-pointer rounded-xl xs:rounded-2xl focus-visible:outline-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2"
+                  className="w-full h-full p-3 xs:p-4 md:p-6 flex flex-col gap-3 xs:gap-4 text-left cursor-pointer rounded-xl xs:rounded-2xl focus-visible:outline-amber-600 focus-visible:outline-2 focus-visible:outline-offset-2"
                   aria-label={isBulkMode ? `Select ${novel.title}` : `Open ${novel.title}`}
                 >
                 <div className="space-y-1.5 xs:space-y-2 md:space-y-3">
-                  <div className="flex justify-between items-start">
-                    <span className="text-[10px] xs:text-xs font-bold text-amber-600 uppercase tracking-wider px-1.5 xs:px-2 py-0.5 xs:py-1 bg-amber-600/10 rounded-md truncate max-w-[70%]">
+                  <div className="flex justify-between items-start gap-3">
+                    <span className="inline-flex items-center text-[10px] xs:text-xs font-semibold text-amber-600 uppercase tracking-[0.2em] px-1.5 xs:px-2 py-0.5 xs:py-1 bg-amber-600/10 rounded-md truncate max-w-[75%]">
                       {novel.genre}
                     </span>
                     {/* Spacer so the delete button doesn't overlap content */}
@@ -237,19 +238,22 @@ const LibraryView: React.FC<LibraryViewProps> = ({ novels, onSelect, onCreate, o
                   <h3 className="text-base xs:text-lg md:text-xl lg:text-2xl font-fantasy font-bold text-zinc-100 group-hover:text-amber-500 transition-colors leading-tight line-clamp-2 break-words">
                     {novel.title}
                   </h3>
-                  <p className="text-xs xs:text-sm text-zinc-400 italic line-clamp-2 leading-relaxed hidden xs:block">
-                    "{novel.grandSaga || 'No grand saga defined yet...'}"
+                  <p
+                    className="text-xs xs:text-sm text-zinc-300/90 italic leading-relaxed line-clamp-3 pr-2"
+                    title={sagaPreview}
+                  >
+                    “{sagaPreview}”
                   </p>
                 </div>
 
-                <div className="flex justify-between items-end border-t border-zinc-700 pt-2 xs:pt-3 md:pt-4 mt-2 xs:mt-3 md:mt-4">
+                <div className="mt-auto flex items-end justify-between border-t border-zinc-800/70 pt-2 xs:pt-3 md:pt-4">
                   <div>
-                    <p className="text-base xs:text-lg font-fantasy font-bold text-zinc-300">{novel.chapters.length}</p>
-                    <p className="text-[10px] xs:text-xs text-zinc-500 uppercase font-semibold">Ch.</p>
+                    <p className="text-base xs:text-lg font-fantasy font-bold text-zinc-100">{novel.chapters.length}</p>
+                    <p className="text-[10px] xs:text-xs text-zinc-500 uppercase font-semibold tracking-[0.2em]">Chapters</p>
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] xs:text-xs text-zinc-500 font-semibold uppercase hidden xs:block">Last Forged</p>
-                    <p className="text-[10px] xs:text-xs text-zinc-400 mt-0.5 xs:mt-1">{new Date(novel.updatedAt).toLocaleDateString()}</p>
+                    <p className="text-[10px] xs:text-xs text-zinc-300 mt-0.5 xs:mt-1">{new Date(novel.updatedAt).toLocaleDateString()}</p>
                   </div>
                 </div>
               </button>

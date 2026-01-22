@@ -8,14 +8,15 @@
 
 import { NovelState, Chapter } from '../types';
 import { ImprovementCategory } from '../types/improvement';
-import { geminiText } from './geminiService';
+import { deepseekText, deepseekJson } from './deepseekService';
 
 // Helper function to call Gemini (The Clerk) with validation options
 async function callClerk(
-  prompt: string, 
+  prompt: string,
   options: { maxTokens?: number; temperature?: number } = {}
 ): Promise<string> {
-  return geminiText({
+  return deepseekText({
+    model: 'deepseek-chat',
     system: 'You are an expert literary analyst. Analyze the given content and respond with JSON.',
     user: prompt,
     maxTokens: options.maxTokens || 2000,
@@ -68,11 +69,11 @@ export async function validateImprovementsWithLLM(
   onProgress?: (message: string, progress: number) => void
 ): Promise<ImprovementValidation> {
   onProgress?.('Preparing validation analysis...', 10);
-  
+
   try {
     // Get chapters that changed
     const changedChapters = findChangedChapters(originalState, improvedState);
-    
+
     if (changedChapters.length === 0) {
       return {
         overallScore: 50,
@@ -89,13 +90,13 @@ export async function validateImprovementsWithLLM(
         recommendations: ['Verify that improvements were applied correctly'],
       };
     }
-    
+
     onProgress?.('Analyzing changed chapters...', 30);
-    
+
     // Analyze a sample of changed chapters (limit to 3 for token efficiency)
     const sampleSize = Math.min(3, changedChapters.length);
     const sampleChapters = changedChapters.slice(0, sampleSize);
-    
+
     // Build comparison prompt
     const comparisonPrompt = buildComparisonPrompt(
       originalState,
@@ -103,26 +104,26 @@ export async function validateImprovementsWithLLM(
       sampleChapters,
       category
     );
-    
+
     onProgress?.('Requesting LLM validation...', 50);
-    
+
     // Call LLM for validation (using The Clerk - Gemini)
     const response = await callClerk(comparisonPrompt, {
       maxTokens: 2000,
       temperature: 0.3, // Lower temperature for consistent analysis
     });
-    
+
     onProgress?.('Parsing validation results...', 80);
-    
+
     // Parse the response
     const validation = parseValidationResponse(response, changedChapters.length);
-    
+
     onProgress?.('Validation complete', 100);
-    
+
     return validation;
   } catch (error) {
     console.error('LLM validation failed:', error);
-    
+
     // Return fallback validation based on basic metrics
     return createFallbackValidation(originalState, improvedState, category);
   }
@@ -147,16 +148,16 @@ export async function analyzeChapterChanges(
       explanation: 'No changes detected in this chapter.',
     };
   }
-  
+
   // Calculate word count changes
   const originalWords = originalChapter.content.split(/\s+/).length;
   const improvedWords = improvedChapter.content.split(/\s+/).length;
   const wordChange = improvedWords - originalWords;
   const wordChangePercent = ((wordChange / Math.max(1, originalWords)) * 100).toFixed(1);
-  
+
   // Detect specific changes using simple heuristics
   const specificChanges: ChapterChangeAnalysis['specificChanges'] = [];
-  
+
   // Word count change
   if (Math.abs(wordChange) > 50) {
     specificChanges.push({
@@ -165,18 +166,18 @@ export async function analyzeChapterChanges(
       impact: wordChange > 0 ? 'positive' : 'neutral',
     });
   }
-  
+
   // Check for structural improvements
   const structurePatterns = detectStructurePatterns(originalChapter.content, improvedChapter.content);
   specificChanges.push(...structurePatterns);
-  
+
   // Determine overall change type
   const positiveChanges = specificChanges.filter(c => c.impact === 'positive').length;
   const negativeChanges = specificChanges.filter(c => c.impact === 'negative').length;
-  
+
   let changeType: ChapterChangeAnalysis['changeType'] = 'neutral';
   let changeScore = 0;
-  
+
   if (positiveChanges > negativeChanges) {
     changeType = 'improved';
     changeScore = Math.min(100, (positiveChanges - negativeChanges) * 15);
@@ -184,7 +185,7 @@ export async function analyzeChapterChanges(
     changeType = 'degraded';
     changeScore = Math.max(-100, (positiveChanges - negativeChanges) * 15);
   }
-  
+
   return {
     chapterId: originalChapter.id,
     chapterNumber: originalChapter.number,
@@ -203,10 +204,10 @@ function findChangedChapters(
   improvedState: NovelState
 ): Array<{ original: Chapter; improved: Chapter }> {
   const changedChapters: Array<{ original: Chapter; improved: Chapter }> = [];
-  
+
   improvedState.chapters.forEach(improvedChapter => {
     const originalChapter = originalState.chapters.find(ch => ch.id === improvedChapter.id);
-    
+
     if (originalChapter && originalChapter.content !== improvedChapter.content) {
       changedChapters.push({
         original: originalChapter,
@@ -214,7 +215,7 @@ function findChangedChapters(
       });
     }
   });
-  
+
   return changedChapters;
 }
 
@@ -240,9 +241,9 @@ function buildComparisonPrompt(
     voice: 'narrative voice and author style',
     market_readiness: 'market readiness and commercial appeal',
   };
-  
+
   const categoryFocus = categoryDescriptions[category] || 'overall quality';
-  
+
   let prompt = `You are a professional literary editor analyzing improvements made to a novel.
 
 TASK: Evaluate whether the changes improved the novel's ${categoryFocus}.
@@ -257,7 +258,7 @@ CHANGED CHAPTERS (${sampleChapters.length} of ${improvedState.chapters.length} t
     const maxChars = 1500;
     const originalExcerpt = original.content.substring(0, maxChars) + (original.content.length > maxChars ? '...' : '');
     const improvedExcerpt = improved.content.substring(0, maxChars) + (improved.content.length > maxChars ? '...' : '');
-    
+
     prompt += `
 --- CHAPTER ${original.number}: "${original.title || 'Untitled'}" ---
 
@@ -305,9 +306,9 @@ function parseValidationResponse(
     if (!jsonMatch) {
       throw new Error('No JSON found in response');
     }
-    
+
     const parsed = JSON.parse(jsonMatch[0]);
-    
+
     return {
       overallScore: Math.max(0, Math.min(100, parsed.overallScore || 50)),
       scoreChange: Math.max(-50, Math.min(50, parsed.scoreChange || 0)),
@@ -324,7 +325,7 @@ function parseValidationResponse(
     };
   } catch (error) {
     console.error('Failed to parse validation response:', error);
-    
+
     // Return neutral validation
     return {
       overallScore: 50,
@@ -352,7 +353,7 @@ function createFallbackValidation(
   category: ImprovementCategory
 ): ImprovementValidation {
   const changedChapters = findChangedChapters(originalState, improvedState);
-  
+
   // Calculate basic metrics
   let totalWordChange = 0;
   changedChapters.forEach(({ original, improved }) => {
@@ -360,17 +361,17 @@ function createFallbackValidation(
     const improvedWords = improved.content.split(/\s+/).length;
     totalWordChange += improvedWords - originalWords;
   });
-  
+
   // Estimate score based on word count changes (simple heuristic)
   const avgWordChange = changedChapters.length > 0 ? totalWordChange / changedChapters.length : 0;
   let scoreChange = 0;
-  
+
   if (avgWordChange > 100) {
     scoreChange = Math.min(15, Math.floor(avgWordChange / 50));
   } else if (avgWordChange < -100) {
     scoreChange = Math.max(-10, Math.floor(avgWordChange / 75));
   }
-  
+
   return {
     overallScore: 50 + scoreChange,
     scoreChange,
@@ -395,11 +396,11 @@ function detectStructurePatterns(
   improved: string
 ): ChapterChangeAnalysis['specificChanges'] {
   const changes: ChapterChangeAnalysis['specificChanges'] = [];
-  
+
   // Check for dialogue improvements
   const originalDialogue = (original.match(/"/g) || []).length;
   const improvedDialogue = (improved.match(/"/g) || []).length;
-  
+
   if (improvedDialogue > originalDialogue * 1.2) {
     changes.push({
       type: 'dialogue',
@@ -407,11 +408,11 @@ function detectStructurePatterns(
       impact: 'positive',
     });
   }
-  
+
   // Check for paragraph variety
   const originalParagraphs = original.split(/\n\n+/).length;
   const improvedParagraphs = improved.split(/\n\n+/).length;
-  
+
   if (improvedParagraphs > originalParagraphs * 1.2) {
     changes.push({
       type: 'paragraphs',
@@ -419,18 +420,18 @@ function detectStructurePatterns(
       impact: 'positive',
     });
   }
-  
+
   // Check for sentence variety
   const originalSentences = original.split(/[.!?]+/).filter(s => s.trim().length > 0);
   const improvedSentences = improved.split(/[.!?]+/).filter(s => s.trim().length > 0);
-  
+
   const originalAvgLength = originalSentences.reduce((sum, s) => sum + s.length, 0) / Math.max(1, originalSentences.length);
   const improvedAvgLength = improvedSentences.reduce((sum, s) => sum + s.length, 0) / Math.max(1, improvedSentences.length);
-  
+
   // Check for variance in sentence length
   const originalVariance = calculateVariance(originalSentences.map(s => s.length));
   const improvedVariance = calculateVariance(improvedSentences.map(s => s.length));
-  
+
   if (improvedVariance > originalVariance * 1.3) {
     changes.push({
       type: 'sentence_variety',
@@ -438,7 +439,7 @@ function detectStructurePatterns(
       impact: 'positive',
     });
   }
-  
+
   return changes;
 }
 
@@ -462,20 +463,20 @@ function generateChangeExplanation(
   if (changes.length === 0) {
     return 'Minor text adjustments made.';
   }
-  
+
   const positiveChanges = changes.filter(c => c.impact === 'positive');
   const negativeChanges = changes.filter(c => c.impact === 'negative');
-  
+
   let explanation = '';
-  
+
   if (positiveChanges.length > 0) {
     explanation += `Improvements: ${positiveChanges.map(c => c.description).join(', ')}. `;
   }
-  
+
   if (negativeChanges.length > 0) {
     explanation += `Concerns: ${negativeChanges.map(c => c.description).join(', ')}.`;
   }
-  
+
   return explanation.trim() || 'Changes made to improve ' + category;
 }
 
@@ -487,26 +488,26 @@ export function quickValidateChanges(
   improvedState: NovelState
 ): { chaptersChanged: number; totalWordChange: number; estimatedImprovement: number } {
   const changedChapters = findChangedChapters(originalState, improvedState);
-  
+
   let totalWordChange = 0;
   changedChapters.forEach(({ original, improved }) => {
     const originalWords = original.content.split(/\s+/).length;
     const improvedWords = improved.content.split(/\s+/).length;
     totalWordChange += improvedWords - originalWords;
   });
-  
+
   // Estimate improvement based on changes
   let estimatedImprovement = 0;
   if (changedChapters.length > 0) {
     // Base improvement for making changes
     estimatedImprovement = Math.min(10, changedChapters.length * 2);
-    
+
     // Bonus for adding content
     if (totalWordChange > 500) {
       estimatedImprovement += Math.min(10, Math.floor(totalWordChange / 200));
     }
   }
-  
+
   return {
     chaptersChanged: changedChapters.length,
     totalWordChange,

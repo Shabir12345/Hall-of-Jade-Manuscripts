@@ -1,9 +1,11 @@
-import React, { useCallback, useState, useMemo } from 'react';
+import React, { useCallback, useState, useMemo, useEffect } from 'react';
 import type { Character, NovelState, Relationship } from '../../types';
 import { Modal } from '../Modal';
 import VoiceInput from '../VoiceInput';
 import CreativeSpark from '../CreativeSpark';
 import { CHARACTER_TEMPLATES, type CharacterTemplate, applyCharacterTemplate } from '../../utils/templates';
+import { getCharacterMemory } from '../../services/memory/memoryQueryService';
+import { ArcMemorySummary } from '../../services/memory/arcMemoryService';
 
 interface CharacterFormProps {
   character: Character;
@@ -22,6 +24,7 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
 }) => {
   const [showTemplates, setShowTemplates] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<CharacterTemplate | null>(null);
+  const [characterMemory, setCharacterMemory] = useState<ArcMemorySummary[]>([]);
 
   const handleSave = useCallback(() => {
     onSave(character);
@@ -81,6 +84,14 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
       items: character.items.filter((_, i) => i !== idx)
     });
   }, [character, onUpdateCharacter]);
+
+  useEffect(() => {
+    if (character?.id) {
+      getCharacterMemory(character.id, novelState, 3)
+        .then(setCharacterMemory)
+        .catch(console.error);
+    }
+  }, [character?.id]);
 
   // Common input class for consistent mobile styling
   const inputClass = "w-full bg-zinc-950 border border-zinc-700 rounded-lg xs:rounded-xl p-3 xs:p-4 text-sm xs:text-base text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none transition-all";
@@ -492,6 +503,17 @@ export const CharacterForm: React.FC<CharacterFormProps> = ({
           </button>
         </div>
       </div>
+      {characterMemory.length > 0 && (
+        <div className="memory-panel bg-gray-100 p-4 rounded-lg mt-4">
+          <h3 className="text-lg font-bold mb-2">Character Memory</h3>
+          {characterMemory.map(memory => (
+            <div key={memory.arcId} className="mb-3">
+              <strong className="text-blue-700">{memory.arcTitle}</strong>
+              <p className="text-sm text-gray-700">{memory.summary.substring(0, 100)}...</p>
+            </div>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 };

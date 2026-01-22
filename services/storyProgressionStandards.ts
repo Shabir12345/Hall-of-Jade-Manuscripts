@@ -309,8 +309,15 @@ export function determineArcPosition(
  */
 export function calculateThreadDensity(threads: StoryThread[], currentChapter: number): number {
   if (currentChapter === 0) return 0;
-  const activeThreads = threads.filter(t => t.status === 'active').length;
-  return Math.round((activeThreads / currentChapter) * 10) / 10;
+  
+  // Count threads active in the last 5 chapters
+  const recentActiveThreads = threads.filter(t => 
+    t.status === 'active' && 
+    t.lastActiveChapter >= currentChapter - 5
+  ).length;
+  
+  // Calculate threads per chapter (last 5 chapters)
+  return Math.round((recentActiveThreads / 5) * 10) / 10;
 }
 
 /**

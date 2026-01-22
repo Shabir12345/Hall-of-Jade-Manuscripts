@@ -1,7 +1,7 @@
 import { NovelState, Chapter, Arc } from '../types';
 import { EditorAnalysis, EditorIssue, EditorFix, ChapterBatchEditorInput, ArcEditorInput, EditorServiceOptions, OverallFlowRating, FixStatus } from '../types/editor';
 import { buildChapterBatchAnalysisPrompt, buildArcAnalysisPrompt } from './promptEngine/writers/editorPromptWriter';
-import { geminiJson } from './geminiService';
+import { deepseekJson } from './deepseekService';
 import { SYSTEM_INSTRUCTION } from '../constants';
 import { rateLimiter } from './rateLimiter';
 import { generateUUID } from '../utils/uuid';
@@ -34,7 +34,7 @@ export async function analyzeChapterBatch(
 
   // Pre-analyze structure issues to provide context to AI
   const structureAnalysis: string[] = [];
-  
+
   chapters.forEach(chapter => {
     const structureCheck = validateStructure(chapter.content);
     if (!structureCheck.isValid && structureCheck.issues.length > 0) {
@@ -43,18 +43,18 @@ export async function analyzeChapterBatch(
       );
     }
   });
-  
+
   // Build the prompt (includes full chapter content)
   const builtPrompt = await buildChapterBatchAnalysisPrompt(input);
-  
+
   // Enhance prompt with pre-detected structure issues if found
   if (structureAnalysis.length > 0) {
     const structureContext = `\n\nPRE-DETECTED STRUCTURE ISSUES:\n${structureAnalysis.join('\n')}\n\nPlease pay special attention to these structure issues and provide fixes for them.`;
     builtPrompt.userPrompt = builtPrompt.userPrompt + structureContext;
   }
-  
+
   options?.onProgress?.('Calling AI for analysis...', 30);
-  
+
   // Log which chapters we're analyzing for debugging
   console.log(`[Editor] Analyzing chapters: ${chapters.map(ch => ch.number).join(', ')}`);
   console.log(`[Editor] Chapter details:`, chapters.map(ch => ({
@@ -63,7 +63,7 @@ export async function analyzeChapterBatch(
     contentLength: ch.content.length,
     id: ch.id
   })));
-  
+
   // Verify the prompt includes the chapters we want
   if (builtPrompt.userPrompt) {
     const promptChapterMentions = chapters.map(ch => builtPrompt.userPrompt.includes(`CHAPTER ${ch.number}`) || builtPrompt.userPrompt.includes(`Chapter ${ch.number}`));
@@ -110,9 +110,9 @@ export async function analyzeChapterBatch(
     ]
   }`;
 
-  // Call Gemini API (The Clerk for analysis/extraction)
+  // Call DeepSeek API (The Clerk for analysis/extraction)
   const parsed = await rateLimiter.queueRequest('analyze', async () => {
-    return await geminiJson<{
+    return await deepseekJson<{
       analysis: {
         overallFlow: string;
         continuityScore: number;
@@ -144,6 +144,7 @@ export async function analyzeChapterBatch(
         isInsertion?: boolean;
       }>;
     }>({
+      model: 'deepseek-chat',
       system: builtPrompt.systemInstruction || SYSTEM_INSTRUCTION,
       user: builtPrompt.userPrompt + '\n\nReturn ONLY a valid JSON object matching this structure:\n' + jsonSchema + `\n\nCRITICAL JSON FORMATTING REQUIREMENTS:
 1. ALL strings MUST be properly escaped (use \\n for newlines, \\" for quotes, \\\\ for backslashes)
@@ -157,7 +158,7 @@ export async function analyzeChapterBatch(
 9. chapterNumber in fixes MUST be one of: ${chapters.map(ch => ch.number).join(', ')}. Triple-check every chapterNumber!
 10. If you see chapter 16 in the novel, DO NOT use it - only use ${chapters.map(ch => ch.number).join(', ')}.`,
       temperature: 0.7,
-        maxTokens: 8192,
+      maxTokens: 8192,
     });
   }, `analyze-${novelState.id}-${startChapter}-${endChapter}`);
 
@@ -166,7 +167,7 @@ export async function analyzeChapterBatch(
   // Process issues and assign IDs
   const processedIssues: EditorIssue[] = (parsed.issues || []).map((issue: any, index: number) => {
     const chapter = chapters.find(ch => ch.number === issue.chapterNumber);
-    
+
     // Validate transition issues are comparing sequential chapters
     if (issue.type === 'gap' || issue.type === 'transition' || issue.location === 'transition') {
       const description = issue.description || '';
@@ -190,7 +191,7 @@ export async function analyzeChapterBatch(
         }
       }
     }
-    
+
     return {
       id: generateUUID(),
       type: issue.type || 'style',
@@ -212,16 +213,16 @@ export async function analyzeChapterBatch(
   const analyzedChapterIds = new Set(chapters.map(ch => ch.id));
 
   // Validate all transition issues compare sequential chapters
-  const transitionIssues = processedIssues.filter(issue => 
+  const transitionIssues = processedIssues.filter(issue =>
     issue.type === 'gap' || issue.type === 'transition' || issue.location === 'transition'
   );
-  
+
   if (transitionIssues.length > 0) {
     // Verify chapters are in order
     const sortedChapterNumbers = [...analyzedChapterNumbers].sort((a, b) => a - b);
     console.log(`[Editor Validation] Analyzing ${chapters.length} chapters: ${sortedChapterNumbers.join(', ')}`);
     console.log(`[Editor Validation] Found ${transitionIssues.length} transition issues - validating sequential comparisons`);
-    
+
     transitionIssues.forEach(issue => {
       const issueChapter = issue.chapterNumber;
       // Check if there's a next chapter in the analyzed set
@@ -255,30 +256,30 @@ export async function analyzeChapterBatch(
     }
     return true;
   });
-  
+
   const processedFixes: EditorFix[] = validFixes.map((fix: any, fixIndex: number) => {
     // Extract chapter number from fix (preferred) or try to match to issue
     let fixChapterNumber = fix.chapterNumber || null;
-    
+
     // Validate chapter number is in the analyzed set
     if (fixChapterNumber && !analyzedChapterNumbers.has(fixChapterNumber)) {
       console.warn(`Fix has chapter number ${fixChapterNumber} which is not in analyzed chapters ${Array.from(analyzedChapterNumbers).join(', ')}. Attempting to find correct chapter...`);
       fixChapterNumber = null; // Reset to find the correct chapter
     }
-    
+
     // Try multiple strategies to match fix to issue
     let issue = processedIssues.find(
-      (iss, idx) => fix.issueId === `issue-${idx}` || 
-                   fix.issueId === iss.id || 
-                   (fixChapterNumber && iss.chapterNumber === fixChapterNumber && iss.type === (fix.fixType || 'style')) ||
-                   fix.issueId === String(iss.chapterNumber)
+      (iss, idx) => fix.issueId === `issue-${idx}` ||
+        fix.issueId === iss.id ||
+        (fixChapterNumber && iss.chapterNumber === fixChapterNumber && iss.type === (fix.fixType || 'style')) ||
+        fix.issueId === String(iss.chapterNumber)
     );
 
     // If still no match, try matching by chapter number and type (only from analyzed chapters)
     if (!issue && fixChapterNumber) {
       issue = processedIssues.find(
         iss => iss.chapterNumber === fixChapterNumber && analyzedChapterNumbers.has(iss.chapterNumber) &&
-               (iss.type === (fix.fixType || 'style') || !fix.fixType)
+          (iss.type === (fix.fixType || 'style') || !fix.fixType)
       );
     }
 
@@ -288,11 +289,11 @@ export async function analyzeChapterBatch(
       for (const ch of chapters) {
         if (ch.content.includes(fix.originalText) || ch.content.toLowerCase().includes(fix.originalText.toLowerCase())) {
           // Found the chapter - now find matching issue
-          issue = processedIssues.find(iss => 
+          issue = processedIssues.find(iss =>
             iss.chapterNumber === ch.number &&
-            iss.originalText && fix.originalText && 
-            (iss.originalText.includes(fix.originalText.substring(0, 50)) || 
-             fix.originalText.includes(iss.originalText.substring(0, 50)))
+            iss.originalText && fix.originalText &&
+            (iss.originalText.includes(fix.originalText.substring(0, 50)) ||
+              fix.originalText.includes(iss.originalText.substring(0, 50)))
           );
           if (issue) {
             fixChapterNumber = ch.number; // Update to correct chapter number
@@ -318,7 +319,7 @@ export async function analyzeChapterBatch(
 
     // CRITICAL: Find the chapter this fix applies to - MUST be from analyzed chapters only
     let chapter = null;
-    
+
     if (fixChapterNumber && analyzedChapterNumbers.has(fixChapterNumber)) {
       chapter = chapters.find(ch => ch.number === fixChapterNumber);
     } else if (issue && analyzedChapterNumbers.has(issue.chapterNumber)) {
@@ -344,14 +345,14 @@ export async function analyzeChapterBatch(
 
     // Validate that originalText exists in the chapter (if we have both)
     if (chapter && fix.originalText) {
-      const hasText = chapter.content.includes(fix.originalText) || 
-                      chapter.content.toLowerCase().includes(fix.originalText.toLowerCase());
+      const hasText = chapter.content.includes(fix.originalText) ||
+        chapter.content.toLowerCase().includes(fix.originalText.toLowerCase());
       if (!hasText) {
         // Cache warnings to prevent spam - only log once per fix/chapter combination
         const warningKey = `${chapter.id}-${fix.originalText.substring(0, 50)}`;
         const lastWarning = editorWarningCache.get(warningKey);
         const now = Date.now();
-        
+
         if (!lastWarning || (now - lastWarning) > WARNING_CACHE_TTL) {
           console.warn(`Fix originalText not found in chapter ${chapter.number}. Fix may not apply correctly. Text: "${fix.originalText.substring(0, 100)}..."`);
           editorWarningCache.set(warningKey, now);
@@ -367,10 +368,10 @@ export async function analyzeChapterBatch(
     }
 
     // Check if this is an insertion fix
-    const isInsertion = fix.isInsertion || 
-                       (!fix.originalText || fix.originalText.trim().length === 0) ||
-                       (fix.fixType === 'gap' || fix.fixType === 'transition') ||
-                       fix.insertionLocation;
+    const isInsertion = fix.isInsertion ||
+      (!fix.originalText || fix.originalText.trim().length === 0) ||
+      (fix.fixType === 'gap' || fix.fixType === 'transition') ||
+      fix.insertionLocation;
 
     return {
       id: generateUUID(),
@@ -389,18 +390,18 @@ export async function analyzeChapterBatch(
     if (!fix || !fix.fixedText || fix.fixedText.trim().length === 0) {
       return false;
     }
-    
+
     // For insertions, only need fixedText; for replacements, need originalText
     const isInsertion = fix.isInsertion || (!fix.originalText || fix.originalText.trim().length === 0);
     if (!isInsertion && (!fix.originalText || fix.originalText.trim().length === 0)) {
       return false;
     }
-    
+
     // For replacements, check that originalText and fixedText are different
     if (!isInsertion && fix.originalText.trim() === fix.fixedText.trim()) {
       return false;
     }
-    
+
     // Final validation: ensure chapter is in analyzed set
     return analyzedChapterNumbers.has(fix.chapterNumber);
   }); // Only keep valid fixes that apply to analyzed chapters
@@ -451,7 +452,7 @@ export async function analyzeArc(
 
   // Pre-analyze structure issues for arc chapters
   const arcStructureAnalysis: string[] = [];
-  
+
   arcChapters.forEach(chapter => {
     const structureCheck = validateStructure(chapter.content);
     if (!structureCheck.isValid && structureCheck.issues.length > 0) {
@@ -507,10 +508,10 @@ export async function analyzeArc(
     console.warn('Error running quality checks for arc analysis:', error);
     // Continue with analysis even if quality checks fail
   }
-  
+
   // Build the prompt
   const builtPrompt = await buildArcAnalysisPrompt(input);
-  
+
   // Enhance prompt with pre-detected structure issues and quality checks if found
   const preAnalysisContext: string[] = [];
   if (arcStructureAnalysis.length > 0) {
@@ -521,12 +522,12 @@ export async function analyzeArc(
     preAnalysisContext.push('\nQUALITY & ORIGINALITY ANALYSIS:');
     preAnalysisContext.push(...qualityAnalysis);
   }
-  
+
   if (preAnalysisContext.length > 0) {
     const context = `\n\n${preAnalysisContext.join('\n')}\n\nPlease pay special attention to these issues and provide fixes for them.`;
     builtPrompt.userPrompt = builtPrompt.userPrompt + context;
   }
-  
+
   options?.onProgress?.('Calling AI for arc analysis...', 30);
 
   // Build JSON schema description for Gemini (arc-specific)
@@ -613,7 +614,7 @@ export async function analyzeArc(
 
   try {
     parsed = await rateLimiter.queueRequest('analyze-arc', async () => {
-      return await geminiJson<{
+      return await deepseekJson<{
         analysis: {
           overallFlow: string;
           continuityScore: number;
@@ -651,6 +652,7 @@ export async function analyzeArc(
           suggestedImprovements: string[];
         };
       }>({
+        model: 'deepseek-chat',
         system: builtPrompt.systemInstruction || SYSTEM_INSTRUCTION,
         user: builtPrompt.userPrompt + '\n\nReturn ONLY a valid JSON object matching this structure:\n' + jsonSchema + `\n\nCRITICAL JSON FORMATTING REQUIREMENTS (MUST FOLLOW TO AVOID TRUNCATION):
 1. ALL strings MUST be properly escaped (use \\n for newlines, \\" for quotes, \\\\ for backslashes)
@@ -694,7 +696,7 @@ export async function analyzeArc(
   const processedIssues: EditorIssue[] = (parsed.issues || []).map((issue: any, index: number) => {
     // Validate issue chapter number is in arc (or null for arc-wide issues)
     let issueChapterNumber = issue.chapterNumber;
-    
+
     // Null is allowed for arc-wide issues, but if a number is provided, it must be in the arc
     if (issueChapterNumber !== null && issueChapterNumber !== undefined && !arcChapterNumbers.has(issueChapterNumber)) {
       console.warn(`Arc issue ${index} has chapter number ${issueChapterNumber} which is not in arc chapters ${Array.from(arcChapterNumbers).join(', ')}. Attempting to find correct chapter...`);
@@ -713,11 +715,11 @@ export async function analyzeArc(
         console.warn(`Arc issue ${index} could not be matched to arc chapters. Treating as arc-wide issue.`);
       }
     }
-    
+
     const chapter = issueChapterNumber !== null && issueChapterNumber !== undefined
       ? arcChapters.find(ch => ch.number === issueChapterNumber)
       : null;
-    
+
     return {
       id: generateUUID(),
       type: issue.type || 'style',
@@ -731,10 +733,10 @@ export async function analyzeArc(
       originalText: issue.originalText || undefined,
       context: issue.context || undefined,
     };
-  }).filter(issue => 
-    issue.chapterNumber === null || 
-    issue.chapterNumber === 0 || 
-    issue.chapterNumber === undefined || 
+  }).filter(issue =>
+    issue.chapterNumber === null ||
+    issue.chapterNumber === 0 ||
+    issue.chapterNumber === undefined ||
     arcChapterNumbers.has(issue.chapterNumber)
   ); // Only keep issues in arc chapters or arc-wide issues
 
@@ -754,30 +756,30 @@ export async function analyzeArc(
     }
     return true;
   });
-  
+
   const processedFixes: EditorFix[] = validFixes.map((fix: any, fixIndex: number) => {
     // Extract chapter number from fix (preferred) or try to match to issue
     let fixChapterNumber = fix.chapterNumber || null;
-    
+
     // Validate chapter number is in the arc
     if (fixChapterNumber && !arcChapterNumbers.has(fixChapterNumber)) {
       console.warn(`Arc fix has chapter number ${fixChapterNumber} which is not in arc chapters ${Array.from(arcChapterNumbers).join(', ')}. Attempting to find correct chapter...`);
       fixChapterNumber = null; // Reset to find the correct chapter
     }
-    
+
     // Try multiple strategies to match fix to issue
     let issue = processedIssues.find(
-      (iss, idx) => fix.issueId === `issue-${idx}` || 
-                   fix.issueId === iss.id ||
-                   (fixChapterNumber && iss.chapterNumber === fixChapterNumber && iss.type === (fix.fixType || 'style')) ||
-                   fix.issueId === iss.chapterId
+      (iss, idx) => fix.issueId === `issue-${idx}` ||
+        fix.issueId === iss.id ||
+        (fixChapterNumber && iss.chapterNumber === fixChapterNumber && iss.type === (fix.fixType || 'style')) ||
+        fix.issueId === iss.chapterId
     );
 
     // If still no match, try matching by chapter number and type (only from arc chapters)
     if (!issue && fixChapterNumber) {
       issue = processedIssues.find(
         iss => iss.chapterNumber === fixChapterNumber && arcChapterNumbers.has(iss.chapterNumber) &&
-               (iss.type === (fix.fixType || 'style') || !fix.fixType)
+          (iss.type === (fix.fixType || 'style') || !fix.fixType)
       );
     }
 
@@ -787,11 +789,11 @@ export async function analyzeArc(
       for (const ch of arcChapters) {
         if (ch.content.includes(fix.originalText) || ch.content.toLowerCase().includes(fix.originalText.toLowerCase())) {
           // Found the chapter - now find matching issue
-          issue = processedIssues.find(iss => 
+          issue = processedIssues.find(iss =>
             iss.chapterNumber === ch.number &&
-            iss.originalText && fix.originalText && 
-            (iss.originalText.includes(fix.originalText.substring(0, 50)) || 
-             fix.originalText.includes(iss.originalText.substring(0, 50)))
+            iss.originalText && fix.originalText &&
+            (iss.originalText.includes(fix.originalText.substring(0, 50)) ||
+              fix.originalText.includes(iss.originalText.substring(0, 50)))
           );
           if (issue) {
             fixChapterNumber = ch.number; // Update to correct chapter number
@@ -817,7 +819,7 @@ export async function analyzeArc(
 
     // CRITICAL: Find the chapter this fix applies to - MUST be from arc chapters only
     let chapter = null;
-    
+
     if (fixChapterNumber && arcChapterNumbers.has(fixChapterNumber)) {
       chapter = arcChapters.find(ch => ch.number === fixChapterNumber);
     } else if (issue && arcChapterNumbers.has(issue.chapterNumber)) {
@@ -842,21 +844,21 @@ export async function analyzeArc(
     }
 
     // Check if this is an insertion fix
-    const isInsertion = fix.isInsertion || 
-                       (!fix.originalText || fix.originalText.trim().length === 0) ||
-                       (fix.fixType === 'gap' || fix.fixType === 'transition') ||
-                       fix.insertionLocation;
-    
+    const isInsertion = fix.isInsertion ||
+      (!fix.originalText || fix.originalText.trim().length === 0) ||
+      (fix.fixType === 'gap' || fix.fixType === 'transition') ||
+      fix.insertionLocation;
+
     // For insertions, don't require originalText to exist in chapter
     // For replacements, validate that originalText exists in the chapter
     if (chapter && fix.originalText && fix.originalText.trim().length > 0 && !isInsertion) {
-      const hasText = chapter.content.includes(fix.originalText) || 
-                      chapter.content.toLowerCase().includes(fix.originalText.toLowerCase());
+      const hasText = chapter.content.includes(fix.originalText) ||
+        chapter.content.toLowerCase().includes(fix.originalText.toLowerCase());
       if (!hasText) {
         console.warn(`Arc fix originalText not found in chapter ${chapter.number}. Fix may not apply correctly. Text: "${fix.originalText.substring(0, 100)}..."`);
       }
     }
-    
+
     // Mark as insertion if detected
     if (isInsertion && !fix.isInsertion) {
       fix.isInsertion = true;
@@ -883,24 +885,24 @@ export async function analyzeArc(
     if (!fix || !fix.fixedText || fix.fixedText.trim().length === 0) {
       return false;
     }
-    
+
     // For insertions, only need fixedText; for replacements, need originalText
     const isInsertion = fix.isInsertion || (!fix.originalText || fix.originalText.trim().length === 0);
     if (!isInsertion && (!fix.originalText || fix.originalText.trim().length === 0)) {
       return false;
     }
-    
+
     // For replacements, check that originalText and fixedText are different
     if (!isInsertion && fix.originalText.trim() === fix.fixedText.trim()) {
       return false;
     }
-    
+
     // Final validation: ensure chapter is in arc (or null for arc-wide)
     return fix.chapterNumber === null || fix.chapterNumber === 0 || arcChapterNumbers.has(fix.chapterNumber);
   }); // Only keep valid fixes that apply to arc chapters
 
   // Build analysis result with arc-specific scores - include fixes
-  const analysis: EditorAnalysis & { 
+  const analysis: EditorAnalysis & {
     readiness?: { isReadyForRelease: boolean; blockingIssues: string[]; suggestedImprovements: string[] };
     _fixes?: EditorFix[];
   } = {

@@ -227,10 +227,10 @@ export const INITIAL_NOVEL_STATE = {
 // Authentic Chapter Quality & Originality System Configuration
 // ADJUSTED: Lowered thresholds to reduce excessive regenerations
 export const QUALITY_CONFIG: RegenerationConfig = {
-  maxAttempts: 3,
+  maxAttempts: 2, // Reduced from 3 to prevent excessive regenerations
   criticalThresholds: {
-    originality: 55, // Reduced from 60 - allow more flexibility
-    narrativeCraft: 55, // Reduced from 65 - allow more flexibility
+    originality: 50, // Reduced from 55 - more lenient
+    narrativeCraft: 50, // Reduced from 55 - more lenient
     voiceConsistency: 60, // Reduced from 70 - this was too strict
   },
   minorThresholds: {
@@ -335,7 +335,8 @@ export const CRITIQUE_CORRECTION_CONFIG: CritiqueCorrectionConfig = {
   
   // Maximum iterations before accepting the chapter
   // More iterations = higher quality but higher cost
-  maxIterations: 3,
+  // Reduced from 3 to 2 for faster generation
+  maxIterations: 2,
   
   // Temperature for Gemini critique (lower = more consistent evaluation)
   critiqueTemperature: 0.3,

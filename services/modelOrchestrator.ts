@@ -49,11 +49,11 @@ function estimateCost(
   const costs = MODEL_COSTS[provider];
   const inputTokens = estimateTokens(inputText);
   const outputTokens = estimateTokens(outputText);
-  
+
   const inputCost = (inputTokens / 1_000_000) * costs.input;
   const outputCost = (outputTokens / 1_000_000) * costs.output;
   const totalCost = inputCost + outputCost;
-  
+
   return { inputCost, outputCost, totalCost, inputTokens, outputTokens };
 }
 
@@ -85,17 +85,9 @@ export type TaskType =
   | 'style_critique';       // Gemini - Style critique for critique-correction loop
 
 /**
- * Model assignment map
+ * MODEL ASSIGNMENTS
  * 
- * DeepSeek-V3.2 is used for all creative/narrative tasks because:
- *   - Trained on massive Chinese web fiction corpus
- *   - Natively understands cultivation tropes
- *   - Better at maintaining narrative consistency
- * 
- * Gemini Flash is used for extraction/metadata tasks because:
- *   - Fast and cost-effective
- *   - Good at structured data extraction
- *   - Reliable JSON generation
+ * DeepSeek is now used for all tasks including prose and analytical extraction.
  */
 const MODEL_ASSIGNMENTS: Record<TaskType, { provider: 'deepseek' | 'gemini'; model: string; description: string }> = {
   // DeepSeek "The Writer" tasks
@@ -104,14 +96,12 @@ const MODEL_ASSIGNMENTS: Record<TaskType, { provider: 'deepseek' | 'gemini'; mod
   arc_planning: { provider: 'deepseek', model: 'deepseek-chat', description: 'Story arc planning' },
   creative_expansion: { provider: 'deepseek', model: 'deepseek-chat', description: 'Creative prose expansion' },
   drafting: { provider: 'deepseek', model: 'deepseek-chat', description: 'Initial drafting' },
-  
-  // Gemini "The Clerk" tasks
-  metadata_extraction: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'State extraction (The Clerk)' },
-  lore_dictation: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'Lore entry processing' },
-  refine_spoken_input: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'Voice input refinement' },
-  
-  // Gemini "The Auto-Critic" task - Style evaluation for critique-correction loop
-  style_critique: { provider: 'gemini', model: 'gemini-2.5-flash', description: 'Style critique (The Auto-Critic)' },
+
+  // All analytical tasks now use DeepSeek-chat ("The Clerk")
+  metadata_extraction: { provider: 'deepseek', model: 'deepseek-chat', description: 'State extraction ("The Clerk")' },
+  lore_dictation: { provider: 'deepseek', model: 'deepseek-chat', description: 'Lore dictation/expansion' },
+  refine_spoken_input: { provider: 'deepseek', model: 'deepseek-chat', description: 'Polishing speech-to-text' },
+  style_critique: { provider: 'deepseek', model: 'deepseek-chat', description: 'Literary style analysis' },
 };
 
 /**
@@ -159,15 +149,15 @@ export async function routeTextTask(
   if (!assignment) {
     throw new Error(`Unknown task type: ${taskType}`);
   }
-  
+
   validateApiKey(assignment.provider);
-  
+
   const startTime = Date.now();
   logger.info(`[${assignment.provider.toUpperCase()}] Routing ${taskType} (${assignment.description})`, 'modelOrchestrator');
-  
+
   try {
     let result: string;
-    
+
     if (assignment.provider === 'deepseek') {
       result = await deepseekText({
         model: 'deepseek-chat',
@@ -188,7 +178,7 @@ export async function routeTextTask(
         cacheMetadata: opts.cacheMetadata,
       });
     }
-    
+
     const duration = Date.now() - startTime;
     logger.info(`[${assignment.provider.toUpperCase()}] Completed ${taskType} in ${duration}ms`, 'modelOrchestrator', {
       taskType,
@@ -196,11 +186,11 @@ export async function routeTextTask(
       model: assignment.model,
       duration,
     });
-    
+
     return result;
   } catch (error) {
     const duration = Date.now() - startTime;
-    logger.error(`[${assignment.provider.toUpperCase()}] Failed ${taskType} after ${duration}ms`, 'modelOrchestrator', 
+    logger.error(`[${assignment.provider.toUpperCase()}] Failed ${taskType} after ${duration}ms`, 'modelOrchestrator',
       error instanceof Error ? error : undefined,
       {
         taskType,
@@ -240,7 +230,7 @@ export async function routeJsonTask<T>(
   if (!assignment) {
     throw new Error(`Unknown task type: ${taskType}`);
   }
-  
+
   // Allow overriding provider for prose_generation task
   if (taskType === 'prose_generation' && opts.overrideProvider) {
     if (opts.overrideProvider === 'deepseek') {
@@ -250,16 +240,16 @@ export async function routeJsonTask<T>(
     }
     // Ignore invalid override values - use default
   }
-  
+
   validateApiKey(assignment.provider);
-  
+
   const startTime = Date.now();
   const inputText = (opts.system || '') + '\n' + opts.user;
   logger.info(`[${assignment.provider.toUpperCase()}] Routing ${taskType} JSON (${assignment.description})`, 'modelOrchestrator');
-  
+
   try {
     let result: T;
-    
+
     if (assignment.provider === 'deepseek') {
       result = await deepseekJson<T>({
         model: 'deepseek-chat',
@@ -280,11 +270,11 @@ export async function routeJsonTask<T>(
         cacheMetadata: opts.cacheMetadata,
       });
     }
-    
+
     const duration = Date.now() - startTime;
     const resultJson = JSON.stringify(result);
     const costEstimate = estimateCost(assignment.provider, inputText, resultJson);
-    
+
     logger.info(`[${assignment.provider.toUpperCase()}] Completed ${taskType} JSON in ${duration}ms`, 'modelOrchestrator', {
       taskType,
       provider: assignment.provider,
@@ -298,7 +288,7 @@ export async function routeJsonTask<T>(
         outputCost: costEstimate.outputCost.toFixed(6),
       },
     });
-    
+
     return result;
   } catch (error) {
     const duration = Date.now() - startTime;

@@ -220,6 +220,16 @@ export const FORBIDDEN_STRUCTURES = [
     pattern: /\bthe\s+\w+\s+seemed\s+to\s+\w+/gi,
     description: '"The [noun] seemed to [verb]" pattern (overused)',
   },
+  // Telegraphic prose - noun-heavy fragments lacking verbs or connectors
+  {
+    pattern: /^(?:\w+\s+){1,3}\w+[,.!?]\s+(?:\w+\s+){1,3}\w+[,.!?]$/gm,
+    description: 'Telegraphic prose (noun-heavy fragments)',
+  },
+  // Stripped articles - common AI "burstiness" tell where "the/a" are removed
+  {
+    pattern: /\b(?:[A-Z]\w+)\s+(?:[A-Z]\w+)\s+(?:[A-Z]\w+)\b/g,
+    description: 'Missing articles or conjunctions (Telegraphic tell)',
+  },
 ];
 
 /**
@@ -247,8 +257,9 @@ export interface ForbiddenStructureViolation {
  */
 export function checkForForbiddenWords(text: string): ForbiddenWordViolation[] {
   const violations: ForbiddenWordViolation[] = [];
+  if (!text) return [];
   const lowerText = text.toLowerCase();
-  
+
   FORBIDDEN_WORDS.forEach(word => {
     const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
     let match;
@@ -262,7 +273,7 @@ export function checkForForbiddenWords(text: string): ForbiddenWordViolation[] {
       });
     }
   });
-  
+
   return violations;
 }
 
@@ -271,7 +282,7 @@ export function checkForForbiddenWords(text: string): ForbiddenWordViolation[] {
  */
 export function checkForForbiddenStructures(text: string): ForbiddenStructureViolation[] {
   const violations: ForbiddenStructureViolation[] = [];
-  
+
   FORBIDDEN_STRUCTURES.forEach(({ pattern, description }) => {
     let match;
     const regex = new RegExp(pattern.source, pattern.flags);
@@ -287,7 +298,7 @@ export function checkForForbiddenStructures(text: string): ForbiddenStructureVio
       });
     }
   });
-  
+
   return violations;
 }
 
@@ -296,7 +307,7 @@ export function checkForForbiddenStructures(text: string): ForbiddenStructureVio
  */
 export function checkForForbiddenNames(text: string): ForbiddenWordViolation[] {
   const violations: ForbiddenWordViolation[] = [];
-  
+
   FORBIDDEN_NAMES.forEach(name => {
     const regex = new RegExp(`\\b${name}\\b`, 'gi');
     let match;
@@ -310,7 +321,7 @@ export function checkForForbiddenNames(text: string): ForbiddenWordViolation[] {
       });
     }
   });
-  
+
   return violations;
 }
 
@@ -372,7 +383,7 @@ const SYNONYM_MAP: Record<string, string[]> = {
  */
 export function replaceForbiddenWords(text: string, replacementMode: 'synonym' | 'remove' | 'contextual' = 'synonym'): string {
   let result = text;
-  
+
   if (replacementMode === 'remove') {
     // Remove forbidden words entirely
     FORBIDDEN_WORDS.forEach(word => {
@@ -383,7 +394,7 @@ export function replaceForbiddenWords(text: string, replacementMode: 'synonym' |
     result = result.replace(/\s+/g, ' ').trim();
     return result;
   }
-  
+
   if (replacementMode === 'synonym' || replacementMode === 'contextual') {
     // Replace with synonyms (randomize selection for more natural variation)
     // For 'contextual', we still use synonym rotation but could be enhanced with AI
@@ -395,13 +406,13 @@ export function replaceForbiddenWords(text: string, replacementMode: 'synonym' |
         result = result.replace(regex, (match, offset, string) => {
           // For contextual mode, try to pick a synonym that fits the context better
           let synonymIndex = matchCount % synonyms.length;
-          
+
           if (replacementMode === 'contextual') {
             // Simple contextual selection: look at surrounding words
             const before = string.substring(Math.max(0, offset - 20), offset).toLowerCase();
             const after = string.substring(offset + match.length, Math.min(string.length, offset + match.length + 20)).toLowerCase();
             const context = before + ' ' + after;
-            
+
             // Prefer synonyms that are less common but fit the context
             // This is a simplified version - could be enhanced with AI
             const contextWords = context.split(/\s+/);
@@ -416,10 +427,10 @@ export function replaceForbiddenWords(text: string, replacementMode: 'synonym' |
             // Simple rotation for synonym mode
             synonymIndex = matchCount % synonyms.length;
           }
-          
+
           const synonym = synonyms[synonymIndex];
           matchCount++;
-          
+
           // Preserve capitalization
           if (match[0] === match[0].toUpperCase()) {
             return synonym.charAt(0).toUpperCase() + synonym.slice(1);
@@ -429,10 +440,10 @@ export function replaceForbiddenWords(text: string, replacementMode: 'synonym' |
       }
     });
   }
-  
+
   // Replace forbidden structures (requires more sophisticated rewriting)
   // For now, we'll flag them but not auto-replace (requires AI assistance)
-  
+
   return result;
 }
 
