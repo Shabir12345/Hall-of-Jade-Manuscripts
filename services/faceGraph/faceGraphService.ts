@@ -123,7 +123,7 @@ export async function getFaceProfile(
       .select('*, face_titles(*), face_accomplishments(*), face_shames(*)')
       .eq('novel_id', novelId)
       .eq('character_id', characterId)
-      .single();
+      .maybeSingle();
 
     if (error) {
       if (error.code === 'PGRST116') return null; // Not found
@@ -170,7 +170,7 @@ export async function updateFaceProfile(
 ): Promise<FaceProfile | null> {
   try {
     const dbUpdates: Record<string, any> = {};
-    
+
     if (updates.totalFace !== undefined) dbUpdates.total_face = updates.totalFace;
     if (updates.faceByCategory) {
       dbUpdates.face_martial = updates.faceByCategory.martial;
@@ -218,7 +218,7 @@ export async function addFace(
 ): Promise<boolean> {
   try {
     let profile = await getFaceProfile(novelId, characterId);
-    
+
     if (!profile) {
       // Create profile if it doesn't exist
       const { data: charData } = await supabase
@@ -226,15 +226,15 @@ export async function addFace(
         .select('id, name, is_protagonist')
         .eq('id', characterId)
         .single();
-      
+
       if (!charData) return false;
-      
+
       profile = await createFaceProfile(novelId, {
         id: charData.id,
         name: charData.name,
         isProtagonist: charData.is_protagonist,
       } as Character);
-      
+
       if (!profile) return false;
     }
 
@@ -307,7 +307,7 @@ export async function recordKarmaEvent(
 ): Promise<KarmaEvent | null> {
   try {
     const { calculateKarmaWeight } = await import('./karmaCalculator');
-    
+
     // Calculate karma weight
     const { finalWeight, baseWeight, polarity, modifiers } = calculateKarmaWeight(
       actionType,
@@ -538,7 +538,7 @@ export async function upsertSocialLink(
       .eq('source_character_id', sourceCharacterId)
       .eq('target_character_id', targetCharacterId)
       .eq('link_type', linkType)
-      .single();
+      .maybeSingle();
 
     if (existing) {
       // Update existing link
@@ -684,14 +684,14 @@ async function updateSocialLinkFromKarma(
       .eq('novel_id', novelId)
       .eq('source_character_id', targetId)
       .eq('target_character_id', actorId)
-      .single();
+      .maybeSingle();
 
     const sentimentChange = polarity === 'positive' ? Math.floor(karmaWeight / 2) :
-                           polarity === 'negative' ? -Math.floor(karmaWeight / 2) : 0;
+      polarity === 'negative' ? -Math.floor(karmaWeight / 2) : 0;
 
     if (existing) {
       const newSentiment = Math.max(-100, Math.min(100, existing.sentiment_score + sentimentChange));
-      
+
       await supabase
         .from('social_links')
         .update({
@@ -702,9 +702,9 @@ async function updateSocialLinkFromKarma(
         .eq('id', existing.id);
     } else {
       // Create new link based on the action
-      const linkType: SocialLinkType = polarity === 'negative' ? 'enemy' : 
-                                        polarity === 'positive' ? 'benefactor' : 'rival';
-      
+      const linkType: SocialLinkType = polarity === 'negative' ? 'enemy' :
+        polarity === 'positive' ? 'benefactor' : 'rival';
+
       await upsertSocialLink(
         novelId,
         targetId,

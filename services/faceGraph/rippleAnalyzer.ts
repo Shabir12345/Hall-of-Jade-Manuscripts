@@ -81,7 +81,7 @@ export async function analyzeRippleEffects(
 
     // Get all social links for the target
     const targetLinks = await getSocialLinksForCharacter(novelId, karmaEvent.target_id);
-    
+
     const ripples: KarmaRipple[] = [];
     const processedCharacters = new Set<string>();
     processedCharacters.add(karmaEvent.actor_id); // Don't create ripple for the actor
@@ -89,10 +89,10 @@ export async function analyzeRippleEffects(
 
     // First degree ripples (direct connections)
     for (const link of targetLinks) {
-      const affectedId = link.sourceCharacterId === karmaEvent.target_id 
-        ? link.targetCharacterId 
+      const affectedId = link.sourceCharacterId === karmaEvent.target_id
+        ? link.targetCharacterId
         : link.sourceCharacterId;
-      
+
       if (processedCharacters.has(affectedId)) continue;
       processedCharacters.add(affectedId);
 
@@ -121,7 +121,7 @@ export async function analyzeRippleEffects(
     if (config.maxRippleDegrees >= 2) {
       for (const firstDegreeRipple of [...ripples]) {
         const secondDegreeLinks = await getSocialLinksForCharacter(
-          novelId, 
+          novelId,
           firstDegreeRipple.affectedCharacterId
         );
 
@@ -131,10 +131,10 @@ export async function analyzeRippleEffects(
             : link.sourceCharacterId;
 
           if (processedCharacters.has(affectedId)) continue;
-          
+
           // Only create 2nd degree ripples for strong relationships
           if (!STRONG_RIPPLE_RELATIONSHIPS.includes(link.linkType)) continue;
-          
+
           processedCharacters.add(affectedId);
 
           const affectedName = link.sourceCharacterId === firstDegreeRipple.affectedCharacterId
@@ -208,18 +208,18 @@ async function createRipple(
   try {
     // Calculate sentiment change based on relationship and karma
     const relationshipStrength = STRONG_RIPPLE_RELATIONSHIPS.includes(connectionType) ? 1.0 :
-                                  MODERATE_RIPPLE_RELATIONSHIPS.includes(connectionType) ? 0.6 : 0.3;
-    
+      MODERATE_RIPPLE_RELATIONSHIPS.includes(connectionType) ? 0.6 : 0.3;
+
     const degreeMultiplier = 1 / (degreesOfSeparation + 1);
     const sentimentChange = Math.floor(
-      karmaEvent.final_karma_weight * relationshipStrength * degreeMultiplier * 
+      karmaEvent.final_karma_weight * relationshipStrength * degreeMultiplier *
       (karmaEvent.polarity === 'negative' ? -1 : 1) * 0.5
     );
 
     // Determine threat level
     const becomesThreat = karmaEvent.polarity === 'negative' && sentimentChange <= -20;
     let threatLevel: 'minor' | 'moderate' | 'major' | 'extreme' | undefined;
-    
+
     if (becomesThreat) {
       if (Math.abs(sentimentChange) >= 50) threatLevel = 'extreme';
       else if (Math.abs(sentimentChange) >= 35) threatLevel = 'major';
@@ -331,12 +331,12 @@ function generatePotentialResponse(
   };
 
   const responses = responsesByRelationship[connectionType] || ['May hold negative feelings toward the actor'];
-  
+
   // Weaken response based on degrees of separation
   if (degreesOfSeparation >= 2) {
     return responses[0].replace('May', 'Might eventually').replace('Will', 'May');
   }
-  
+
   return responses[Math.floor(Math.random() * responses.length)];
 }
 
@@ -355,7 +355,7 @@ export async function queryConnectionToWronged(
       .select('character_name')
       .eq('novel_id', novelId)
       .eq('character_id', npcId)
-      .single();
+      .maybeSingle();
 
     const result: ConnectionToWrongedQuery = {
       npcId,
@@ -386,8 +386,8 @@ export async function queryConnectionToWronged(
 
     // Check direct connections
     for (const link of npcLinks) {
-      const connectedId = link.sourceCharacterId === npcId 
-        ? link.targetCharacterId 
+      const connectedId = link.sourceCharacterId === npcId
+        ? link.targetCharacterId
         : link.sourceCharacterId;
 
       if (wrongedCharacterIds.includes(connectedId)) {
@@ -410,12 +410,12 @@ export async function queryConnectionToWronged(
 
     // Check indirect connections (2 degrees)
     for (const link of npcLinks) {
-      const firstHopId = link.sourceCharacterId === npcId 
-        ? link.targetCharacterId 
+      const firstHopId = link.sourceCharacterId === npcId
+        ? link.targetCharacterId
         : link.sourceCharacterId;
 
       const firstHopLinks = await getSocialLinksForCharacter(novelId, firstHopId);
-      
+
       for (const secondLink of firstHopLinks) {
         const secondHopId = secondLink.sourceCharacterId === firstHopId
           ? secondLink.targetCharacterId
@@ -444,11 +444,11 @@ export async function queryConnectionToWronged(
 
     // Calculate threat level
     if (result.directConnections.length > 0) {
-      const hasStrongConnection = result.directConnections.some(c => 
+      const hasStrongConnection = result.directConnections.some(c =>
         STRONG_RIPPLE_RELATIONSHIPS.includes(c.connectionType) ||
         c.karmaSeverity === 'extreme' || c.karmaSeverity === 'severe'
       );
-      
+
       if (hasStrongConnection) {
         result.calculatedThreatLevel = 'high';
         result.threatReasons.push('Direct connection to someone MC severely wronged');
@@ -473,7 +473,7 @@ export async function queryConnectionToWronged(
     } else if (result.indirectConnections.length > 0) {
       result.calculatedThreatLevel = 'low';
       result.threatReasons.push('Indirect connection to people MC wronged');
-      
+
       result.potentialStoryHooks.push(
         `${result.npcName} may have heard rumors about the MC`,
         `${result.npcName} could become hostile if they learn more`
@@ -504,7 +504,7 @@ export async function queryConnectionToWronged(
 export async function applyRippleDecay(novelId: string, chaptersPassed: number = 1): Promise<number> {
   try {
     const config = await getFaceGraphConfig(novelId);
-    
+
     // Get all unmanifested ripples
     const { data: ripples, error } = await supabase
       .from('karma_ripples')
@@ -515,10 +515,10 @@ export async function applyRippleDecay(novelId: string, chaptersPassed: number =
     if (error || !ripples) return 0;
 
     let updatedCount = 0;
-    
+
     for (const ripple of ripples) {
       const newDecayFactor = ripple.decay_factor * Math.pow(config.karmaDecayPerChapter, chaptersPassed);
-      
+
       // If decay factor is below 0.1, the ripple has essentially faded
       if (newDecayFactor < 0.1) {
         // Remove the ripple

@@ -32,14 +32,6 @@ export async function fetchStoryThreads(novelId: string): Promise<StoryThread[]>
       return [];
     }
 
-    // Fetch progression events for all threads
-    const threadIds = threads.map(t => t.id);
-    const { data: events } = await supabase
-      .from('thread_progression_events')
-      .select('*')
-      .in('thread_id', threadIds)
-      .order('chapter_number', { ascending: true });
-
     return threads.map(thread => ({
       id: thread.id,
       novelId: thread.novel_id,
@@ -50,6 +42,7 @@ export async function fetchStoryThreads(novelId: string): Promise<StoryThread[]>
       description: thread.description || '',
       introducedChapter: thread.introduced_chapter,
       lastUpdatedChapter: thread.last_updated_chapter,
+      lastActiveChapter: thread.last_active_chapter || thread.last_updated_chapter, // detailed tracking
       resolvedChapter: thread.resolved_chapter || undefined,
       relatedEntityId: thread.related_entity_id || undefined,
       relatedEntityType: thread.related_entity_type || undefined,
@@ -84,6 +77,7 @@ export async function saveStoryThread(thread: StoryThread): Promise<StoryThread>
         description: thread.description,
         introduced_chapter: thread.introducedChapter,
         last_updated_chapter: thread.lastUpdatedChapter,
+        last_active_chapter: thread.lastActiveChapter,
         resolved_chapter: thread.resolvedChapter || null,
         related_entity_id: thread.relatedEntityId || null,
         related_entity_type: thread.relatedEntityType || null,
@@ -111,6 +105,7 @@ export async function saveStoryThread(thread: StoryThread): Promise<StoryThread>
       description: data.description || '',
       introducedChapter: data.introduced_chapter,
       lastUpdatedChapter: data.last_updated_chapter,
+      lastActiveChapter: data.last_active_chapter || data.last_updated_chapter,
       resolvedChapter: data.resolved_chapter || undefined,
       relatedEntityId: data.related_entity_id || undefined,
       relatedEntityType: data.related_entity_type || undefined,
@@ -149,7 +144,11 @@ export async function saveThreadProgressionEvent(event: ThreadProgressionEvent):
       .single();
 
     if (error) {
-      console.error('Error saving thread progression event:', error);
+      // Only log unexpected errors. Foreign key constraints are expected during race conditions and handled by retries.
+      if (!error.message.includes('violates foreign key constraint') &&
+        !error.message.includes('Key is not present')) {
+        console.error('Error saving thread progression event:', error);
+      }
       throw new Error(`Failed to save thread progression event: ${error.message}`);
     }
 

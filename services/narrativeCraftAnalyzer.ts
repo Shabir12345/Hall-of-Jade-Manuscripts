@@ -23,7 +23,7 @@ export function analyzeNarrativeCraft(
   state: NovelState
 ): NarrativeCraftScore {
   // Check cache
-  const cacheKey = `${chapter.id}:${chapter.content.length}`;
+  const cacheKey = `${chapter.id}:${(chapter.content || '').length}`;
   const cached = craftAnalysisCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.score;

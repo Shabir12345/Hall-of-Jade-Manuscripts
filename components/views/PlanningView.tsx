@@ -9,14 +9,13 @@ import CreativeSpark from '../CreativeSpark';
 import VoiceInput from '../VoiceInput';
 import * as arcAnalyzer from '../../services/promptEngine/arcContextAnalyzer';
 import { logger } from '../../services/loggingService';
-import { triggerEditorReview, applyApprovedFixes } from '../../services/editorService';
+import { triggerEditorReview } from '../../services/editorService';
 import { saveEditorReport } from '../../services/supabaseService';
-import type { EditorFix, EditorReportWithInternal } from '../../types/editor';
+import type { EditorFix } from '../../types/editor';
 import { backfillAllChapters } from '../../services/chapterBackfillService';
-import { DEFAULT_RUBRICS, STYLE_CRITERIA, getRubricById } from '../../config/styleRubrics';
+import { DEFAULT_RUBRICS, getRubricById } from '../../config/styleRubrics';
 import { CRITIQUE_CORRECTION_CONFIG } from '../../constants';
-import type { StyleRubric, StyleCriterion } from '../../types/critique';
-import { getRelevantArcMemories } from '../../services/memory/arcMemoryService';
+import { getRelevantArcMemories, ArcMemorySummary } from '../../services/memory/arcMemoryService';
 
 const DEFAULT_ARC_TARGET_CHAPTERS = 10;
 
@@ -42,6 +41,7 @@ interface PlanningViewProps {
   onAddLog: (message: string, type?: 'discovery' | 'update' | 'fate' | 'logic') => void;
   onSetCurrentEditorReport: (report: any) => void;
   onSetPendingFixProposals: (proposals: any[]) => void;
+  onDeleteArc: (arcId: string) => void;
 }
 
 const PlanningViewComponent: React.FC<PlanningViewProps> = ({
@@ -66,6 +66,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
   onAddLog,
   onSetCurrentEditorReport,
   onSetPendingFixProposals,
+  onDeleteArc,
 }) => {
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [isStyleRubricExpanded, setIsStyleRubricExpanded] = useState(false);
@@ -88,11 +89,11 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
     };
     return config;
   }, [novel]);
-  
+
   const activeRubric = useMemo(() => {
     return getRubricById(novelStyleConfig.activeRubricId) || DEFAULT_RUBRICS[0];
   }, [novelStyleConfig.activeRubricId]);
-  
+
   // Handle style rubric changes
   const handleRubricChange = useCallback((rubricId: string) => {
     onUpdateNovel((prev) => ({
@@ -105,7 +106,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
     }));
     onShowSuccess(`Style rubric changed to "${getRubricById(rubricId)?.name || rubricId}"`);
   }, [onUpdateNovel, onShowSuccess]);
-  
+
   const handleCritiqueCorrectionToggle = useCallback((enabled: boolean) => {
     onUpdateNovel((prev) => ({
       ...prev,
@@ -117,7 +118,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
     }));
     onShowSuccess(enabled ? 'Critique-Correction Loop enabled' : 'Critique-Correction Loop disabled');
   }, [onUpdateNovel, onShowSuccess]);
-  
+
   const handleMinimumScoreChange = useCallback((score: number | undefined) => {
     onUpdateNovel((prev) => ({
       ...prev,
@@ -133,21 +134,21 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
   }, [onUpdateNovel, onShowSuccess]);
   const handleBackfillChapters = useCallback(async () => {
     if (isBackfilling) return;
-    
+
     const confirmed = window.confirm(
       `This will extract scenes, world bible entries, territories, antagonists, and arc progress for all ${novel.chapters.length} chapters. ` +
       `Chapters that already have scenes will be skipped. This may take several minutes. Continue?`
     );
-    
+
     if (!confirmed) return;
-    
+
     setIsBackfilling(true);
     onStartLoading('Starting chapter backfill...', true);
     onAddLog('Starting chapter backfill process...', 'discovery');
-    
+
     try {
       let currentState = novel;
-      
+
       const result = await backfillAllChapters(
         currentState,
         (chapterNumber, total, chapter) => {
@@ -158,10 +159,10 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
           onAddLog(message, 'update');
         }
       );
-      
+
       if (result.updatedState) {
         onUpdateNovel(() => result.updatedState!);
-        
+
         // Reload novel from database to get updated data
         try {
           const { fetchNovel } = await import('../../services/supabaseService');
@@ -170,10 +171,10 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
             onUpdateNovel(() => updatedNovel);
           }
         } catch (error) {
-          logger.warn('Failed to reload novel after backfill', 'backfill', error instanceof Error ? error : new Error(String(error)));
+          logger.error('Failed to reload novel after backfill', 'backfill', error instanceof Error ? error : new Error(String(error)));
         }
       }
-      
+
       if (result.errors.length > 0) {
         onShowError(
           `Backfill completed with ${result.errors.length} error(s): ${result.errors.slice(0, 3).map(e => `Ch ${e.chapter}`).join(', ')}`
@@ -183,7 +184,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
         onShowSuccess(`Successfully backfilled ${result.processed} chapter(s)!`);
         onAddLog(`✅ Backfill completed: ${result.processed} chapter(s) processed`, 'discovery');
       }
-      
+
       onAddLog(`Backfill summary: ${result.processed} processed, ${result.errors.length} error(s)`, 'discovery');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -234,7 +235,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
       checklist: needsChecklist ? buildDefaultArcChecklist() : arc.checklist,
     };
   }, [novel]);
-  
+
   const handleApplyArcFix = useCallback(async (
     arcWithDefaults: Arc,
     displayArc: Arc,
@@ -243,7 +244,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
     finalArcChapters: Chapter[]
   ) => {
     const fixedArc = needsBoundaryFix ? displayArc : validationResult.arc;
-    
+
     let repairedArcs = novel.plotLedger.map(a => {
       if (a.id === arcWithDefaults.id) {
         return fixedArc;
@@ -263,14 +264,14 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
       }
       return a;
     });
-    
+
     const updatedNovel = {
       ...novel,
       plotLedger: repairedArcs,
       updatedAt: Date.now(),
     };
     onUpdateNovel(() => updatedNovel);
-    
+
     try {
       const { saveNovel } = await import('../../services/supabaseService');
       await saveNovel(updatedNovel);
@@ -290,7 +291,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
       onStartLoading(`Starting editor review for arc: ${arc.title}...`, true);
       onUpdateProgress(5);
       onSetGenerationStatus(`Starting editor review for arc "${arc.title}"...`);
-      
+
       const editorReport = await triggerEditorReview(novel, 'manual', arc, {
         onProgress: (phase: string, progress?: number) => {
           if (progress !== undefined) {
@@ -309,7 +310,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
       if (editorReport) {
         await saveEditorReport(editorReport);
         onSetCurrentEditorReport(editorReport);
-        
+
         if ((editorReport as any)._updatedChapters && (editorReport as any)._updatedChapters.length > 0) {
           const updatedChapters = (editorReport as any)._updatedChapters as Chapter[];
           onUpdateNovel(prev => {
@@ -325,10 +326,10 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
             return updatedNovel;
           });
         }
-        
+
         const { createFixProposals } = await import('../../services/editorFixer');
         const proposals = createFixProposals(editorReport.analysis.issues, editorReport.fixes);
-        
+
         if (proposals.length > 0) {
           onSetPendingFixProposals(proposals);
           onSetIsGenerating(false);
@@ -351,18 +352,18 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
     } catch (error) {
       logger.error('Error in arc editor review', 'editor', error instanceof Error ? error : new Error(String(error)));
       onStopLoading();
-      const errorMessage = error instanceof Error 
-        ? error.message 
-        : typeof error === 'string' 
-          ? error 
+      const errorMessage = error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
           : 'Unknown error occurred';
-      
+
       if (errorMessage.includes('Failed to load') || errorMessage.includes('500') || errorMessage.includes('editorAnalyzer')) {
         onShowError(`Editor review module failed to load. Please refresh the page and try again. Error: ${errorMessage}`);
       } else {
         onShowError(`Editor review failed: ${errorMessage}`);
       }
-      
+
       onSetIsGenerating(false);
       onSetGenerationStatus('');
     }
@@ -371,7 +372,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
   // Render arc with all its complex logic
   const renderArc = useCallback((arc: Arc, index: number) => {
     const arcWithDefaults = ensureArcDefaults(arc);
-    
+
     if (process.env.NODE_ENV === 'development') {
       logger.debug(`Arc ${index + 1} "${arcWithDefaults.title}"`, 'arc', {
         id: arcWithDefaults.id,
@@ -383,10 +384,10 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
         chapterNumbers: novel.chapters.map(ch => ch.number).sort((a, b) => a - b),
       });
     }
-    
+
     const arcChapters = arcAnalyzer.getArcChapters(arcWithDefaults, novel.chapters, novel.plotLedger);
     const chaptersWrittenInArc = arcChapters.length;
-    
+
     if (process.env.NODE_ENV === 'development') {
       logger.debug(`Arc "${arcWithDefaults.title}" chapters`, 'arc', {
         found: chaptersWrittenInArc,
@@ -394,18 +395,18 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
         startedAtChapter: arcWithDefaults.startedAtChapter,
       });
     }
-    
+
     const checklist = arcWithDefaults.checklist || [];
     const checklistDone = checklist.filter(i => i.completed).length;
     const checklistPct = checklist.length ? Math.round((checklistDone / checklist.length) * 100) : 0;
-    
+
     const validationResult = arcAnalyzer.validateArcState(arcWithDefaults, novel.chapters, novel.plotLedger);
     const hasWarnings = validationResult.issues.length > 0;
-    
+
     let displayArc = arcWithDefaults;
     let needsBoundaryFix = false;
     let boundaryFixMessage = '';
-    
+
     // Boundary fix logic (simplified version)
     if (arcWithDefaults.startedAtChapter && arcWithDefaults.startedAtChapter > 0 && novel.chapters.length > 10) {
       const sortedArcs = [...novel.plotLedger].sort((a, b) => {
@@ -414,16 +415,16 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
         return aStart - bStart;
       });
       const currentArcIndex = sortedArcs.findIndex(a => a.id === arcWithDefaults.id);
-      
+
       if (currentArcIndex > 0 && arcChapters.length < 3) {
         const prevArc = sortedArcs[currentArcIndex - 1];
         let expectedStart: number | undefined = undefined;
-        
+
         if (prevArc.status === 'completed' && prevArc.endedAtChapter && prevArc.endedAtChapter > 0) {
           expectedStart = prevArc.endedAtChapter + 1;
         } else if (currentArcIndex === 1 && prevArc.startedAtChapter === 1) {
           const sortedChapters = [...novel.chapters].sort((a, b) => a.number - b.number);
-          const firstArcPossibleChapters = sortedChapters.filter(ch => 
+          const firstArcPossibleChapters = sortedChapters.filter(ch =>
             ch.number >= 1 && ch.number < arcWithDefaults.startedAtChapter!
           );
           if (firstArcPossibleChapters.length >= 8 && firstArcPossibleChapters.length <= 12) {
@@ -434,7 +435,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
             }
           }
         }
-        
+
         if (expectedStart && expectedStart !== arcWithDefaults.startedAtChapter && expectedStart <= novel.chapters.length) {
           const testFixedArc = { ...arcWithDefaults, startedAtChapter: expectedStart };
           const testChapters = arcAnalyzer.getArcChapters(testFixedArc, novel.chapters, novel.plotLedger);
@@ -447,7 +448,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
         }
       }
     }
-    
+
     if (validationResult.wasRepaired || needsBoundaryFix) {
       displayArc = validationResult.wasRepaired ? validationResult.arc : displayArc;
       const repairedArcChapters = arcAnalyzer.getArcChapters(displayArc, novel.chapters, novel.plotLedger);
@@ -456,20 +457,20 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
         arcChapters.splice(0, arcChapters.length, ...repairedArcChapters);
       }
     }
-    
+
     const arcToDisplay = displayArc;
     const finalArcChapters = arcAnalyzer.getArcChapters(arcToDisplay, novel.chapters, novel.plotLedger);
     const finalChaptersWrittenInArc = finalArcChapters.length;
-    
-    const chapterRange = finalArcChapters.length > 0 
+
+    const chapterRange = finalArcChapters.length > 0
       ? `Ch ${Math.min(...finalArcChapters.map(ch => ch.number))}-${Math.max(...finalArcChapters.map(ch => ch.number))}`
-      : arcToDisplay.startedAtChapter 
-        ? `Starts at Ch ${arcToDisplay.startedAtChapter}` 
+      : arcToDisplay.startedAtChapter
+        ? `Starts at Ch ${arcToDisplay.startedAtChapter}`
         : 'No chapters yet';
-    
+
     const finalTargetChapters = arcToDisplay.targetChapters || DEFAULT_ARC_TARGET_CHAPTERS;
     const finalChapterPct = finalTargetChapters > 0 ? Math.min(100, Math.round((finalChaptersWrittenInArc / finalTargetChapters) * 100)) : 0;
-    
+
     const isNearlyComplete = finalChapterPct >= 80 && finalChaptersWrittenInArc < finalTargetChapters;
     const isOverTarget = finalChaptersWrittenInArc > finalTargetChapters;
 
@@ -479,7 +480,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
           <div className="flex-1 w-full">
             <div className="flex items-start justify-between gap-4 mb-3">
               <div className="flex-1">
-                <h4 
+                <h4
                   className="font-fantasy text-xl md:text-2xl font-bold text-zinc-100 mb-1 cursor-pointer hover:text-amber-500 transition-colors inline-block"
                   onClick={() => onEditArc(arcWithDefaults)}
                   title="Click to edit arc"
@@ -508,7 +509,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 {arcWithDefaults.status}
               </span>
             </div>
-            
+
             <p className="text-sm md:text-base text-zinc-400 leading-relaxed font-serif-novel mb-5 line-clamp-2">{arcWithDefaults.description}</p>
 
             <div className="space-y-3 mb-4">
@@ -520,9 +521,9 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                   </span>
                 </div>
                 <div className="h-2.5 bg-zinc-950/40 rounded-full overflow-hidden border border-zinc-700/70 mt-1.5 relative">
-                  <div 
-                    className={`h-full transition-all duration-500 ${isOverTarget ? 'bg-orange-500/80' : finalChapterPct >= 100 ? 'bg-emerald-500' : 'bg-emerald-500/80'}`} 
-                    style={{ width: `${Math.min(100, finalChapterPct)}%` }} 
+                  <div
+                    className={`h-full transition-all duration-500 ${isOverTarget ? 'bg-orange-500/80' : finalChapterPct >= 100 ? 'bg-emerald-500' : 'bg-emerald-500/80'}`}
+                    style={{ width: `${Math.min(100, finalChapterPct)}%` }}
                   />
                   {finalChapterPct > 100 && (
                     <div className="absolute top-0 left-0 h-full w-full bg-orange-500/40" style={{ width: '100%' }} />
@@ -541,7 +542,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 </div>
               </div>
             </div>
-            
+
             {finalArcChapters.length > 0 && (
               <details className="mt-4 group/details">
                 <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-300 font-semibold uppercase tracking-wider mb-2 flex items-center gap-2 select-none">
@@ -551,7 +552,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 <div className="mt-2 max-h-48 overflow-y-auto scrollbar-thin bg-zinc-950/50 rounded-lg p-3 border border-zinc-800">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {finalArcChapters.sort((a, b) => a.number - b.number).map((ch) => (
-                      <div 
+                      <div
                         key={ch.id}
                         onClick={() => {
                           onChapterSelect(ch.id);
@@ -571,7 +572,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 </div>
               </details>
             )}
-            
+
             {(hasWarnings || needsBoundaryFix) && (
               <div className="mt-4 p-3 bg-yellow-950/30 border border-yellow-700/50 rounded-lg">
                 <div className="flex items-start justify-between gap-3 mb-2">
@@ -592,7 +593,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 <ul className="space-y-1">
                   {needsBoundaryFix && (
                     <li className="text-xs text-yellow-300/80">
-                      • {boundaryFixMessage || `Arc startedAtChapter is ${arcWithDefaults.startedAtChapter} but should be ${displayArc.startedAtChapter}`}. 
+                      • {boundaryFixMessage || `Arc startedAtChapter is ${arcWithDefaults.startedAtChapter} but should be ${displayArc.startedAtChapter}`}.
                       Currently showing {chaptersWrittenInArc} chapter(s) but should show {finalChaptersWrittenInArc} chapter(s).
                     </li>
                   )}
@@ -605,14 +606,14 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 </ul>
               </div>
             )}
-            
+
             {finalArcChapters.length > 0 && (
               <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
                 <div className="bg-zinc-950/50 rounded-lg p-2 border border-zinc-800">
                   <div className="text-zinc-500 uppercase tracking-wider mb-1">Chapter Range</div>
                   <div className="text-zinc-200 font-mono font-semibold">{chapterRange}</div>
                   <div className="text-[10px] text-zinc-600 mt-1">
-                    Start: Ch {arcToDisplay.startedAtChapter || '?'} • 
+                    Start: Ch {arcToDisplay.startedAtChapter || '?'} •
                     {arcToDisplay.status === 'completed' && arcToDisplay.endedAtChapter ? ` End: Ch ${arcToDisplay.endedAtChapter}` : ' Active'}
                   </div>
                 </div>
@@ -626,7 +627,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
             )}
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0 w-full sm:w-auto">
-            <button 
+            <button
               onClick={() => onEditArc(arcWithDefaults)}
               className="text-xs text-amber-500 hover:text-amber-400 font-semibold border border-amber-500/30 hover:border-amber-500/50 px-4 py-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 transition-all duration-200 focus-visible:outline-amber-600 focus-visible:outline-2 flex items-center justify-center gap-2"
               title="Edit Plot Arc"
@@ -635,7 +636,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
               <span>✏️</span>
               <span>Refine</span>
             </button>
-            
+
             {arcWithDefaults.status === 'completed' && arcChapters.length > 0 && (
               <button
                 type="button"
@@ -648,7 +649,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 <span>Review</span>
               </button>
             )}
-            
+
             {arcWithDefaults.status !== 'active' && (
               <button
                 type="button"
@@ -661,7 +662,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 <span>Activate</span>
               </button>
             )}
-            
+
             {arcChapters.length > 0 && (
               <button
                 type="button"
@@ -680,14 +681,25 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 <span>Read</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => onDeleteArc(arcWithDefaults.id)}
+              className="text-xs text-red-500 hover:text-red-400 font-semibold border border-red-500/30 hover:border-red-500/50 px-4 py-2.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 transition-all duration-200 focus-visible:outline-red-600 focus-visible:outline-2 flex items-center justify-center gap-2"
+              title="Delete Plot Arc"
+              aria-label={`Delete arc: ${arcWithDefaults.title}`}
+            >
+              <span>🗑️</span>
+              <span>Shatter</span>
+            </button>
           </div>
         </div>
       </div>
     );
-  }, [novel, ensureArcDefaults, onEditArc, onSetActiveArc, onChapterSelect, onViewChange, handleArcEditorReview, handleApplyArcFix]);
+  }, [novel, ensureArcDefaults, onEditArc, onSetActiveArc, onChapterSelect, onViewChange, handleArcEditorReview, handleApplyArcFix, onDeleteArc]);
 
   return (
-    <div 
+    <div
       className="p-3 xs:p-4 md:p-8 lg:p-12 max-w-5xl mx-auto space-y-5 xs:space-y-6 md:space-y-12 animate-in fade-in duration-300"
       style={{ paddingTop: 'max(4rem, calc(env(safe-area-inset-top, 1rem) + 3.5rem))' }}
     >
@@ -704,30 +716,55 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
           <span className="hidden xs:inline">Editor </span>Review
         </button>
       </div>
-      
+
       {/* Grand Saga section */}
       <section className="bg-zinc-900/60 border border-zinc-700 p-4 xs:p-5 md:p-10 rounded-xl xs:rounded-2xl shadow-xl border-t-4 border-t-amber-600">
-        <div className="flex justify-between items-center mb-4 xs:mb-6">
-          <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider" data-tour="grand-saga">Grand Saga</h3>
-          <div className="flex items-center space-x-1 xs:space-x-2">
-            <CreativeSpark 
-              type="Grand Saga" 
-              currentValue={novel.grandSaga} 
-              state={novel} 
-              onIdea={(idea) => onUpdateGrandSaga(idea)} 
-            />
-            <VoiceInput onResult={(text) => onUpdateGrandSaga(novel.grandSaga ? novel.grandSaga + " " + text : text)} />
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 xs:mb-6 gap-4">
+          <div className="flex-1">
+            <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider" data-tour="grand-saga">Grand Saga</h3>
+            <p className="text-[10px] text-zinc-500 mt-1 uppercase tracking-tight">Overall Novel Vision</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
+            <div className="flex flex-col gap-1 min-w-[120px]">
+              <label htmlFor="total-planned-chapters" className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Target Chapters</label>
+              <input
+                id="total-planned-chapters"
+                type="number"
+                value={novel.totalPlannedChapters || 0}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  onUpdateNovel((prev) => ({
+                    ...prev,
+                    totalPlannedChapters: isNaN(val) ? undefined : val,
+                    updatedAt: Date.now(),
+                  }));
+                }}
+                className="bg-zinc-950/50 border border-zinc-700/50 rounded px-2 py-1 text-sm text-amber-500 font-bold focus:border-amber-600 outline-none w-20"
+                placeholder="Total"
+              />
+            </div>
+
+            <div className="flex items-center space-x-1 xs:space-x-2">
+              <CreativeSpark
+                type="Grand Saga"
+                currentValue={novel.grandSaga}
+                state={novel}
+                onIdea={(idea) => onUpdateGrandSaga(idea)}
+              />
+              <VoiceInput onResult={(text) => onUpdateGrandSaga(novel.grandSaga ? novel.grandSaga + " " + text : text)} />
+            </div>
           </div>
         </div>
-        <textarea 
-          value={novel.grandSaga} 
-          onChange={(e) => onUpdateGrandSaga(e.target.value)} 
+        <textarea
+          value={novel.grandSaga}
+          onChange={(e) => onUpdateGrandSaga(e.target.value)}
           className="w-full bg-transparent border-none focus:ring-0 text-base xs:text-lg md:text-2xl font-serif-novel italic text-zinc-300 resize-none h-24 xs:h-28 md:h-32 scrollbar-hide leading-relaxed"
           aria-label="Grand Saga"
           placeholder="Describe the overarching story..."
         />
       </section>
-      
+
       {/* Style Rubric Configuration - Critique-Correction Loop */}
       <section className="bg-zinc-900/60 border border-zinc-700 rounded-xl xs:rounded-2xl shadow-xl border-t-4 border-t-purple-600">
         <button
@@ -739,7 +776,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
             <div>
               <h3 className="text-xs xs:text-sm font-bold text-zinc-400 uppercase tracking-wider">Style Rubric</h3>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Auto-Critic: {novelStyleConfig.critiqueCorrectionEnabled !== false ? 'Enabled' : 'Disabled'} | 
+                Auto-Critic: {novelStyleConfig.critiqueCorrectionEnabled !== false ? 'Enabled' : 'Disabled'} |
                 Rubric: {activeRubric?.name || 'None'}
               </p>
             </div>
@@ -748,7 +785,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
             ▼
           </span>
         </button>
-        
+
         {isStyleRubricExpanded && (
           <div className="p-4 xs:p-5 md:p-6 pt-0 space-y-4 xs:space-y-6 border-t border-zinc-700/50">
             {/* Enable/Disable Toggle */}
@@ -763,22 +800,20 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 onClick={() => handleCritiqueCorrectionToggle(novelStyleConfig.critiqueCorrectionEnabled === false)}
                 title={novelStyleConfig.critiqueCorrectionEnabled !== false ? 'Disable Critique-Correction Loop' : 'Enable Critique-Correction Loop'}
                 aria-label={novelStyleConfig.critiqueCorrectionEnabled !== false ? 'Disable Critique-Correction Loop' : 'Enable Critique-Correction Loop'}
-                className={`relative w-12 h-6 rounded-full transition-colors duration-200 ${
-                  novelStyleConfig.critiqueCorrectionEnabled !== false 
-                    ? 'bg-purple-600' 
-                    : 'bg-zinc-600'
-                }`}
-              >
-                <span 
-                  className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
-                    novelStyleConfig.critiqueCorrectionEnabled !== false 
-                      ? 'translate-x-6' 
-                      : 'translate-x-0.5'
+                className={`relative w-12 h-6 rounded-full transition-colors duration-200 ${novelStyleConfig.critiqueCorrectionEnabled !== false
+                  ? 'bg-purple-600'
+                  : 'bg-zinc-600'
                   }`}
+              >
+                <span
+                  className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${novelStyleConfig.critiqueCorrectionEnabled !== false
+                    ? 'translate-x-6'
+                    : 'translate-x-0.5'
+                    }`}
                 />
               </button>
             </div>
-            
+
             {/* Rubric Selection */}
             <div className="space-y-3">
               <h4 className="text-sm font-semibold text-zinc-300">Select Style Rubric</h4>
@@ -787,11 +822,10 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                   <button
                     key={rubric.id}
                     onClick={() => handleRubricChange(rubric.id)}
-                    className={`p-3 rounded-lg border text-left transition-all duration-200 ${
-                      activeRubric?.id === rubric.id
-                        ? 'bg-purple-600/20 border-purple-500 text-purple-200'
-                        : 'bg-zinc-800/40 border-zinc-700 text-zinc-300 hover:bg-zinc-800/60 hover:border-zinc-600'
-                    }`}
+                    className={`p-3 rounded-lg border text-left transition-all duration-200 ${activeRubric?.id === rubric.id
+                      ? 'bg-purple-600/20 border-purple-500 text-purple-200'
+                      : 'bg-zinc-800/40 border-zinc-700 text-zinc-300 hover:bg-zinc-800/60 hover:border-zinc-600'
+                      }`}
                   >
                     <div className="font-semibold text-sm">{rubric.name}</div>
                     <div className="text-xs text-zinc-500 mt-1 line-clamp-2">{rubric.description}</div>
@@ -802,7 +836,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 ))}
               </div>
             </div>
-            
+
             {/* Active Rubric Details */}
             {activeRubric && (
               <div className="space-y-3">
@@ -821,7 +855,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 </div>
               </div>
             )}
-            
+
             {/* Quality Threshold Override */}
             <div className="space-y-2">
               <h4 className="text-sm font-semibold text-zinc-300">Quality Threshold</h4>
@@ -846,7 +880,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 Higher = better quality but more iterations (~$0.002 per iteration).
               </p>
             </div>
-            
+
             {/* Cost Estimate */}
             <div className="p-3 bg-zinc-800/40 rounded-lg">
               <div className="flex items-center gap-2 text-xs text-zinc-400">
@@ -859,7 +893,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
           </div>
         )}
       </section>
-      
+
       {/* Plot Arcs section */}
       <section className="space-y-4 xs:space-y-6" data-tour="plot-arcs">
         <div className="flex flex-col xs:flex-row justify-between xs:items-center gap-3">
@@ -886,9 +920,9 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
                 </>
               )}
             </button>
-            <button 
-              disabled={isPlanning} 
-              onClick={onPlanNewArc} 
+            <button
+              disabled={isPlanning}
+              onClick={onPlanNewArc}
               className="text-[10px] xs:text-xs sm:text-sm bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 px-3 xs:px-4 sm:px-6 py-2 xs:py-2.5 rounded-lg xs:rounded-xl font-semibold text-amber-500 border border-amber-900/30 hover:border-amber-600/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex-shrink-0"
               title="AI will plan a new plot arc based on your story"
               aria-label="Plan new plot arc"
@@ -921,7 +955,7 @@ const PlanningViewComponent: React.FC<PlanningViewProps> = ({
           </div>
         )}
       </section>
-      
+
       {arcMemories.length > 0 && (
         <div className="arc-memory-panel bg-gray-100 p-4 rounded-lg mt-4">
           <h3 className="text-lg font-bold mb-2">Relevant Arc Memories</h3>

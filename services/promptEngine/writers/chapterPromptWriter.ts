@@ -13,6 +13,7 @@ import { getGrandSagaCharacters } from '../../grandSagaAnalyzer';
 import { validateChapterGenerationQuality, checkOriginalityPreparation } from '../../chapterQualityValidator';
 import { getContextLimitsForModel, type ModelProvider } from '../../contextWindowManager';
 import { detectEconomicScene, formatMarketForPrompt } from '../../market/marketService';
+import { suggestThreadResolutions } from '../../storyThreadService';
 
 /**
  * Chapter Prompt Writer
@@ -45,7 +46,8 @@ import { detectEconomicScene, formatMarketForPrompt } from '../../market/marketS
 export async function buildChapterPrompt(
   state: NovelState,
   userInstruction: string = '',
-  modelProvider?: ModelProvider
+  modelProvider?: ModelProvider,
+  warningReport?: any // ChapterGenerationReport (typed as any to avoid circular import if needed, or import properly)
 ): Promise<BuiltPrompt> {
   const nextChapterNumber = state.chapters.length + 1;
   const activeArc = state.plotLedger.find(a => a.status === 'active');
@@ -222,6 +224,14 @@ Opening Validation: Before finalizing the chapter, verify:
 `
     : '';
 
+  const threadSuggestions = state.storyThreads ? suggestThreadResolutions(state.storyThreads, nextChapterNumber) : [];
+  const payoffSchedule = threadSuggestions.length > 0
+    ? `[THREAD PAYOFF SCHEDULE - CRITICAL PRIORITIES]
+The following threads are approaching their resolution targets. You MUST advance or resolve them as indicated:
+${threadSuggestions.map(s => `• ${s.urgency === 'high' ? '🔴 HIGH URGENCY: ' : '🟡 MEDIUM URGENCY: '}${s.suggestion}`).join('\n')}
+`
+    : '';
+
   const taskDescription = `[CHAPTER WRITING TASK]
 
 Write Chapter ${nextChapterNumber} of "${state.title}".
@@ -247,6 +257,8 @@ ${arcDirective}
 ${antagonistDirective}
 
 ${grandSagaDirective ? `[GRAND SAGA INTEGRATION]\n${grandSagaDirective}\n` : ''}
+
+${payoffSchedule}
 
 [CORE CHAPTER REQUIREMENTS]
 
@@ -302,8 +314,6 @@ Language and Clarity:
 • Natural dialogue: Write dialogue that sounds like real people talking, not overly formal or academic speech
 • Show what's happening: Use specific details that help readers picture scenes clearly - what characters see, hear, feel, smell, or taste
 
-Note: Simple, clear writing can still be powerful and engaging. The goal is to tell a great story in a way everyone can understand.
-
 [NARRATIVE CRAFT ENFORCEMENT - Professional Fiction Standards]
 
 Apply professional fiction standards to every chapter. These requirements ensure publication-ready quality:
@@ -340,6 +350,29 @@ Write dialogue that sounds like real people talking, not formal or academic spee
   • Character voice variation: Each character should have unique speech patterns (formal vs casual, verbose vs terse, direct vs indirect). Don't make all characters sound the same.
   • Avoid: Overly formal dialogue, perfect grammar in all speech, characters saying exactly what they mean, identical speech patterns for all characters.
   • Target score: Dialogue naturalness should score 50-70/100. Focus on making dialogue feel like natural conversation - character-specific, indirect, and emotionally resonant.
+
+[MATHEMATICAL PROSE AUDIT - CRITICAL SELF-CHECK]
+
+Before providing your final response, you MUST perform an internal audit of your prose to eliminate AI ruts.
+
+1. SENTENCE BURSTINESS AUDIT:
+   - Identify every paragraph with 3+ sentences.
+   - For these paragraphs, you MUST ensure sentence lengths vary by at least 10 words.
+   - Example Goal: Sentence 1 (12 words), Sentence 2 (3 words), Sentence 3 (28 words).
+   - If you find 3+ sentences in a row with word counts like [12, 14, 11] or [20, 18, 22], you MUST rewrite them immediately.
+
+2. OVEREXPLANATION AUDIT:
+   - Search your prose for "because", "in other words", "meaning that", or "to show".
+   - If they explain a character's emotion or the "why" behind an obvious action, DELETE THE EXPLANATION.
+   - Example: "He was angry because..." → "His pulse hammered in his neck."
+   - Target: Max 2 uses of "because" per 1000 words.
+
+3. RHYTHMIC DIVERSITY:
+   - Use the "Short-Long-Fragment-Medium" rhythm.
+   - Action should be staccato (short). Reflection should be melodic (long).
+
+REJECTION CRITERIA: If more than 5 paragraphs contain "rhythmic ruts" (similar sentence lengths), the chapter will be rejected. Remove all "explanatory safety nets" that hand-hold the reader. Trust the subtext.
+
 
 [PROSE FLOW & GRAMMATICAL INTEGRITY - CRITICAL]
 
@@ -639,6 +672,13 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
     });
   }
 
+  // Add suggestions from warning report if provided (NEW)
+  if (warningReport && warningReport.promptConstraints) {
+    warningReport.promptConstraints.forEach((constraint: string) => {
+      qualityBasedConstraints.push(`CRITICAL NARRATIVE REQUIREMENT: ${constraint}`);
+    });
+  }
+
   // Base constraints (always included)
   const baseConstraints = [
     '⚠️⚠️⚠️ CRITICAL WORD COUNT: chapterContent MUST be AT LEAST 1500 words. AIM FOR 1800-2200 WORDS to ensure you meet the minimum. Chapters below 1500 words WILL BE REJECTED. Plan your content: include 8-12 paragraphs, expand scenes with sensory details, add dialogue, describe character thoughts and feelings. Do NOT rush the narrative. ⚠️⚠️⚠️',
@@ -767,7 +807,7 @@ CRITICAL FORMATTING: In chapterContent, use double newlines (\\n\\n) to separate
   // Use model-specific limits if available, otherwise use defaults optimized for continuity
   const configMaxContextLength = modelLimits
     ? modelLimits.maxContextLength
-    : 4000; // Default for Claude/smaller context windows
+    : 3000; // Reduced from 4000 to prevent 'exceeded max tokens' errors
 
   const builtPrompt = await buildPrompt(state, {
     role: 'You are the "Apex Sovereign Author," a world-class novelist and master literary architect specializing in Xianxia, Xuanhuan, and System epics. You write with the precision of a master surgeon and the soul of a poet. CRITICAL: Every chapter you write MUST be at least 1500 words - this is a non-negotiable minimum requirement.',

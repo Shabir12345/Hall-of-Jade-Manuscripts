@@ -1,4 +1,4 @@
-import type { Arc, ArcChecklistItem, Character, Chapter, NovelState, LogicAudit } from '../types';
+import type { Arc, Chapter, NovelState, LogicAudit } from '../types';
 import { SYSTEM_INSTRUCTION, QUALITY_CONFIG, CRITIQUE_CORRECTION_CONFIG } from '../constants';
 import { applyCritiqueCorrectionLoop } from './critiqueCorrectionService';
 import { getStoredLlm, type LlmId } from '../contexts/LlmContext';
@@ -11,14 +11,12 @@ import { buildEditPrompt } from './promptEngine/writers/editPromptWriter';
 import { buildExpansionPrompt } from './promptEngine/writers/expansionPromptWriter';
 import { formatChapterContent } from '../utils/chapterFormatter';
 import {
-  validateChapterQuality as validateChapterGenerationQuality,
+  validateChapterGenerationQuality,
   validateChapterQuality,
-  checkOriginalityPreparation
 } from './chapterQualityValidator';
 import {
   validateChapterQuality as validatePostGeneration,
   applyQuickFixes,
-  type QualityReport
 } from './postGenerationQualityService';
 import { AppError, formatErrorMessage } from '../utils/errorHandling';
 import { generateUUID } from '../utils/uuid';
@@ -26,7 +24,7 @@ import { logger } from './loggingService';
 import { regenerateWithQualityCheck } from './chapterRegenerationService';
 import { isJsonChapterContent, extractChapterContent } from '../utils/chapterContentRepair';
 import { generateChapterWarnings, logChapterGenerationReport } from './chapterGenerationWarningService';
-import { gatherMemoryEnhancedContext, injectMemoryContext } from './memory';
+
 import { queryMemory } from './memory/memoryQueryService';
 import { assembleContextWithBudget } from './memory/memoryTierManager';
 import {
@@ -52,7 +50,7 @@ import { generateFatePaths } from './fatePathGenerator';
 import { createGate, getGateConfig, buildGatePromptInjection, getGateById } from './tribulationGateService';
 import { TribulationGate } from '../types/tribulationGates';
 import { buildConsequenceReminder } from './gateConsequenceTracker';
-import { generateFaceGraphContext, extractKarmaFromChapter, getFaceGraphConfig } from './faceGraph';
+import { generateFaceGraphContext, getFaceGraphConfig } from './faceGraph';
 import type { FaceGraphContext } from '../types/faceGraph';
 import { generateMarketContext } from './market';
 import type { MarketContextResult } from './market/marketContextGenerator';
@@ -130,12 +128,7 @@ function sanitizePlainTextInsight(raw: string): string {
   return text.trim();
 }
 
-function truncateForExtraction(text: string, maxChars: number): string {
-  if (!text) return '';
-  const trimmed = text.trim();
-  if (trimmed.length <= maxChars) return trimmed;
-  return trimmed.slice(0, maxChars) + '\n\n[TRUNCATED]';
-}
+
 
 export type ChapterGenPhase =
   | 'quality_check'
@@ -167,7 +160,11 @@ export type ChapterGenPhase =
   | 'llm_request_start'
   | 'llm_request_end'
   | 'parse_start'
-  | 'parse_end';
+  | 'parse_end'
+  | 'loom_director_start'
+  | 'loom_director_complete'
+  | 'loom_clerk_start'
+  | 'loom_clerk_complete';
 
 export const refineSpokenInput = async (rawText: string): Promise<string> => {
   const prompt = `
@@ -324,22 +321,23 @@ export const generateNextChapter = async (
 
   // Pre-generation quality checks
   const nextChapterNumber = state.chapters.length + 1;
-  const qualityCheck = validateChapterGenerationQuality(state, nextChapterNumber);
+  let qualityCheck = validateChapterGenerationQuality(state, nextChapterNumber);
 
   // NEW: Generate story health warnings using the smart warning system
-  const warningReport = generateChapterWarnings(state, nextChapterNumber);
+  let warningReport = generateChapterWarnings(state, nextChapterNumber);
 
   // Log the comprehensive warning report
   logChapterGenerationReport(warningReport);
 
-  // Log blockers as errors
+  // Log blockers as warnings (Narrative Structural Issues)
   if (warningReport.blockers.length > 0) {
     warningReport.blockers.forEach(blocker => {
-      logger.error(`[GENERATION BLOCKER] ${blocker.title}`, 'generation', undefined, {
+      logger.warn(`[NARRATIVE BLOCKER] ${blocker.title}`, 'generation', {
         category: blocker.category,
         description: blocker.description,
         recommendation: blocker.recommendation,
         metric: blocker.metric,
+        isNarrativeBlocker: true
       });
     });
   }
@@ -374,6 +372,30 @@ export const generateNextChapter = async (
       logger.warn('Chapter generation quality warnings', 'ai', {
         warnings: qualityCheck.warnings
       });
+
+      // AUTO-FIX: If previous chapter missing logic audit, generate it now
+      const logicAuditWarning = qualityCheck.warnings.find(w => w.includes('logic audit'));
+      if (logicAuditWarning && state.chapters.length > 0) {
+        const lastChapter = state.chapters[state.chapters.length - 1];
+        if (!lastChapter.logicAudit) {
+          logger.info(`Auto-fixing missing logic audit for Chapter ${lastChapter.number}...`, 'logicAudit');
+          try {
+            const { generateLogicAudit } = await import('./logicAuditService');
+            const audit = await generateLogicAudit(lastChapter);
+            if (audit) {
+              lastChapter.logicAudit = audit;
+              logger.info(`Successfully backfilled logic audit for Chapter ${lastChapter.number}`, 'logicAudit');
+
+              // RE-RUN validation so warningReport and qualityCheck are updated
+              qualityCheck = validateChapterGenerationQuality(state, nextChapterNumber);
+              warningReport = generateChapterWarnings(state, nextChapterNumber, state.totalPlannedChapters);
+              logger.info('Updated health report after logic audit backfill', 'ai');
+            }
+          } catch (auditError) {
+            logger.warn('Failed to auto-fix missing logic audit', 'logicAudit', { error: String(auditError) });
+          }
+        }
+      }
     }
   }
 
@@ -441,7 +463,7 @@ export const generateNextChapter = async (
     const directorStart = Date.now();
 
     try {
-      const directorResult = await runDirectorAgent(state, userInstruction);
+      const directorResult = await runDirectorAgent(state, userInstruction, warningReport);
 
       if (directorResult.success && directorResult.beatSheet) {
         directorBeatSheet = directorResult.beatSheet;
@@ -478,7 +500,9 @@ export const generateNextChapter = async (
   // NEW: Check for Tribulation Gate trigger (unless skipping or resuming from a gate)
   let resolvedGateInjection: string | null = null;
 
-  if (!opts?.skipTribulationGate) {
+  if (true) { // Feature disabled: Tribulation Gates removed per user request
+    // Gate checking logic skipped
+  } else if (!opts?.skipTribulationGate) {
     opts?.onPhase?.('tribulation_gate_check');
 
     try {
@@ -510,7 +534,7 @@ export const generateNextChapter = async (
 
           const fatePaths = await generateFatePaths(
             state,
-            gateDetection.triggerType,
+            gateDetection.triggerType!,
             gateDetection.situation,
             gateDetection.protagonistName,
             gateDetection.context
@@ -520,7 +544,7 @@ export const generateNextChapter = async (
           const gate = createGate(
             state.id,
             nextChapterNumber,
-            gateDetection.triggerType,
+            gateDetection.triggerType!,
             gateDetection.situation,
             gateDetection.context,
             gateDetection.protagonistName,
@@ -546,26 +570,22 @@ export const generateNextChapter = async (
           });
         }
       }
-    } catch (gateError) {
+    } catch (gateError: any) {
       logger.warn('Tribulation Gate check failed, continuing without', 'generation', {
         error: gateError instanceof Error ? gateError.message : String(gateError),
       });
     }
-  } else if (opts?.resolvedGateId) {
-    // Resuming from a resolved gate - inject the chosen path into the prompt
-    try {
-      const resolvedGate = getGateById(opts.resolvedGateId);
-      if (resolvedGate && resolvedGate.status === 'resolved') {
-        resolvedGateInjection = buildGatePromptInjection(resolvedGate);
-        logger.info('Injecting resolved Tribulation Gate into prompt', 'generation', {
-          gateId: resolvedGate.id,
-          selectedPathId: resolvedGate.selectedPathId,
-          triggerType: resolvedGate.triggerType,
-        });
-      }
-    } catch (gateInjectError) {
-      logger.warn('Failed to inject resolved gate, continuing without', 'generation', {
-        error: gateInjectError instanceof Error ? gateInjectError.message : String(gateInjectError),
+  }
+
+  const resolvedGateId = opts?.resolvedGateId;
+  if (resolvedGateId) {
+    const resolvedGate = getGateById(resolvedGateId);
+    if (resolvedGate && resolvedGate.status === 'resolved') {
+      resolvedGateInjection = buildGatePromptInjection(resolvedGate);
+      logger.info('Injecting resolved Tribulation Gate into prompt', 'generation', {
+        gateId: resolvedGate.id,
+        selectedPathId: resolvedGate.selectedPathId,
+        triggerType: resolvedGate.triggerType,
       });
     }
   }
@@ -611,7 +631,7 @@ export const generateNextChapter = async (
   const selectedModel = getStoredChapterGenerationModel();
 
   // Start parallel operations for prompt building
-  const basePromptPromise = buildChapterPrompt(state, userInstruction);
+  const basePromptPromise = buildChapterPrompt(state, userInstruction, undefined, warningReport);
   const memoryContextPromise = opts?.onPhase ? (async () => {
     opts?.onPhase?.('memory_context_gather');
     try {
@@ -636,7 +656,7 @@ export const generateNextChapter = async (
   const memoryContext = await memoryContextPromise;
   if (memoryContext) {
     // Use the optimized memory context assembly
-    const assembledMemory = assembleContextWithBudget(memoryContext, 4000);
+    const assembledMemory = assembleContextWithBudget(memoryContext, 2000);
     builtPrompt = {
       ...builtPrompt,
       systemInstruction: builtPrompt.systemInstruction + '\n\n' + assembledMemory,
@@ -971,8 +991,8 @@ export const generateNextChapter = async (
         user: builtPrompt.userPrompt + jsonSchemaInstruction,
         // AI Detection Evasion: Higher temperature for more human-like unpredictability
         temperature: 1.0, // Grok API maximum is 1.0 (temperature and topP cannot both be specified)
-        // Grok output can be large; allow ample tokens for 1500+ word chapters
-        // 1500 words ≈ 2000 tokens, so we need at least 3000 tokens for content + JSON overhead
+        // DeepSeek output can be large (up to 8k tokens); allow ample tokens for 1500+ word chapters + complex JSON schema
+        // 1500 words ≈ 2000 tokens, plus logic audit, updates, and overhead can easily exceed 4k tokens
         maxTokens: 8192,
         // Pass cache metadata if available (JSON instruction is dynamic, so append to dynamic content)
         cacheMetadata: builtPrompt.cacheMetadata && builtPrompt.cacheMetadata.canUseCaching ? {
@@ -1506,44 +1526,8 @@ Return ONLY the expanded text.`;
     }
   }
 
-  // NEW: Extract karma events from generated chapter (Face Graph)
-  try {
-    const faceConfig = await getFaceGraphConfig(state.id);
-
-    if (faceConfig.enabled && faceConfig.autoExtractKarma) {
-      const generatedChapterForKarma: Chapter = {
-        id: generateUUID(),
-        number: nextChapterNumber,
-        title: result.chapterTitle,
-        content: result.chapterContent,
-        summary: result.chapterSummary || '',
-        logicAudit: result.logicAudit,
-        scenes: [],
-        createdAt: Date.now(),
-      };
-
-      // Extract karma asynchronously (don't block return)
-      extractKarmaFromChapter(state, generatedChapterForKarma, {
-        minSeverity: 'moderate', // Only extract notable events
-      }).then(karmaEvents => {
-        if (karmaEvents.length > 0) {
-          logger.info('Karma events extracted from chapter', 'faceGraph', {
-            eventCount: karmaEvents.length,
-            chapter: nextChapterNumber,
-            events: karmaEvents.map(e => `${e.actorName} ${e.actionType} ${e.targetName}`),
-          });
-        }
-      }).catch(err => {
-        logger.warn('Async karma extraction failed', 'faceGraph', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-  } catch (karmaError) {
-    logger.warn('Failed to initiate karma extraction', 'faceGraph', {
-      error: karmaError instanceof Error ? karmaError.message : String(karmaError),
-    });
-  }
+  // Karma extraction is now handled in App.tsx after the chapter is successfully saved
+  // to prevent foreign key constraint violations and ensure consistent IDs.
 
   // NEW: Run Heavenly Loom Clerk audit after chapter generation
   try {
@@ -1713,6 +1697,8 @@ export type PostChapterExtraction = {
     relatedEntityType?: string;
     resolutionNotes?: string; // If resolving
     satisfactionScore?: number; // If resolving (0-100)
+    threadScope?: 'chapter' | 'arc' | 'novel'; // Scope of the thread
+    estimatedDuration?: number; // Estimated chapters to resolution
   }>;
 };
 
@@ -1753,7 +1739,14 @@ Your extraction targets:
 5. **ANTAGONISTS**:
    - Identify threats, their power levels, and motivations.
 
-Be EXTREMELY THOROUGH. If a character is mentioned by name, they should likely be in the Codex. If a named move is used, it should be a Technique.`;
+Be EXTREMELY THOROUGH. If a character is mentioned by name, they should likely be in the Codex. If a named move is used, it should be a Technique.
+
+CRITICAL THREAD SCOPING REQUIREMENTS:
+- You MUST assess the scope of every new thread:
+- 'chapter': Resolvable within 1-2 chapters (minor conflicts, immediate tasks)
+- 'arc': Resolvable within the current story arc (major quests, significant rivals)
+- 'novel': Long-term plot points spanning the entire book (ultimate villain, grand mystery)
+- ESTIMATE DURATION: Predict how many chapters are needed to resolve the thread based on its complexity.`;
 
     // Build context from existing state
     const characterContext = state.characterCodex.map(char =>
@@ -1901,7 +1894,9 @@ Extract all updates from this chapter. Return ONLY a JSON object with this exact
       "eventDescription": "What happened to this thread",
       "significance": "major/minor/foreshadowing",
       "relatedEntityName": "Related character/item/etc",
-      "relatedEntityType": "Character/Item/Technique/etc"
+      "relatedEntityType": "Character/Item/Technique/etc",
+      "threadScope": "chapter/arc/novel",
+      "estimatedDuration": 5
     }
   ]
 }

@@ -14,23 +14,34 @@ describe('Chapter Quality Validator', () => {
     mockState = {
       id: 'test-novel',
       title: 'Test Novel',
+      genre: 'Xianxia',
       grandSaga: 'A test saga',
+      realms: [],
+      currentRealmId: '',
+      territories: [],
       chapters: [],
       characterCodex: [
         {
           id: 'char1',
           name: 'Test Character',
           isProtagonist: true,
-          age: 20,
+          age: '20',
           personality: 'Brave',
           currentCultivation: 'Foundation',
           notes: '',
-          status: 'alive',
-        } as Character,
+          status: 'Alive',
+          relationships: [],
+          skills: [],
+          items: [],
+        } as unknown as Character,
       ],
       plotLedger: [],
       worldBible: [],
+      systemLogs: [],
+      tags: [],
+      writingGoals: [],
       updatedAt: Date.now(),
+      createdAt: Date.now(),
     };
 
     mockChapter = {
@@ -44,7 +55,7 @@ describe('Chapter Quality Validator', () => {
         theFriction: 'Discovery',
         theChoice: 'To learn',
         resultingValue: 'Knowledgeable',
-        causalityType: 'Revelation',
+        causalityType: 'Therefore',
       } as LogicAudit,
       scenes: [],
       createdAt: Date.now(),
@@ -155,6 +166,19 @@ describe('Chapter Quality Validator', () => {
       // Second call should be faster or equal due to caching
       expect(time2).toBeLessThanOrEqual(time1);
       expect(metrics1.chapterId).toBe(metrics2.chapterId);
+    });
+
+    it('should NOT crash when chapter content is undefined', async () => {
+      mockChapter.content = undefined as any;
+      const metrics = await validateChapterQuality(mockChapter, mockState);
+      expect(metrics).toBeDefined();
+      expect(metrics.qualityCheck.isValid).toBe(false);
+    });
+
+    it('should NOT crash when state chapters are undefined', async () => {
+      mockState.chapters = undefined as any;
+      const metrics = await validateChapterQuality(mockChapter, mockState);
+      expect(metrics).toBeDefined();
     });
   });
 });

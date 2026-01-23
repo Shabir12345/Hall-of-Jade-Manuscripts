@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { NovelState, Character, Scene, NovelItem, NovelTechnique, CharacterItemPossession, CharacterTechniqueMastery, Antagonist, ForeshadowingElement, SymbolicElement, EmotionalPayoffMoment, SubtextElement, StoryThread } from '../types';
+import { NovelState, Character, Chapter, Scene, Arc, NovelItem, NovelTechnique, CharacterItemPossession, CharacterTechniqueMastery, Antagonist, ForeshadowingElement, SymbolicElement, EmotionalPayoffMoment, SubtextElement, StoryThread, CharacterSystem, ForeshadowingType, ForeshadowingStatus, ForeshadowingSubtlety, EmotionalPayoffType, EmotionalIntensity, SubtextType } from '../types';
+import { NovelRow, RealmRow, CharacterRow, ChapterRow, ArcRow, SceneRow, SystemLogRow, TagRow, WritingGoalRow, NovelItemRow, NovelTechniqueRow, CharacterItemPossessionRow, CharacterTechniqueMasteryRow, CharacterSkillRow, CharacterItemRow, RelationshipRow, ForeshadowingElementRow, SymbolicElementRow, EmotionalPayoffRow, SubtextElementRow } from '../types/database';
 import { EditorReport, EditorFix, RecurringIssuePattern, PatternOccurrence } from '../types/editor';
 import { SUPABASE_CONFIG, AUTHENTICATION_ENABLED } from '../config/supabase';
 import { withRetry, isRetryableError, AppError } from '../utils/errorHandling';
@@ -18,13 +19,13 @@ function getSupabaseClient(): SupabaseClient {
   if (supabaseInstance) {
     return supabaseInstance;
   }
-  
+
   if (isInitializing) {
     // If we're already initializing, wait a bit and try again
     // This prevents race conditions during module loading
     throw new Error('Supabase client is being initialized. Please try again.');
   }
-  
+
   isInitializing = true;
   try {
     if (!SUPABASE_CONFIG.url || !SUPABASE_CONFIG.anonKey) {
@@ -33,14 +34,14 @@ function getSupabaseClient(): SupabaseClient {
       });
       throw new Error('Supabase configuration is missing');
     }
-    
+
     // Only log once to reduce console noise
     if (!supabaseInstance) {
       logger.debug('Initializing Supabase client', 'supabase', {
         url: SUPABASE_CONFIG.url
       });
     }
-    
+
     supabaseInstance = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey, {
       auth: {
         persistSession: true,
@@ -50,7 +51,7 @@ function getSupabaseClient(): SupabaseClient {
         storage: typeof window !== 'undefined' ? window.localStorage : undefined,
       },
     });
-    
+
     return supabaseInstance;
   } finally {
     isInitializing = false;
@@ -68,13 +69,13 @@ export async function testSupabaseConnection(): Promise<void> {
     logger.debug('Testing Supabase connection', 'supabase', undefined, {
       url: SUPABASE_CONFIG.url
     });
-    
+
     // Test basic connection by trying to fetch from novels table
     const { data, error } = await supabase
       .from('novels')
       .select('id')
       .limit(1);
-    
+
     if (error) {
       logger.error('Supabase connection failed', 'supabase', error, {
         code: error.code,
@@ -84,7 +85,7 @@ export async function testSupabaseConnection(): Promise<void> {
       });
       throw error;
     }
-    
+
     logger.info('Supabase connection successful', 'supabase', {
       testQueryResult: data
     });
@@ -154,23 +155,23 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
   const cacheKey = `novels:${userId || 'anonymous'}`;
   const cached = queryCache.get<NovelState[]>(cacheKey);
   if (cached) {
-    logger.debug('Cache hit', 'supabase', undefined, { key: cacheKey });
+    logger.debug('Cache hit', 'supabase', { key: cacheKey });
     return cached;
   }
 
   // Cache miss - fetch from database
-  logger.debug('Cache miss, fetching from database', 'supabase', undefined, { key: cacheKey });
+  logger.debug('Cache miss, fetching from database', 'supabase', { key: cacheKey });
   const novels = await withRetry(async () => {
-    
+
     // Build query - only filter by user_id if authentication is enabled
     let query = supabase
       .from('novels')
       .select('*');
-    
+
     if (userId) {
       query = query.eq('user_id', userId); // Filter by user_id when authenticated
     }
-    
+
     const { data: novels, error } = await query
       .order('updated_at', { ascending: false });
 
@@ -242,11 +243,11 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
         const scenesRes =
           chapterIds.length > 0
             ? await supabase
-                .from('scenes')
-                .select('*')
-                .in('chapter_id', chapterIds)
-                .order('chapter_id', { ascending: true })
-                .order('number', { ascending: true })
+              .from('scenes')
+              .select('*')
+              .in('chapter_id', chapterIds)
+              .order('chapter_id', { ascending: true })
+              .order('number', { ascending: true })
             : ({ data: [], error: null } as any);
         const scenesRows = ensureOk<SceneRow>('scenes', scenesRes);
 
@@ -317,7 +318,7 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
         let symbolicElements: SymbolicElement[] = [];
         let emotionalPayoffs: EmotionalPayoffMoment[] = [];
         let subtextElements: SubtextElement[] = [];
-        
+
         try {
           const [foreshadowingRes, symbolicRes, emotionalRes, subtextRes] = await Promise.all([
             supabase.from('foreshadowing_elements').select('*').eq('novel_id', novelId),
@@ -412,13 +413,13 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
             : Promise.resolve({ data: [], error: null } as any),
           characterIds.length > 0
             ? supabase
-                .from('relationships')
-                .select('*')
-                .or(
-                  `character_id.in.(${characterIds.join(
-                    ','
-                  )}),target_character_id.in.(${characterIds.join(',')})`
-                )
+              .from('relationships')
+              .select('*')
+              .or(
+                `character_id.in.(${characterIds.join(
+                  ','
+                )}),target_character_id.in.(${characterIds.join(',')})`
+              )
             : Promise.resolve({ data: [], error: null } as any),
           characterIds.length > 0
             ? supabase.from('character_item_possessions').select('*').in('character_id', characterIds)
@@ -523,6 +524,7 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
           title: novel.title,
           genre: novel.genre,
           grandSaga: novel.grand_saga || '',
+          totalPlannedChapters: typeof novel.total_planned_chapters === 'number' ? novel.total_planned_chapters : undefined,
           currentRealmId: novel.current_realm_id || '',
           realms: realmsRows.map((r) => ({
             id: r.id,
@@ -580,7 +582,7 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
             let title = c.title;
             let summary = c.summary || '';
             let logicAudit = (c.logic_audit as NovelState['chapters'][0]['logicAudit']) || undefined;
-            
+
             if (isJsonChapterContent(content)) {
               const actualContent = extractChapterContent(content);
               const metadata = extractChapterMetadata(content);
@@ -592,7 +594,7 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
                 logicAudit = logicAudit || metadata?.logicAudit;
               }
             }
-            
+
             return {
               id: c.id,
               number: c.number,
@@ -659,8 +661,19 @@ export const fetchAllNovels = async (): Promise<NovelState[]> => {
 
   // Cache the result with 30 second TTL
   queryCache.set(cacheKey, novels, 30000);
-  
+
   return novels;
+};
+
+/**
+ * Fetches a single novel by ID.
+ * 
+ * @param id - The ID of the novel to fetch
+ * @returns {Promise<NovelState | null>} Promise that resolves to the novel state or null if not found
+ */
+export const fetchNovel = async (id: string): Promise<NovelState | null> => {
+  const novels = await fetchAllNovels();
+  return novels.find(n => n.id === id) || null;
 };
 
 /**
@@ -697,7 +710,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     if (AUTHENTICATION_ENABLED && !userId) {
       throw new AppError('User must be authenticated to save novels', 'AUTH_ERROR', 401, false);
     }
-    
+
     // Validate currentRealmId - must be a valid UUID present in the novel's realms.
     // IMPORTANT: The DB has a FK from novels.current_realm_id -> realms.id.
     // On first save (or if realms are not yet inserted), setting current_realm_id to a new realm
@@ -707,18 +720,18 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     //   3) Update novel.current_realm_id to the desired realm (now that it exists)
     const desiredRealmId =
       novel.currentRealmId &&
-      novel.currentRealmId.trim() !== '' &&
-      novel.realms.some((r) => r.id === novel.currentRealmId)
+        novel.currentRealmId.trim() !== '' &&
+        novel.realms.some((r) => r.id === novel.currentRealmId)
         ? novel.currentRealmId
         : null;
-    
+
     // Auto-repair chapters with JSON content (bug fix: extract chapterContent from malformed saves)
     const chaptersWithJsonContent = novel.chapters.filter(c => isJsonChapterContent(c.content));
     if (chaptersWithJsonContent.length > 0) {
       logger.warn('Detected chapters with JSON content, auto-repairing', 'supabase', {
         chapterNumbers: chaptersWithJsonContent.map(c => c.number),
       });
-      
+
       // Auto-repair the chapters
       novel = {
         ...novel,
@@ -726,7 +739,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
           if (isJsonChapterContent(chapter.content)) {
             const actualContent = extractChapterContent(chapter.content);
             const metadata = extractChapterMetadata(chapter.content);
-            
+
             if (actualContent) {
               logger.info(`Auto-repaired Chapter ${chapter.number}: extracted ${actualContent.length} chars from JSON`, 'supabase');
               return {
@@ -742,36 +755,37 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         }),
       };
     }
-    
+
     // Validate chapters have positive numbers
     const invalidChapters = novel.chapters.filter(c => c.number <= 0);
     if (invalidChapters.length > 0) {
       throw new Error(`Chapters must have positive numbers. Invalid chapters: ${invalidChapters.map(c => c.number).join(', ')}`);
     }
-    
+
     // Validate chapters have non-empty titles and content
-    const emptyChapters = novel.chapters.filter(c => 
+    const emptyChapters = novel.chapters.filter(c =>
       !c.title || c.title.trim() === '' || !c.content || c.content.trim() === ''
     );
     if (emptyChapters.length > 0) {
       throw new Error(`Chapters must have non-empty titles and content. Invalid chapters: ${emptyChapters.map(c => c.number).join(', ')}`);
     }
-    
+
     // Step 1: upsert novel WITHOUT current_realm_id to avoid FK violation during initial writes.
     const novelData: any = {
       id: novel.id,
       title: novel.title.trim(),
       genre: novel.genre.trim(),
       grand_saga: novel.grandSaga || '',
+      total_planned_chapters: novel.totalPlannedChapters || null,
       current_realm_id: null,
       updated_at: new Date().toISOString()
     };
-    
+
     // Only add user_id if authentication is enabled
     if (userId) {
       novelData.user_id = userId;
     }
-    
+
     const { error: novelError } = await supabase
       .from('novels')
       .upsert(novelData, { onConflict: 'id' })
@@ -787,7 +801,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
 
     // Delete orphaned data and upsert current data
     // This approach is safer than delete-all-then-insert because it preserves data if upsert fails
-    
+
     // 1. Get existing IDs to identify what to delete
     const chapterIds = novel.chapters.map(c => c.id);
     const results = await Promise.allSettled([
@@ -895,7 +909,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     const currentSymbolicIds = new Set((novel.symbolicElements || []).map(s => s.id));
     const currentEmotionalPayoffIds = new Set((novel.emotionalPayoffs || []).map(e => e.id));
     const currentSubtextIds = new Set((novel.subtextElements || []).map(s => s.id));
-    
+
     // Collect all scene IDs from chapters
     const currentSceneIds = new Set<string>();
     novel.chapters.forEach(ch => {
@@ -905,17 +919,17 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     // Now check for conflicts with existing realms in DB:
     // 1. Delete orphaned realms (not in current list)
     // 2. Delete existing realms that have same name as new realm but different ID (unique constraint conflict)
-    
+
     // Now check for conflicts with existing realms in DB
     const realmIdsToDelete: string[] = [];
     const newRealmNamesLower = new Set(deduplicatedRealms.map(r => r.name.toLowerCase().trim()));
-    
+
     if (existingRealms) {
       for (const existing of existingRealms) {
         const existingNameLower = existing.name.toLowerCase().trim();
         const existingInCurrent = currentRealmIds.has(existing.id);
         const nameMatchesNewRealm = newRealmNamesLower.has(existingNameLower);
-        
+
         // Delete if:
         // 1. Not in current list (orphaned), OR
         // 2. Has same name as a new realm but different ID (unique constraint conflict)
@@ -923,7 +937,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
           realmIdsToDelete.push(existing.id);
         } else if (nameMatchesNewRealm) {
           // Check if the existing realm with same name has a different ID
-          const newRealmWithSameName = deduplicatedRealms.find(r => 
+          const newRealmWithSameName = deduplicatedRealms.find(r =>
             r.name.toLowerCase().trim() === existingNameLower && r.id !== existing.id
           );
           if (newRealmWithSameName) {
@@ -933,13 +947,13 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         }
       }
     }
-    
+
     // Remove duplicates
     const uniqueRealmIdsToDelete = Array.from(new Set(realmIdsToDelete));
-    
+
     // Update novel.realms to use deduplicated version (for rest of save operation)
     novel.realms = deduplicatedRealms;
-    
+
     // Calculate IDs to delete (but don't delete yet - we'll do it AFTER all upserts)
     const chapterIdsToDelete = existingChapters?.map(c => c.id).filter(id => !currentChapterIds.has(id)) || [];
     const arcIdsToDelete = existingArcs?.map(a => a.id).filter(id => !currentArcIds.has(id)) || [];
@@ -965,13 +979,13 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         .from('realms')
         .delete()
         .in('id', uniqueRealmIdsToDelete);
-      
+
       if (deleteRealmsError) {
         logger.error('Error deleting conflicting realms', 'supabase', deleteRealmsError);
         throw deleteRealmsError;
       }
     }
-    
+
     // Now upsert Realms (needed by other tables)
     // After deleting conflicts, we can safely upsert
     if (novel.realms.length > 0) {
@@ -983,7 +997,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         description: r.description || '',
         status: r.status || 'current'
       }));
-      
+
       // Delete any remaining conflicts: existing realms with same (novel_id, name) but different ID
       // This handles edge cases where the earlier deletion might have missed something
       for (const realm of realmsToUpsert) {
@@ -993,17 +1007,17 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
           .eq('novel_id', realm.novel_id)
           .eq('name', realm.name)
           .neq('id', realm.id);
-        
+
         if (conflicting && conflicting.length > 0) {
           const conflictIds = conflicting.map(c => c.id);
           await supabase.from('realms').delete().in('id', conflictIds);
         }
       }
-      
+
       // Now upsert - this should work since we've deleted all conflicts
       const { error: realmsError } = await supabase
         .from('realms')
-        .upsert(realmsToUpsert, { 
+        .upsert(realmsToUpsert, {
           onConflict: 'id'
         });
 
@@ -1031,7 +1045,19 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
 
     // Upsert Chapters EARLY (before deletion) to prevent loss if save fails
     if (novel.chapters.length > 0) {
-      const validChapters = novel.chapters.filter(c => c.title && c.title.trim() !== '' && c.content && c.content.trim() !== '' && c.number > 0);
+      // Deduplicate chapters by number to prevent unique constraint violations
+      const chaptersByNumber = new Map<number, Chapter>();
+      novel.chapters.forEach(ch => {
+        if (!ch.number) return;
+        const existing = chaptersByNumber.get(ch.number);
+        if (!existing || (ch.content?.length || 0) > (existing.content?.length || 0)) {
+          chaptersByNumber.set(ch.number, ch);
+        }
+      });
+
+      const uniqueChapters = Array.from(chaptersByNumber.values());
+      const validChapters = uniqueChapters.filter(c => c.title && c.title.trim() !== '' && c.content && c.content.trim() !== '' && c.number > 0);
+
       if (validChapters.length > 0) {
         const { error: chaptersError } = await supabase
           .from('chapters')
@@ -1047,7 +1073,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
 
         if (chaptersError) throw new Error(`Failed to save chapters: ${chaptersError.message}`);
       }
-      
+
       // Upsert Scenes for all chapters
       const allScenes: Scene[] = [];
       validChapters.forEach(chapter => {
@@ -1057,7 +1083,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
           });
         }
       });
-      
+
       if (allScenes.length > 0) {
         const validScenes = allScenes.filter(s => s.chapterId && s.number > 0);
         if (validScenes.length > 0) {
@@ -1072,7 +1098,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
               summary: s.summary || '',
               word_count: s.wordCount || 0
             })), { onConflict: 'id' });
-            
+
           if (scenesError) throw new Error(`Failed to save scenes: ${scenesError.message}`);
         }
       }
@@ -1085,12 +1111,12 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
       const validRealmIds = new Set(novel.realms.map(r => r.id));
       const validTerritories = novel.territories.filter(t => {
         const hasValidName = t.name && t.name.trim() !== '';
-        const hasValidRealmId = t.realmId && 
-                                t.realmId.trim() !== '' && 
-                                validRealmIds.has(t.realmId);
+        const hasValidRealmId = t.realmId &&
+          t.realmId.trim() !== '' &&
+          validRealmIds.has(t.realmId);
         return hasValidName && hasValidRealmId;
       });
-      
+
       if (validTerritories.length > 0) {
         const { error: territoriesError } = await supabase
           .from('territories')
@@ -1112,12 +1138,12 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     const validWorldEntries = novel.worldBible.filter(w => {
       const hasValidContent = w.content != null && w.content.trim() !== '';
       const hasValidTitle = w.title != null && w.title.trim() !== '';
-      const hasValidRealmId = w.realmId && 
-                              w.realmId.trim() !== '' && 
-                              validRealmIds.has(w.realmId);
+      const hasValidRealmId = w.realmId &&
+        w.realmId.trim() !== '' &&
+        validRealmIds.has(w.realmId);
       return hasValidContent && hasValidTitle && hasValidRealmId;
     });
-    
+
     if (validWorldEntries.length > 0) {
       const { error: worldError } = await supabase
         .from('world_entries')
@@ -1139,29 +1165,29 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
       const normalized = status.trim();
       // Case-insensitive matching
       const lower = normalized.toLowerCase();
-      
+
       // Exact matches first
       if (lower === 'alive') return 'Alive';
       if (lower === 'deceased' || lower === 'dead') return 'Deceased';
       if (lower === 'unknown') return 'Unknown';
-      
+
       // Handle complex status strings with parenthetical details
       // e.g., "Alive (freed from veil)", "Alive (injured, embedded in jade)", etc.
       if (lower.startsWith('alive')) return 'Alive';
-      
+
       // Handle deceased variations
       if (lower.startsWith('deceased') || lower.startsWith('dead')) return 'Deceased';
-      
+
       // Handle "Captured" as a special case - treat as Unknown since fate is uncertain
       if (lower === 'captured' || lower.includes('captured')) return 'Unknown';
-      
+
       // Handle "Missing" or similar uncertain statuses
       if (lower === 'missing' || lower.includes('missing')) return 'Unknown';
-      
+
       // Handle compound statuses like "Deceased or Captured"
       if (lower.includes('deceased') || lower.includes('dead')) return 'Deceased';
       if (lower.includes('alive')) return 'Alive';
-      
+
       // Default to 'Unknown' if value doesn't match any pattern
       logger.warn('Invalid character status, defaulting to Unknown', 'supabase', {
         invalidStatus: status
@@ -1243,13 +1269,13 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         // Optimization: only delete/insert if there are changes? For now, we stick to delete-insert for sub-resources as they are small lists per character
         // We use the 'validCharacters' IDs
         const charIds = validCharacters.map(c => c.id);
-        
+
         await Promise.all([
-           supabase.from('character_skills').delete().in('character_id', charIds),
-           supabase.from('character_items').delete().in('character_id', charIds),
-           supabase.from('relationships').delete().in('character_id', charIds), // Only delete outgoing relationships to avoid clearing others' links
-           supabase.from('character_item_possessions').delete().in('character_id', charIds),
-           supabase.from('character_technique_mastery').delete().in('character_id', charIds)
+          supabase.from('character_skills').delete().in('character_id', charIds),
+          supabase.from('character_items').delete().in('character_id', charIds),
+          supabase.from('relationships').delete().in('character_id', charIds), // Only delete outgoing relationships to avoid clearing others' links
+          supabase.from('character_item_possessions').delete().in('character_id', charIds),
+          supabase.from('character_technique_mastery').delete().in('character_id', charIds)
         ]);
 
         const skillsInserts: any[] = [];
@@ -1259,46 +1285,46 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
         const masteriesInserts: any[] = [];
 
         validCharacters.forEach(char => {
-            // Backward compatibility: save old skills/items format
-            if (char.skills) char.skills.forEach(skill => skillsInserts.push({ character_id: char.id, skill }));
-            if (char.items) char.items.forEach(item => itemsInserts.push({ character_id: char.id, item }));
-            // New format: item possessions and technique masteries
-            if (char.itemPossessions) {
-              char.itemPossessions.forEach(poss => {
-                possessionsInserts.push({
-                  id: poss.id,
-                  character_id: poss.characterId,
-                  item_id: poss.itemId,
-                  status: poss.status,
-                  acquired_chapter: poss.acquiredChapter || null,
-                  archived_chapter: poss.archivedChapter || null,
-                  notes: poss.notes || '',
-                  updated_at: new Date(poss.updatedAt || Date.now()).toISOString()
-                });
+          // Backward compatibility: save old skills/items format
+          if (char.skills) char.skills.forEach(skill => skillsInserts.push({ character_id: char.id, skill }));
+          if (char.items) char.items.forEach(item => itemsInserts.push({ character_id: char.id, item }));
+          // New format: item possessions and technique masteries
+          if (char.itemPossessions) {
+            char.itemPossessions.forEach(poss => {
+              possessionsInserts.push({
+                id: poss.id,
+                character_id: poss.characterId,
+                item_id: poss.itemId,
+                status: poss.status,
+                acquired_chapter: poss.acquiredChapter || null,
+                archived_chapter: poss.archivedChapter || null,
+                notes: poss.notes || '',
+                updated_at: new Date(poss.updatedAt || Date.now()).toISOString()
               });
-            }
-            if (char.techniqueMasteries) {
-              char.techniqueMasteries.forEach(mast => {
-                masteriesInserts.push({
-                  id: mast.id,
-                  character_id: mast.characterId,
-                  technique_id: mast.techniqueId,
-                  status: mast.status,
-                  mastery_level: mast.masteryLevel || 'Novice',
-                  learned_chapter: mast.learnedChapter || null,
-                  archived_chapter: mast.archivedChapter || null,
-                  notes: mast.notes || '',
-                  updated_at: new Date(mast.updatedAt || Date.now()).toISOString()
-                });
+            });
+          }
+          if (char.techniqueMasteries) {
+            char.techniqueMasteries.forEach(mast => {
+              masteriesInserts.push({
+                id: mast.id,
+                character_id: mast.characterId,
+                technique_id: mast.techniqueId,
+                status: mast.status,
+                mastery_level: mast.masteryLevel || 'Novice',
+                learned_chapter: mast.learnedChapter || null,
+                archived_chapter: mast.archivedChapter || null,
+                notes: mast.notes || '',
+                updated_at: new Date(mast.updatedAt || Date.now()).toISOString()
               });
-            }
-            if (char.relationships) char.relationships.forEach(rel => relationshipsInserts.push({
-                character_id: char.id,
-                target_character_id: rel.characterId,
-                type: rel.type,
-                history: rel.history,
-                impact: rel.impact
-            }));
+            });
+          }
+          if (char.relationships) char.relationships.forEach(rel => relationshipsInserts.push({
+            character_id: char.id,
+            target_character_id: rel.characterId,
+            type: rel.type,
+            history: rel.history,
+            impact: rel.impact
+          }));
         });
 
         // Use upsert for tables with unique constraints to avoid 409 conflicts
@@ -1339,11 +1365,11 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
                 masteriesInserts.map(m => [`${m.character_id}_${m.technique_id}`, m])
               ).values()
             );
-            
+
             const { error: masteryError } = await supabase
               .from('character_technique_mastery')
               .upsert(uniqueMasteries, { onConflict: 'character_id,technique_id' });
-            
+
             if (masteryError) {
               logger.warn('Error upserting character technique masteries', 'supabase', {
                 error: masteryError instanceof Error ? masteryError.message : String(masteryError)
@@ -1389,24 +1415,24 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     const recentLogs = novel.systemLogs.slice(-100);
     const validLogs = recentLogs.filter(l => l.message && l.message.trim() !== '');
     if (validLogs.length > 0) {
-        const { error: logsError } = await supabase
-          .from('system_logs')
-          .upsert(validLogs.map(l => ({
-            id: l.id,
-            novel_id: novelId,
-            message: l.message.trim(),
-            type: l.type,
-            timestamp: new Date(l.timestamp).toISOString()
-          })), { onConflict: 'id' });
+      const { error: logsError } = await supabase
+        .from('system_logs')
+        .upsert(validLogs.map(l => ({
+          id: l.id,
+          novel_id: novelId,
+          message: l.message.trim(),
+          type: l.type,
+          timestamp: new Date(l.timestamp).toISOString()
+        })), { onConflict: 'id' });
 
-        if (logsError) {
-          throw new AppError(
-            `Failed to save system logs: ${logsError.message}`,
-            logsError.code,
-            undefined,
-            isRetryableError(logsError)
-          );
-        }
+      if (logsError) {
+        throw new AppError(
+          `Failed to save system logs: ${logsError.message}`,
+          logsError.code,
+          undefined,
+          isRetryableError(logsError)
+        );
+      }
     }
 
     // Upsert Tags
@@ -1422,7 +1448,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
             color: t.color || null,
             category: t.category || null
           })), { onConflict: 'id' });
-          
+
         if (tagsError) throw new Error(`Failed to save tags: ${tagsError.message}`);
       }
     }
@@ -1441,7 +1467,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
             current: g.current || 0,
             deadline: g.deadline ? new Date(g.deadline).toISOString() : null
           })), { onConflict: 'id' });
-          
+
         if (goalsError) throw new Error(`Failed to save writing goals: ${goalsError.message}`);
       }
     }
@@ -1508,7 +1534,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
       if (validAntagonists.length > 0) {
         // Handle antagonist relationships, arc associations, and group members
         const antagonistIds = validAntagonists.map(a => a.id);
-        
+
         // Delete existing relationships/associations for these antagonists
         await Promise.all([
           supabase.from('antagonist_relationships').delete().in('antagonist_id', antagonistIds),
@@ -1585,7 +1611,7 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
       const validSystems = novel.characterSystems.filter(s => s.name && s.name.trim() !== '');
       if (validSystems.length > 0) {
         const systemIds = validSystems.map(s => s.id);
-        
+
         // Delete existing features for these systems (will re-insert)
         await supabase.from('system_features').delete().in('system_id', systemIds);
 
@@ -1827,19 +1853,19 @@ export const saveNovel = async (novel: NovelState): Promise<void> => {
     // Clean up orphaned novel_items and novel_techniques
     const currentItemIds = new Set(novel.novelItems?.map(item => item.id) || []);
     const currentTechniqueIds = new Set(novel.novelTechniques?.map(tech => tech.id) || []);
-    
+
     // Fetch existing items/techniques to find orphans
     const [existingItemsRes, existingTechniquesRes] = await Promise.all([
       supabase.from('novel_items').select('id').eq('novel_id', novelId),
       supabase.from('novel_techniques').select('id').eq('novel_id', novelId),
     ]);
-    
+
     const existingItemIds = existingItemsRes.data?.map(i => i.id) || [];
     const existingTechniqueIds = existingTechniquesRes.data?.map(t => t.id) || [];
-    
+
     const itemIdsToDelete = existingItemIds.filter(id => !currentItemIds.has(id));
     const techniqueIdsToDelete = existingTechniqueIds.filter(id => !currentTechniqueIds.has(id));
-    
+
     if (itemIdsToDelete.length > 0) {
       deletePromises.push(supabase.from('novel_items').delete().in('id', itemIdsToDelete));
     }
@@ -1864,7 +1890,7 @@ export const deleteNovel = async (novelId: string): Promise<void> => {
   return withRetry(async () => {
     // Get current authenticated user ID (returns null if authentication is disabled)
     const userId = await getCurrentUserId();
-    
+
     // Verify novel exists and belongs to user (if auth enabled)
     if (AUTHENTICATION_ENABLED && userId) {
       const { data: novel, error: fetchError } = await supabase
@@ -1872,36 +1898,36 @@ export const deleteNovel = async (novelId: string): Promise<void> => {
         .select('id, user_id')
         .eq('id', novelId)
         .single();
-      
+
       if (fetchError) {
         logger.error('Error fetching novel for deletion', 'supabase', fetchError);
         throw new AppError('Novel not found', 'NOT_FOUND', 404, false);
       }
-      
+
       if (novel.user_id !== userId) {
         throw new AppError('Unauthorized to delete this novel', 'AUTH_ERROR', 403, false);
       }
     }
-    
+
     // Delete the novel - CASCADE will handle all related data
     const { error } = await supabase
       .from('novels')
       .delete()
       .eq('id', novelId);
-    
+
     if (error) {
       logger.error('Error deleting novel', 'supabase', error);
       throw new AppError(`Failed to delete novel: ${error.message}`, 'DELETE_ERROR', 500, false);
     }
-    
+
     // Verify novel is deleted using comprehensive verification
     const verification = await verifyNovelDeletion(novelId);
-    
+
     if (verification.novelExists) {
       logger.error('Novel still exists after deletion attempt', 'supabase', { novelId });
       throw new AppError('Failed to delete novel - verification failed', 'DELETE_ERROR', 500, false);
     }
-    
+
     // Log if any related data still exists (shouldn't happen with CASCADE, but useful for debugging)
     const hasRelatedData = Object.values(verification.relatedDataExists).some(count => count > 0);
     if (hasRelatedData) {
@@ -1910,11 +1936,11 @@ export const deleteNovel = async (novelId: string): Promise<void> => {
         relatedData: verification.relatedDataExists
       });
     }
-    
+
     // Invalidate cache
     queryCache.invalidate(`novels:${userId || 'anonymous'}`);
     queryCache.invalidate(`novel:${novelId}:`);
-    
+
     logger.info('Novel deleted successfully (CASCADE handled related data)', 'supabase', {
       novelId,
       allDeleted: verification.allDeleted
@@ -1962,7 +1988,7 @@ export const verifyNovelDeletion = async (novelId: string): Promise<{
     supabase.from('symbolic_elements').select('id').eq('novel_id', novelId),
     supabase.from('emotional_payoffs').select('id').eq('novel_id', novelId),
   ]);
-  
+
   const novelExists = checks[0].data !== null;
   const relatedDataExists = {
     chapters: checks[1].data?.length || 0,
@@ -1978,9 +2004,9 @@ export const verifyNovelDeletion = async (novelId: string): Promise<{
     symbolic: checks[11].data?.length || 0,
     emotionalPayoffs: checks[12].data?.length || 0,
   };
-  
+
   const allDeleted = !novelExists && Object.values(relatedDataExists).every(count => count === 0);
-  
+
   return {
     novelExists,
     relatedDataExists,
@@ -2031,7 +2057,7 @@ export const saveEditorReport = async (report: EditorReport): Promise<void> => {
     // Save fixes if any
     if (report.fixes && report.fixes.length > 0) {
       // Valid fix types according to database constraint
-      const VALID_FIX_TYPES = ['gap', 'transition', 'grammar', 'continuity', 
+      const VALID_FIX_TYPES = ['gap', 'transition', 'grammar', 'continuity',
         'time_skip', 'character_consistency', 'plot_hole', 'style', 'formatting'] as const;
       type ValidFixType = typeof VALID_FIX_TYPES[number];
 
@@ -2400,20 +2426,20 @@ export const getActiveRecurringPatterns = async (): Promise<RecurringIssuePatter
     return data
       .filter((row: any) => row.occurrence_count >= row.threshold_count) // Filter patterns that exceeded threshold
       .map((row: any) => ({
-      id: row.id,
-      issueType: row.issue_type,
-      location: row.location,
-      patternDescription: row.pattern_description,
-      occurrenceCount: row.occurrence_count,
-      thresholdCount: row.threshold_count,
-      firstDetectedAt: timestampToNumber(row.first_detected_at),
-      lastSeenAt: timestampToNumber(row.last_seen_at),
-      isActive: row.is_active,
-      promptConstraintAdded: row.prompt_constraint_added || undefined,
-      resolvedAt: row.resolved_at ? timestampToNumber(row.resolved_at) : undefined,
-      createdAt: timestampToNumber(row.created_at),
-      updatedAt: timestampToNumber(row.updated_at),
-    } as RecurringIssuePattern));
+        id: row.id,
+        issueType: row.issue_type,
+        location: row.location,
+        patternDescription: row.pattern_description,
+        occurrenceCount: row.occurrence_count,
+        thresholdCount: row.threshold_count,
+        firstDetectedAt: timestampToNumber(row.first_detected_at),
+        lastSeenAt: timestampToNumber(row.last_seen_at),
+        isActive: row.is_active,
+        promptConstraintAdded: row.prompt_constraint_added || undefined,
+        resolvedAt: row.resolved_at ? timestampToNumber(row.resolved_at) : undefined,
+        createdAt: timestampToNumber(row.created_at),
+        updatedAt: timestampToNumber(row.updated_at),
+      } as RecurringIssuePattern));
   }, {
     maxRetries: 3,
     retryable: isRetryableError,
@@ -2583,7 +2609,7 @@ export const incrementPatternCount = async (patternId: string): Promise<void> =>
         logger.error('Error fetching pattern for increment', 'supabase', fetchError);
         throw new Error(`Failed to increment pattern count: ${fetchError.message}`);
       }
-      
+
       if (!pattern) {
         throw new Error(`Pattern with id ${patternId} not found`);
       }

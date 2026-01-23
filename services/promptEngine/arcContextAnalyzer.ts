@@ -1,4 +1,4 @@
-import { NovelState, Arc, Chapter, Character, ArcContextSummary, CharacterArcJourney, ArcProgressionAnalysis, LogicAudit, ForeshadowingElement, ForeshadowingType, ForeshadowingStatus, ForeshadowingSubtlety, SymbolicElement, EmotionalPayoffMoment, EmotionalPayoffType, EmotionalIntensity, EmotionalArcTemplate } from '../../types';
+import { NovelState, Arc, Chapter, Character, ArcContextSummary, CharacterArcJourney, ArcProgressionAnalysis, LogicAudit, ForeshadowingElement, ForeshadowingType, ForeshadowingStatus, ForeshadowingSubtlety, SymbolicElement, EmotionalPayoffMoment, EmotionalPayoffType, EmotionalIntensity, EmotionalArcTemplate, NarrativeArchetype, NarrativeArchetypeSuggestion } from '../../types';
 import { textContainsCharacterName } from '../../utils/characterNameMatching';
 import { generateUUID } from '../../utils/uuid';
 
@@ -69,10 +69,10 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
   if (allChapters.length === 0) {
     return [];
   }
-  
+
   // Sort chapters by number to ensure proper ordering
   const sortedChapters = [...allChapters].sort((a, b) => a.number - b.number);
-  
+
   // If arc has no start chapter, try to infer it
   let startChapter = arc.startedAtChapter;
   if (!startChapter || startChapter <= 0) {
@@ -83,7 +83,7 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
         const bStart = b.startedAtChapter || 0;
         return aStart - bStart;
       });
-      
+
       const currentArcIndex = sortedArcs.findIndex(a => a.id === arc.id);
       if (currentArcIndex > 0) {
         const prevArc = sortedArcs[currentArcIndex - 1];
@@ -102,25 +102,25 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
         }
       }
     }
-    
+
     if (!startChapter || startChapter <= 0) {
       startChapter = 1;
     }
-    
+
     // Only log once per arc to avoid spam (and only in development)
     if (!arcWarningCache.get(arc) && process.env.NODE_ENV === 'development') {
       console.warn(`Arc "${arc.title}" has no startedAtChapter. Inferred start as chapter ${startChapter}.`);
       arcWarningCache.set(arc, true);
     }
   }
-  
+
   const endChapter = arc.endedAtChapter;
-  
+
   // Handle completed arcs
   if (arc.status === 'completed') {
     if (endChapter && endChapter > 0) {
       // Arc has explicit end chapter - use it
-      return sortedChapters.filter(ch => 
+      return sortedChapters.filter(ch =>
         ch.number >= startChapter && ch.number <= endChapter
       );
     } else {
@@ -131,88 +131,88 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
           const bStart = b.startedAtChapter || 0;
           return aStart - bStart;
         });
-        
+
         const currentArcIndex = sortedArcs.findIndex(a => a.id === arc.id);
         if (currentArcIndex >= 0 && currentArcIndex < sortedArcs.length - 1) {
           // There's a next arc - end where it starts (minus 1)
           const nextArc = sortedArcs[currentArcIndex + 1];
           if (nextArc.startedAtChapter && nextArc.startedAtChapter > startChapter) {
             const inferredEnd = nextArc.startedAtChapter - 1;
-            return sortedChapters.filter(ch => 
+            return sortedChapters.filter(ch =>
               ch.number >= startChapter && ch.number <= inferredEnd
             );
           }
         }
       }
-      
+
       // No next arc - use all chapters from start to last chapter
       const maxChapterNumber = sortedChapters[sortedChapters.length - 1]?.number || startChapter;
-      return sortedChapters.filter(ch => 
+      return sortedChapters.filter(ch =>
         ch.number >= startChapter && ch.number <= maxChapterNumber
       );
     }
   }
-  
+
   // Handle active arcs (or arcs without explicit status)
   if (!endChapter || endChapter <= 0) {
     // Active arc - return chapters from start to current
     // First, try to determine the end based on other arcs
     let actualStart = startChapter;
     let actualEnd: number | undefined = undefined;
-    
+
     if (allArcs && allArcs.length > 1) {
       const sortedArcs = [...allArcs].sort((a, b) => {
         const aStart = a.startedAtChapter || 0;
         const bStart = b.startedAtChapter || 0;
         return aStart - bStart;
       });
-      
+
       const currentArcIndex = sortedArcs.findIndex(a => a.id === arc.id);
-      
+
       if (currentArcIndex >= 0) {
         // Check if there's a previous completed arc to help determine our start
         if (currentArcIndex > 0) {
           const prevArc = sortedArcs[currentArcIndex - 1];
           const prevArcStart = prevArc.startedAtChapter || 1;
-          
+
           // If previous arc is completed with an end, ensure we start after it
           if (prevArc.status === 'completed' && prevArc.endedAtChapter && prevArc.endedAtChapter > 0) {
             // Previous arc ends - this arc should start after it
             actualStart = Math.max(actualStart, prevArc.endedAtChapter + 1);
-            } else if (prevArc.status === 'completed') {
-              // Previous arc is completed but no explicit end - need to infer it
-              // Special case: If we're the second arc and our start is at the very end, likely wrong
-              if (currentArcIndex === 1 && prevArcStart === 1 && startChapter >= sortedChapters.length - 1 && sortedChapters.length >= 20) {
-                // Second arc with start at the end - definitely wrong, estimate based on typical distribution
-                // If total is 21 and first arc started at 1, estimate first arc ends at 10, we start at 11
-                const estimatedPrevEnd = 10; // Typical first arc length
-                actualStart = Math.max(actualStart, estimatedPrevEnd + 1);
-                if (process.env.NODE_ENV === 'development') {
-                  console.log(`Auto-correcting second arc "${arc.title}": startChapter ${startChapter} is too high, adjusting to ${actualStart} based on typical arc distribution`);
-                }
-              } else {
-                // Find chapters that likely belong to prev arc (between prev start and our start, or estimate)
-                const chaptersBeforeUs = sortedChapters.filter(ch => 
-                  ch.number >= prevArcStart && ch.number < startChapter
-                );
-                if (chaptersBeforeUs.length >= 8 && chaptersBeforeUs.length <= 12) {
-                  // First arc likely has ~10 chapters, so we should start after it
-                  const maxPrevChapter = Math.max(...chaptersBeforeUs.map(ch => ch.number));
-                  actualStart = Math.max(actualStart, maxPrevChapter + 1);
-                } else if (prevArcStart > 0) {
-                  // General case: estimate based on prev arc start + typical length
-                  const estimatedPrevEnd = prevArcStart + 9; // Estimate 10 chapters for prev arc
-                  actualStart = Math.max(actualStart, estimatedPrevEnd + 1);
-                }
-              }
-            } else if (prevArc.startedAtChapter) {
-              // Previous arc is active - we shouldn't be here (only one active arc), but handle it
-              // Use the prev arc's start + estimate
-              const estimatedPrevEnd = prevArcStart + 9;
+          } else if (prevArc.status === 'completed') {
+            // Previous arc is completed but no explicit end - need to infer it
+            // Special case: If we're the second arc and our start is at the very end, likely wrong
+            if (currentArcIndex === 1 && prevArcStart === 1 && startChapter >= sortedChapters.length - 1 && sortedChapters.length >= 20) {
+              // Second arc with start at the end - definitely wrong, estimate based on typical distribution
+              // If total is 21 and first arc started at 1, estimate first arc ends at 10, we start at 11
+              const estimatedPrevEnd = 10; // Typical first arc length
               actualStart = Math.max(actualStart, estimatedPrevEnd + 1);
+              if (process.env.NODE_ENV === 'development') {
+                console.log(`Auto-correcting second arc "${arc.title}": startChapter ${startChapter} is too high, adjusting to ${actualStart} based on typical arc distribution`);
+              }
+            } else {
+              // Find chapters that likely belong to prev arc (between prev start and our start, or estimate)
+              const chaptersBeforeUs = sortedChapters.filter(ch =>
+                ch.number >= prevArcStart && ch.number < startChapter
+              );
+              if (chaptersBeforeUs.length >= 8 && chaptersBeforeUs.length <= 12) {
+                // First arc likely has ~10 chapters, so we should start after it
+                const maxPrevChapter = Math.max(...chaptersBeforeUs.map(ch => ch.number));
+                actualStart = Math.max(actualStart, maxPrevChapter + 1);
+              } else if (prevArcStart > 0) {
+                // General case: estimate based on prev arc start + typical length
+                const estimatedPrevEnd = prevArcStart + 9; // Estimate 10 chapters for prev arc
+                actualStart = Math.max(actualStart, estimatedPrevEnd + 1);
+              }
             }
+          } else if (prevArc.startedAtChapter) {
+            // Previous arc is active - we shouldn't be here (only one active arc), but handle it
+            // Use the prev arc's start + estimate
+            const estimatedPrevEnd = prevArcStart + 9;
+            actualStart = Math.max(actualStart, estimatedPrevEnd + 1);
+          }
         }
-        
+
         // Check if there's a next arc that starts after this one
         if (currentArcIndex < sortedArcs.length - 1) {
           const nextArc = sortedArcs[currentArcIndex + 1];
@@ -223,7 +223,7 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
         }
       }
     }
-    
+
     // Filter chapters based on determined boundaries
     const filtered = sortedChapters.filter(ch => {
       if (actualEnd !== undefined) {
@@ -231,16 +231,16 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
       }
       return ch.number >= actualStart;
     });
-    
+
     // Debug logging for troubleshooting (throttled to prevent spam)
     if (process.env.NODE_ENV === 'development') {
       const chapterNumbers = filtered.map(ch => ch.number);
       const cached = arcChapterLogCache.get(arc);
       const now = Date.now();
-      const shouldLog = !cached || 
-                       JSON.stringify(cached.chapters) !== JSON.stringify(chapterNumbers) ||
-                       (now - cached.timestamp) > 5000; // Log at most once every 5 seconds
-      
+      const shouldLog = !cached ||
+        JSON.stringify(cached.chapters) !== JSON.stringify(chapterNumbers) ||
+        (now - cached.timestamp) > 5000; // Log at most once every 5 seconds
+
       if (shouldLog) {
         if (filtered.length === 0 && sortedChapters.length > 0) {
           console.warn(`Arc "${arc.title}" (start: ${startChapter}, actualStart: ${actualStart}, actualEnd: ${actualEnd}) returned no chapters. Available chapters: ${sortedChapters.map(ch => ch.number).join(', ')}`);
@@ -250,15 +250,15 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
         arcChapterLogCache.set(arc, { chapters: chapterNumbers, timestamp: now });
       }
     }
-    
+
     return filtered;
   }
-  
+
   // Arc has explicit end chapter - use it
-  const filtered = sortedChapters.filter(ch => 
+  const filtered = sortedChapters.filter(ch =>
     ch.number >= startChapter && ch.number <= endChapter
   );
-  
+
   // If we got no chapters but arc has boundaries, there might be a gap - log warning
   if (filtered.length === 0 && endChapter > startChapter) {
     if (!arcWarningCache.get(arc)) {
@@ -266,7 +266,7 @@ export function getArcChapters(arc: Arc, allChapters: Chapter[], allArcs?: Arc[]
       arcWarningCache.set(arc, true);
     }
   }
-  
+
   return filtered;
 }
 
@@ -349,13 +349,13 @@ export function validateArcState(
 
   // Check for overlapping arcs (warning only, don't auto-repair as overlaps might be intentional)
   if (repairedArc.startedAtChapter && repairedArc.endedAtChapter) {
-    const overlappingArcs = allArcs.filter(a => 
+    const overlappingArcs = allArcs.filter(a =>
       a.id !== arc.id &&
       a.startedAtChapter &&
       a.endedAtChapter &&
       !(repairedArc.endedAtChapter! < a.startedAtChapter! || repairedArc.startedAtChapter! > a.endedAtChapter!)
     );
-    
+
     if (overlappingArcs.length > 0) {
       issues.push(`Arc "${arc.title}" overlaps with: ${overlappingArcs.map(a => `"${a.title}"`).join(', ')}`);
       // Note: We don't auto-repair overlaps as they might be intentional, just warn
@@ -378,10 +378,10 @@ export function validateArcState(
 /**
  * Validates all arcs in a novel state and returns repaired state
  */
-export function validateAllArcStates(state: NovelState): { 
-  novelState: NovelState; 
-  issues: string[]; 
-  repairsMade: number 
+export function validateAllArcStates(state: NovelState): {
+  novelState: NovelState;
+  issues: string[];
+  repairsMade: number
 } {
   const issues: string[] = [];
   let repairsMade = 0;
@@ -442,10 +442,10 @@ function analyzeArcTensionCurve(chapters: Chapter[]): {
 
   const startChapter = chapters[0];
   const endChapter = chapters[chapters.length - 1];
-  
+
   const startContent = (startChapter.content + ' ' + startChapter.summary).toLowerCase();
   const endContent = (endChapter.content + ' ' + endChapter.summary).toLowerCase();
-  
+
   let startLevel = getTensionLevel(startContent);
   let endLevel = getTensionLevel(endContent);
 
@@ -462,7 +462,7 @@ function analyzeArcTensionCurve(chapters: Chapter[]): {
   // Find peak chapter
   let peakChapter: number | undefined;
   let maxTension: 'low' | 'medium' | 'high' | 'peak' = 'low';
-  
+
   chapters.forEach(ch => {
     const content = (ch.content + ' ' + ch.summary).toLowerCase();
     const level = getTensionLevel(content);
@@ -517,7 +517,7 @@ function extractArcCharacterDevelopment(
       const changes: string[] = [];
       const relationships: string[] = [];
       const changeKeywords = [
-        'became', 'gained', 'lost', 'learned', 'discovered', 'changed', 'developed', 
+        'became', 'gained', 'lost', 'learned', 'discovered', 'changed', 'developed',
         'improved', 'grew', 'realized', 'understood', 'decided', 'chose', 'overcame',
         'mastered', 'achieved', 'accepted', 'rejected', 'betrayed', 'forgave'
       ];
@@ -529,8 +529,8 @@ function extractArcCharacterDevelopment(
           const sentences = ch.summary.split(/[.!?]+/).filter(s => s.trim().length > 0);
           sentences.forEach(sentence => {
             const sentenceLower = sentence.toLowerCase();
-            if (textContainsCharacterName(sentence, char.name) && 
-                changeKeywords.some(kw => sentenceLower.includes(kw))) {
+            if (textContainsCharacterName(sentence, char.name) &&
+              changeKeywords.some(kw => sentenceLower.includes(kw))) {
               const trimmed = sentence.trim().substring(0, 200);
               if (trimmed.length > 20 && !changes.includes(trimmed)) {
                 changes.push(trimmed);
@@ -542,8 +542,8 @@ function extractArcCharacterDevelopment(
         // From logic audits - these often capture character growth
         if (ch.logicAudit) {
           const auditText = `${ch.logicAudit.theChoice} ${ch.logicAudit.resultingValue}`.toLowerCase();
-          if (textContainsCharacterName(auditText, char.name) && 
-              changeKeywords.some(kw => auditText.includes(kw))) {
+          if (textContainsCharacterName(auditText, char.name) &&
+            changeKeywords.some(kw => auditText.includes(kw))) {
             const change = `${ch.logicAudit.resultingValue}`.substring(0, 200);
             if (change.length > 10 && !changes.includes(change)) {
               changes.push(change);
@@ -564,7 +564,7 @@ function extractArcCharacterDevelopment(
           }
         });
       });
-      
+
       // Sort by frequency and take most significant relationships
       const sortedRelationships = Array.from(relationshipMentions.entries())
         .sort((a, b) => b[1] - a[1])
@@ -579,10 +579,10 @@ function extractArcCharacterDevelopment(
           .map(ch => (ch.content || '') + ' ' + (ch.summary || ''))
           .join(' ')
           .toLowerCase();
-        
+
         const cultivationKeywords = ['breakthrough', 'ascend', 'realm', 'level', 'cultivation', 'power', 'qi', 'dantian'];
         const hasCultivationContent = cultivationKeywords.some(kw => allArcContent.includes(kw));
-        
+
         if (hasCultivationContent && textContainsCharacterName(allArcContent, char.name)) {
           // Look for breakthrough mentions specifically about this character
           const lastChapter = characterChapters[characterChapters.length - 1];
@@ -590,11 +590,11 @@ function extractArcCharacterDevelopment(
             const lastContent = ((lastChapter.content || '') + ' ' + (lastChapter.summary || '')).toLowerCase();
             const breakthroughSentences = lastContent
               .split(/[.!?]+/)
-              .filter(s => 
+              .filter(s =>
                 textContainsCharacterName(s, char.name) &&
                 (s.includes('breakthrough') || s.includes('ascend') || s.includes('realm') || s.includes('level'))
               );
-            
+
             if (breakthroughSentences.length > 0) {
               powerProgression = breakthroughSentences[0].trim().substring(0, 150);
             } else if (lastChapter.logicAudit && lastChapter.logicAudit.resultingValue.toLowerCase().includes('breakthrough')) {
@@ -701,7 +701,7 @@ function extractUnresolvedElements(
           // Later in arc = higher priority (more recent setup)
           priority = ratio > 0.7 ? 'high' : ratio > 0.4 ? 'medium' : 'low';
         }
-        
+
         unresolved.push({
           element: item.label,
           priority,
@@ -714,7 +714,7 @@ function extractUnresolvedElements(
   const lastChapters = arcChapters.slice(-3);
   lastChapters.forEach((ch, index) => {
     if (!ch || !ch.content) return;
-    
+
     const content = ch.content.toLowerCase();
     const questionPatterns = [
       /what (will|should|might|could) (happen|occur|take place)/gi,
@@ -755,7 +755,7 @@ function extractUnresolvedElements(
   const setupKeywords = ['mystery', 'secret', 'will discover', 'promise', 'vow', 'destiny'];
   lastChapters.forEach(ch => {
     if (!ch || !ch.content) return;
-    
+
     const content = (ch.content + ' ' + (ch.summary || '')).toLowerCase();
     setupKeywords.forEach(keyword => {
       if (content.includes(keyword)) {
@@ -793,7 +793,7 @@ function generateArcOutcome(
   }
 
   const lastChapter = arcChapters[arcChapters.length - 1];
-  
+
   // Use last chapter's logic audit or summary
   if (lastChapter.logicAudit) {
     return `Arc concluded with: ${lastChapter.logicAudit.resultingValue}. ${lastChapter.summary || ''}`.substring(0, 300);
@@ -818,7 +818,7 @@ export function analyzeArcContext(
 ): ArcContextSummary {
   const arcChapters = getArcChapters(arc, allChapters);
   const tensionCurve = analyzeArcTensionCurve(arcChapters);
-  
+
   // Tier-based detail level
   let chapterSummaries: string[] = [];
   let keyEvents: string[] = [];
@@ -828,7 +828,7 @@ export function analyzeArcContext(
     chapterSummaries = arcChapters
       .map(ch => `Ch ${ch.number}: ${ch.summary || ch.title}`)
       .filter(s => s.length > 0);
-    
+
     // Extract key events from logic audits
     keyEvents = arcChapters
       .filter(ch => ch.logicAudit)
@@ -840,17 +840,17 @@ export function analyzeArcContext(
       const first = arcChapters[0];
       const last = arcChapters[arcChapters.length - 1];
       const middle = arcChapters[Math.floor(arcChapters.length / 2)];
-      
+
       chapterSummaries.push(`Ch ${first.number}: ${(first.summary || first.title).substring(0, 150)}`);
       if (middle && middle.number !== first.number && middle.number !== last.number) {
         chapterSummaries.push(`Ch ${middle.number}: ${(middle.summary || middle.title).substring(0, 150)}`);
       }
       chapterSummaries.push(`Ch ${last.number}: ${(last.summary || last.title).substring(0, 150)}`);
     }
-    
+
     // Extract major events (only "But" conflicts and significant "Therefore" progressions)
     keyEvents = arcChapters
-      .filter(ch => ch.logicAudit && (ch.logicAudit.causalityType === 'But' || 
+      .filter(ch => ch.logicAudit && (ch.logicAudit.causalityType === 'But' ||
         ch.logicAudit.resultingValue.toLowerCase().includes('breakthrough') ||
         ch.logicAudit.resultingValue.toLowerCase().includes('discover')))
       .map(ch => `${ch.logicAudit!.resultingValue}`)
@@ -860,8 +860,8 @@ export function analyzeArcContext(
     chapterSummaries = [`Arc consisted of ${arcChapters.length} chapters.`];
   }
 
-  const characterDevelopment = tier === 'old' 
-    ? [] 
+  const characterDevelopment = tier === 'old'
+    ? []
     : extractArcCharacterDevelopment(arc, arcChapters, characters);
 
   const plotThreads = tier === 'old'
@@ -921,7 +921,7 @@ export function analyzeAllArcContexts(
   const cacheKey = `arcs-${state.id}-${state.plotLedger.length}-${state.chapters.length}-${state.updatedAt}`;
   const cached = analysisCache.get(cacheKey);
   const now = Date.now();
-  
+
   // Use cache if valid and recent
   if (cached && (now - cached.timestamp) < CACHE_TTL) {
     return cached.arcSummaries;
@@ -980,7 +980,7 @@ export function analyzeAllArcContexts(
     entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
     entries.slice(0, 5).forEach(([key]) => analysisCache.delete(key));
   }
-  
+
   analysisCache.set(cacheKey, {
     timestamp: now,
     arcSummaries: summaries,
@@ -1072,7 +1072,7 @@ export function analyzeCharacterArcJourneys(
 function extractGoals(source: string, chapter?: Chapter): string[] {
   const goals: string[] = [];
   const goalKeywords = ['goal', 'plan', 'need', 'must', 'will', 'intend', 'want', 'desire'];
-  
+
   if (source) {
     const sentences = source.split(/[.!?]+/);
     sentences.forEach(sentence => {
@@ -1128,7 +1128,7 @@ function generateOverallProgression(
   const arcCount = arcJourneys.length;
 
   let summary = `${char.name} has appeared in ${arcCount} arc(s). `;
-  
+
   if (char.currentCultivation) {
     summary += `Current cultivation: ${char.currentCultivation}. `;
   }
@@ -1208,13 +1208,13 @@ export function analyzeArcProgression(
   let arcsResolvedSatisfyingly = 0;
   let totalUnresolved = 0;
   let highPriorityUnresolved = 0;
-  
+
   completedArcs.forEach(arc => {
     const arcChapters = getArcChapters(arc, state.chapters);
     const unresolved = extractUnresolvedElements(arc, arcChapters);
     totalUnresolved += unresolved.length;
     highPriorityUnresolved += unresolved.filter(u => u.priority === 'high').length;
-    
+
     const lastChapter = arcChapters[arcChapters.length - 1];
     if (lastChapter?.logicAudit && lastChapter.logicAudit.causalityType === 'Therefore') {
       arcsResolvedSatisfyingly++;
@@ -1230,8 +1230,8 @@ export function analyzeArcProgression(
 
   // Power scaling analysis (for cultivation novels)
   let powerScalingPattern: ArcProgressionAnalysis['powerScalingPattern'] | undefined;
-  
-  const hasCultivationElements = state.characterCodex.some(char => 
+
+  const hasCultivationElements = state.characterCodex.some(char =>
     char.currentCultivation && char.currentCultivation.length > 0
   );
 
@@ -1245,7 +1245,7 @@ export function analyzeArcProgression(
     completedArcs.forEach(arc => {
       const arcChapters = getArcChapters(arc, state.chapters);
       const protagonist = state.characterCodex.find(c => c.isProtagonist);
-      
+
       if (protagonist) {
         const hasBreakthrough = arcChapters.some(ch => {
           const content = (ch.content + ' ' + ch.summary).toLowerCase();
@@ -1301,32 +1301,32 @@ export function detectArcType(
 ): 'opening' | 'setup' | 'development' | 'climax' | 'denouement' | 'interlude' | 'transition' {
   const completedArcs = state.plotLedger.filter(a => a.status === 'completed');
   const totalChapters = state.chapters.length;
-  
+
   // Opening arc (first arc)
   if (completedArcs.length === 0) {
     return 'opening';
   }
-  
+
   // Determine story position (rough estimate based on typical novel structure)
   // Assuming average novel is ~50-100 chapters, we estimate story position
-  const estimatedStoryLength = totalChapters > 20 
+  const estimatedStoryLength = totalChapters > 20
     ? Math.max(60, totalChapters * 2) // Extrapolate from current chapters
     : 60; // Default estimate for early novels
-  
+
   const storyPosition = totalChapters / estimatedStoryLength;
-  
+
   // Early story (0-30%): Setup and development arcs
   if (storyPosition < 0.3) {
     if (completedArcs.length === 1) return 'setup';
     return 'development';
   }
-  
+
   // Mid story (30-70%): Development and build-up arcs
   if (storyPosition < 0.7) {
     // Check tension levels - if tension has been building, might be approaching climax
     if (arcContext && arcContext.progressionAnalysis.tensionEvolution.length > 0) {
       const recentTension = arcContext.progressionAnalysis.tensionEvolution.slice(-2);
-      const isBuildingTension = recentTension.some(t => 
+      const isBuildingTension = recentTension.some(t =>
         t.tensionCurve.endLevel === 'high' || t.tensionCurve.endLevel === 'peak'
       );
       if (isBuildingTension && storyPosition > 0.5) {
@@ -1335,7 +1335,7 @@ export function detectArcType(
     }
     return 'development';
   }
-  
+
   // Late story (70-90%): Climax arcs
   if (storyPosition < 0.9) {
     // Check if we've had a recent major climax
@@ -1345,13 +1345,13 @@ export function detectArcType(
       const tension = analyzeArcTensionCurve(chs);
       return tension.endLevel === 'peak';
     });
-    
+
     if (!hadRecentClimax) {
       return 'climax';
     }
     return 'transition'; // After major climax, transitioning to resolution
   }
-  
+
   // Final story (90-100%): Denouement and resolution
   return 'denouement';
 }
@@ -1367,20 +1367,20 @@ function analyzeCharacterDevelopmentNeeds(state: NovelState): {
   const mainCharacters = state.characterCodex.filter(c => c.isProtagonist || c.importance === 'major');
   const activeArc = state.plotLedger.find(a => a.status === 'active');
   const completedArcs = state.plotLedger.filter(a => a.status === 'completed');
-  
+
   // Characters who haven't had development recently
   let charactersNeedingFocus = 0;
   let requiresDeepDevelopment = false;
-  
+
   // If this is early in the story, expect more character introductions
   const newCharactersExpected = completedArcs.length < 3 ? 1 : 0;
-  
+
   mainCharacters.forEach(char => {
     // Check if character was introduced recently (within last 2 arcs)
     const wasIntroducedRecently = char.introducedChapter && state.chapters.length > 0
       ? (state.chapters.length - char.introducedChapter) < 20
       : false;
-    
+
     if (wasIntroducedRecently && completedArcs.length > 0) {
       charactersNeedingFocus++;
       // Recent introductions often need deeper development
@@ -1389,12 +1389,12 @@ function analyzeCharacterDevelopmentNeeds(state: NovelState): {
       }
     }
   });
-  
+
   // If no recent character focus, we might need to give attention to existing characters
   if (charactersNeedingFocus === 0 && mainCharacters.length > 2) {
     charactersNeedingFocus = 1; // At least one character should get focus
   }
-  
+
   return {
     charactersNeedingFocus,
     requiresDeepDevelopment,
@@ -1412,26 +1412,26 @@ function analyzeWorldBuildingNeeds(state: NovelState): {
 } {
   const completedArcs = state.plotLedger.filter(a => a.status === 'completed');
   const worldEntries = state.worldCodex || [];
-  
+
   // Early arcs need more world-building
   const isEarlyStory = completedArcs.length <= 2;
-  
+
   // Check if we have enough locations
   const locations = worldEntries.filter(w => w.category === 'Locations');
   const newLocationsNeeded = isEarlyStory || locations.length < 3;
-  
+
   // Check if systems have been explored
-  const systems = worldEntries.filter(w => 
+  const systems = worldEntries.filter(w =>
     w.category === 'PowerLevels' || w.category === 'Systems'
   );
   const systemExpansionNeeded = isEarlyStory || systems.length < 2;
-  
+
   // Lore deepening - typically needed periodically
-  const loreEntries = worldEntries.filter(w => 
+  const loreEntries = worldEntries.filter(w =>
     w.category === 'Lore' || w.category === 'History'
   );
   const loreDeepeningNeeded = isEarlyStory || (completedArcs.length % 3 === 0);
-  
+
   return {
     newLocationsNeeded,
     systemExpansionNeeded,
@@ -1474,7 +1474,7 @@ export function calculateSmartArcTargetChapters(
   if (arcContext) {
     const unresolvedCount = arcContext.progressionAnalysis.completionPatterns.unresolvedElements || 0;
     const highPriorityCount = arcContext.progressionAnalysis.completionPatterns.highPriorityUnresolved || 0;
-    
+
     // High priority elements require more space to address properly
     // Medium/low priority elements need less space
     const complexityFromUnresolved = (highPriorityCount * 1.8) + ((unresolvedCount - highPriorityCount) * 0.6);
@@ -1487,7 +1487,7 @@ export function calculateSmartArcTargetChapters(
     const lastArc = completedArcs[completedArcs.length - 1];
     const lastArcChapters = getArcChapters(lastArc, state.chapters);
     const lastArcUnresolved = extractUnresolvedElements(lastArc, lastArcChapters);
-    
+
     // Recent unresolved elements are more urgent and need more space
     const recentHighPriority = lastArcUnresolved.filter(u => u.priority === 'high').length;
     const recentMediumLow = lastArcUnresolved.filter(u => u.priority !== 'high').length;
@@ -1524,7 +1524,7 @@ export function calculateSmartArcTargetChapters(
   // This is estimated from the story - if we're in a major conflict, expect longer arcs
   if (arcContext && arcContext.progressionAnalysis.tensionEvolution.length > 0) {
     const recentTension = arcContext.progressionAnalysis.tensionEvolution.slice(-2);
-    const hasHighTension = recentTension.some(t => 
+    const hasHighTension = recentTension.some(t =>
       t.tensionCurve.endLevel === 'high' || t.tensionCurve.endLevel === 'peak'
     );
     if (hasHighTension) {
@@ -1542,7 +1542,7 @@ export function calculateSmartArcTargetChapters(
         return chs.length;
       });
       const recentAverage = recentLengths.reduce((sum, len) => sum + len, 0) / recentLengths.length;
-      
+
       // If recent arcs are consistently shorter/longer than historical average, lean that direction
       if (recentAverage < historicalAverage * 0.75) {
         // Recent arcs have been significantly shorter - might be intentional pacing
@@ -1558,11 +1558,11 @@ export function calculateSmartArcTargetChapters(
   // Later in the story, arcs may need to resolve more threads (longer)
   // But denouement arcs should be shorter
   const totalChapters = state.chapters.length;
-  const estimatedStoryLength = totalChapters > 20 
+  const estimatedStoryLength = totalChapters > 20
     ? Math.max(60, totalChapters * 2)
     : 60;
   const storyPosition = totalChapters / estimatedStoryLength;
-  
+
   if (storyPosition > 0.8 && arcType !== 'denouement') {
     // Late story arcs often need more space to resolve accumulated threads
     targetChapters *= 1.1;
@@ -1594,7 +1594,7 @@ export function formatArcContextForPrompt(summaries: ArcContextSummary[]): strin
       sections.push(`ARC: "${summary.title}"`);
       sections.push(`Description: ${summary.description}`);
       sections.push(`Chapters: ${summary.chapters.count}`);
-      
+
       if (summary.chapters.summaries.length > 0) {
         sections.push('Chapter Summaries:');
         summary.chapters.summaries.forEach(s => sections.push(`  - ${s}`));
@@ -1655,7 +1655,7 @@ export function formatArcContextForPrompt(summaries: ArcContextSummary[]): strin
     middleArcs.forEach(summary => {
       sections.push(`"${summary.title}": ${summary.description.substring(0, 200)}`);
       sections.push(`  ${summary.chapters.count} chapters. Tension: ${summary.tensionCurve.startLevel} → ${summary.tensionCurve.endLevel}`);
-      
+
       if (summary.chapters.keyEvents.length > 0) {
         sections.push(`  Key events: ${summary.chapters.keyEvents.slice(0, 3).join('; ')}`);
       }
@@ -1718,7 +1718,7 @@ export function analyzeArcTransitions(
   for (let i = 1; i < completedArcs.length; i++) {
     const fromArc = completedArcs[i - 1];
     const toArc = completedArcs[i];
-    
+
     const fromChapters = getArcChapters(fromArc, state.chapters);
     const toChapters = getArcChapters(toArc, state.chapters);
 
@@ -1736,25 +1736,25 @@ export function analyzeArcTransitions(
     if (fromEndChapter.logicAudit && toStartChapter.logicAudit) {
       const fromResult = fromEndChapter.logicAudit.resultingValue.toLowerCase();
       const toStart = toStartChapter.logicAudit.startingValue.toLowerCase();
-      
+
       // Check if there's semantic connection
       const fromWords = new Set(fromResult.split(/\s+/).filter(w => w.length > 3));
       const toWords = new Set(toStart.split(/\s+/).filter(w => w.length > 3));
       const overlap = Array.from(fromWords).filter(w => toWords.has(w));
-      
+
       if (overlap.length < 2) {
         issues.push('Weak semantic connection between arc endings and beginnings');
         qualityScore -= 20;
       }
 
       // Check if ending was a resolution and new arc starts appropriately
-      if (fromEndChapter.logicAudit.causalityType === 'Therefore' && 
-          fromResult.includes('resolve') && 
-          toStartChapter.logicAudit.causalityType === 'But') {
+      if (fromEndChapter.logicAudit.causalityType === 'Therefore' &&
+        fromResult.includes('resolve') &&
+        toStartChapter.logicAudit.causalityType === 'But') {
         // Good pattern: previous arc resolved, new arc introduces new conflict
         qualityScore += 10;
       } else if (fromEndChapter.logicAudit.causalityType === 'But' &&
-                 toStartChapter.logicAudit.causalityType === 'But') {
+        toStartChapter.logicAudit.causalityType === 'But') {
         // Potential issue: ending on conflict, starting with conflict might be jarring
         issues.push('Both arcs end and start with conflict - consider a brief resolution or transition');
         qualityScore -= 15;
@@ -1767,7 +1767,7 @@ export function analyzeArcTransitions(
     // Check for unresolved elements being addressed
     const fromUnresolved = extractUnresolvedElements(fromArc, fromChapters);
     const toContent = toChapters.map(ch => (ch.content || '') + ' ' + (ch.summary || '')).join(' ').toLowerCase();
-    
+
     const addressedCount = fromUnresolved.filter(elem => {
       const elemWords = elem.toLowerCase().split(/\s+/).filter(w => w.length > 4);
       return elemWords.some(word => toContent.includes(word));
@@ -1787,7 +1787,7 @@ export function analyzeArcTransitions(
     const fromEndCharacters = extractCharacterNames(fromEndChapter.content + ' ' + fromEndChapter.summary);
     const toStartCharacters = extractCharacterNames(toStartChapter.content + ' ' + toStartChapter.summary);
     const characterOverlap = fromEndCharacters.filter(c => toStartCharacters.includes(c));
-    
+
     if (fromEndCharacters.length > 0 && characterOverlap.length === 0) {
       issues.push('No character continuity detected in transition');
       qualityScore -= 15;
@@ -1832,14 +1832,14 @@ function extractCharacterNames(text: string): string[] {
   const words = text.split(/\s+/);
   const names: string[] = [];
   const seen = new Set<string>();
-  
+
   words.forEach((word, index) => {
     // Remove punctuation
     const cleanWord = word.replace(/[.,!?;:()"'"]/g, '');
-    if (cleanWord.length > 2 && 
-        cleanWord[0] === cleanWord[0].toUpperCase() && 
-        cleanWord[0] !== cleanWord[0].toLowerCase() &&
-        index > 0) {
+    if (cleanWord.length > 2 &&
+      cleanWord[0] === cleanWord[0].toUpperCase() &&
+      cleanWord[0] !== cleanWord[0].toLowerCase() &&
+      index > 0) {
       const prevWord = words[index - 1].replace(/[.,!?;:()"'"]/g, '');
       // Check if it's not at start of sentence
       if (!prevWord.match(/[.!?]$/) && !seen.has(cleanWord.toLowerCase())) {
@@ -1848,7 +1848,7 @@ function extractCharacterNames(text: string): string[] {
       }
     }
   });
-  
+
   return names;
 }
 
@@ -1906,10 +1906,10 @@ export function analyzeSetupPayoff(
 
   completedArcs.forEach((arc, arcIndex) => {
     const arcChapters = getArcChapters(arc, state.chapters);
-    
+
     arcChapters.forEach(ch => {
       const content = ((ch.content || '') + ' ' + (ch.summary || '')).toLowerCase();
-      
+
       // Find setups
       setupKeywords.forEach(keyword => {
         if (content.includes(keyword)) {
@@ -1948,12 +1948,12 @@ export function analyzeSetupPayoff(
   payoffs.forEach(payoff => {
     const matchingSetup = setups.find((setup, index) => {
       if (setup.paidOff) return false;
-      
+
       // Simple semantic matching - check for word overlap
       const setupWords = new Set(setup.setup.toLowerCase().split(/\s+/).filter(w => w.length > 4));
       const payoffWords = new Set(payoff.payoff.toLowerCase().split(/\s+/).filter(w => w.length > 4));
       const overlap = Array.from(setupWords).filter(w => payoffWords.has(w));
-      
+
       return overlap.length >= 2;
     });
 
@@ -1965,8 +1965,8 @@ export function analyzeSetupPayoff(
     }
   });
 
-  const setupPayoffRatio = setups.length > 0 
-    ? setups.filter(s => s.paidOff).length / setups.length 
+  const setupPayoffRatio = setups.length > 0
+    ? setups.filter(s => s.paidOff).length / setups.length
     : 1;
 
   const recommendations: string[] = [];
@@ -2009,160 +2009,160 @@ export function analyzeForeshadowing(
   if (cached && cached.foreshadowing && isCacheValid(cached)) {
     return cached.foreshadowing;
   }
-  
+
   try {
     const existingElements = state.foreshadowingElements || [];
-  
-  // Detect new foreshadowing from chapters
-  const allChapters = state.chapters;
-  const detectedElements: ForeshadowingElement[] = [];
-  
+
+    // Detect new foreshadowing from chapters
+    const allChapters = state.chapters;
+    const detectedElements: ForeshadowingElement[] = [];
+
     // Patterns for different types of foreshadowing
     const foreshadowingPatterns: Record<ForeshadowingType, { keywords: string[]; contextClues: string[] }> = {
-    prophecy: {
-      keywords: ['prophecy', 'prophesied', 'foretold', 'oracle', 'seer', 'vision', 'portent'],
-      contextClues: ['will happen', 'shall come to pass', 'fated to', 'destined']
-    },
-    symbolic_object: {
-      keywords: ['ancient', 'mysterious', 'strange', 'glowing', 'cracked', 'broken', 'hidden', 'forgotten'],
-      contextClues: ['seemed important', 'felt significant', 'had an aura', 'drew attention']
-    },
-    repeated_imagery: {
-      keywords: ['again', 'once more', 'as before', 'familiar', 'recalled', 'reminded'],
-      contextClues: ['the same', 'recurring', 'pattern', 'echoed']
-    },
-    mystery: {
-      keywords: ['mystery', 'secret', 'unknown', 'hidden', 'concealed', 'unexplained'],
-      contextClues: ['no one knew', 'remained unclear', 'questions unanswered', 'puzzled']
-    },
-    omen: {
-      keywords: ['omen', 'sign', 'portent', 'warning', 'premonition', 'bad feeling'],
-      contextClues: ['dark clouds', 'strange silence', 'chills', 'sense of foreboding']
-    },
-    dialogue_hint: {
-      keywords: ['someday', 'one day', 'you\'ll see', 'remember this', 'mark my words'],
-      contextClues: ['spoke cryptically', 'hinted at', 'alluded to', 'suggested without saying']
-    },
-    action_pattern: {
-      keywords: ['always', 'never failed to', 'habit', 'routine', 'pattern'],
-      contextClues: ['tendency', 'inclination', 'propensity']
-    },
-    environmental: {
-      keywords: ['ominous', 'foreboding', 'eerie', 'atmospheric', 'charged'],
-      contextClues: ['the air felt', 'something was wrong', 'the place seemed']
-    }
-  };
-  
-  // Analyze each chapter for foreshadowing
-  allChapters.forEach((chapter, index) => {
-    const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
-    
-    // Check for each type of foreshadowing
-    Object.entries(foreshadowingPatterns).forEach(([type, patterns]) => {
-      const hasKeyword = patterns.keywords.some(kw => content.includes(kw));
-      const hasContext = patterns.contextClues.some(cc => content.includes(cc));
-      
-      if (hasKeyword || hasContext) {
-        // Extract the foreshadowing sentence/context
-        const sentences = (chapter.content + ' ' + (chapter.summary || '')).split(/[.!?]+/);
-        const relevantSentences = sentences.filter(s => {
-          const sLower = s.toLowerCase();
-          return patterns.keywords.some(kw => sLower.includes(kw)) ||
-                 patterns.contextClues.some(cc => sLower.includes(cc));
-        });
-        
-        if (relevantSentences.length > 0) {
-          const element: ForeshadowingElement = {
-            id: generateUUID(),
-            novelId: state.id,
-            type: type as ForeshadowingType,
-            content: relevantSentences[0].trim().substring(0, 300),
-            introducedChapter: chapter.number,
-            status: 'active' as ForeshadowingStatus,
-            subtlety: hasKeyword && hasContext ? 'obvious' : hasKeyword ? 'subtle' : 'very_subtle' as ForeshadowingSubtlety,
-            chaptersReferenced: [chapter.number],
-            notes: `Detected in chapter ${chapter.number}`,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          };
-          
-          // Check if this element already exists (to avoid duplicates)
-          const existing = existingElements.find(e => 
-            e.type === element.type &&
-            Math.abs(e.introducedChapter - element.introducedChapter) <= 2 &&
-            e.content.toLowerCase().includes(element.content.toLowerCase().substring(0, 50)) ||
-            element.content.toLowerCase().includes(e.content.toLowerCase().substring(0, 50))
-          );
-          
-          if (!existing) {
-            detectedElements.push(element);
+      prophecy: {
+        keywords: ['prophecy', 'prophesied', 'foretold', 'oracle', 'seer', 'vision', 'portent'],
+        contextClues: ['will happen', 'shall come to pass', 'fated to', 'destined']
+      },
+      symbolic_object: {
+        keywords: ['ancient', 'mysterious', 'strange', 'glowing', 'cracked', 'broken', 'hidden', 'forgotten'],
+        contextClues: ['seemed important', 'felt significant', 'had an aura', 'drew attention']
+      },
+      repeated_imagery: {
+        keywords: ['again', 'once more', 'as before', 'familiar', 'recalled', 'reminded'],
+        contextClues: ['the same', 'recurring', 'pattern', 'echoed']
+      },
+      mystery: {
+        keywords: ['mystery', 'secret', 'unknown', 'hidden', 'concealed', 'unexplained'],
+        contextClues: ['no one knew', 'remained unclear', 'questions unanswered', 'puzzled']
+      },
+      omen: {
+        keywords: ['omen', 'sign', 'portent', 'warning', 'premonition', 'bad feeling'],
+        contextClues: ['dark clouds', 'strange silence', 'chills', 'sense of foreboding']
+      },
+      dialogue_hint: {
+        keywords: ['someday', 'one day', 'you\'ll see', 'remember this', 'mark my words'],
+        contextClues: ['spoke cryptically', 'hinted at', 'alluded to', 'suggested without saying']
+      },
+      action_pattern: {
+        keywords: ['always', 'never failed to', 'habit', 'routine', 'pattern'],
+        contextClues: ['tendency', 'inclination', 'propensity']
+      },
+      environmental: {
+        keywords: ['ominous', 'foreboding', 'eerie', 'atmospheric', 'charged'],
+        contextClues: ['the air felt', 'something was wrong', 'the place seemed']
+      }
+    };
+
+    // Analyze each chapter for foreshadowing
+    allChapters.forEach((chapter, index) => {
+      const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
+
+      // Check for each type of foreshadowing
+      Object.entries(foreshadowingPatterns).forEach(([type, patterns]) => {
+        const hasKeyword = patterns.keywords.some(kw => content.includes(kw));
+        const hasContext = patterns.contextClues.some(cc => content.includes(cc));
+
+        if (hasKeyword || hasContext) {
+          // Extract the foreshadowing sentence/context
+          const sentences = (chapter.content + ' ' + (chapter.summary || '')).split(/[.!?]+/);
+          const relevantSentences = sentences.filter(s => {
+            const sLower = s.toLowerCase();
+            return patterns.keywords.some(kw => sLower.includes(kw)) ||
+              patterns.contextClues.some(cc => sLower.includes(cc));
+          });
+
+          if (relevantSentences.length > 0) {
+            const element: ForeshadowingElement = {
+              id: generateUUID(),
+              novelId: state.id,
+              type: type as ForeshadowingType,
+              content: relevantSentences[0].trim().substring(0, 300),
+              introducedChapter: chapter.number,
+              status: 'active' as ForeshadowingStatus,
+              subtlety: hasKeyword && hasContext ? 'obvious' : hasKeyword ? 'subtle' : 'very_subtle' as ForeshadowingSubtlety,
+              chaptersReferenced: [chapter.number],
+              notes: `Detected in chapter ${chapter.number}`,
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            };
+
+            // Check if this element already exists (to avoid duplicates)
+            const existing = existingElements.find(e =>
+              e.type === element.type &&
+              Math.abs(e.introducedChapter - element.introducedChapter) <= 2 &&
+              e.content.toLowerCase().includes(element.content.toLowerCase().substring(0, 50)) ||
+              element.content.toLowerCase().includes(e.content.toLowerCase().substring(0, 50))
+            );
+
+            if (!existing) {
+              detectedElements.push(element);
+            }
           }
         }
-      }
       });
     });
-    
+
     // Combine existing and detected elements
     const allElements = [...existingElements, ...detectedElements];
-    
+
     // Check for payoffs
     const activeElements: ForeshadowingElement[] = [];
     const paidOffElements: ForeshadowingElement[] = [];
     const overdueElements: ForeshadowingElement[] = [];
-    
+
     const currentChapter = allChapters.length;
-    
+
     allElements.forEach(element => {
-    // Check if element has been paid off
-    if (element.paidOffChapter) {
-      paidOffElements.push(element);
-      return;
-    }
-    
-    // Check if element is overdue (10+ chapters without payoff)
-    const chaptersSinceIntroduction = currentChapter - element.introducedChapter;
-    if (chaptersSinceIntroduction >= 10 && element.status === 'active') {
-      overdueElements.push(element);
-      element.status = 'active'; // Keep as active but flag as overdue
-    }
-    
-    if (element.status === 'active') {
+      // Check if element has been paid off
+      if (element.paidOffChapter) {
+        paidOffElements.push(element);
+        return;
+      }
+
+      // Check if element is overdue (10+ chapters without payoff)
+      const chaptersSinceIntroduction = currentChapter - element.introducedChapter;
+      if (chaptersSinceIntroduction >= 10 && element.status === 'active') {
+        overdueElements.push(element);
+        element.status = 'active'; // Keep as active but flag as overdue
+      }
+
+      if (element.status === 'active') {
         activeElements.push(element);
       }
     });
-    
+
     // Calculate metrics
-    const foreshadowingDensity = allChapters.length > 0 
-      ? allElements.length / allChapters.length 
+    const foreshadowingDensity = allChapters.length > 0
+      ? allElements.length / allChapters.length
       : 0;
-    
-    const subtleForeshadowingCount = allElements.filter(e => 
+
+    const subtleForeshadowingCount = allElements.filter(e =>
       e.subtlety === 'subtle' || e.subtlety === 'very_subtle'
     ).length;
-    
+
     // Generate recommendations
     const recommendations: string[] = [];
-    
+
     if (overdueElements.length > 3) {
       recommendations.push(`There are ${overdueElements.length} foreshadowing elements that have been active for 10+ chapters without payoff. Consider resolving some in the next arc.`);
     }
-    
+
     if (activeElements.length === 0 && allChapters.length > 5) {
       recommendations.push('No active foreshadowing detected. Consider adding subtle foreshadowing to build anticipation.');
     }
-    
+
     if (subtleForeshadowingCount < activeElements.length * 0.3) {
       recommendations.push('Most foreshadowing is obvious. Consider adding more subtle foreshadowing (symbolic objects, repeated imagery, environmental cues).');
     }
-    
+
     if (foreshadowingDensity < 0.5) {
       recommendations.push('Low foreshadowing density. Consider weaving more foreshadowing elements throughout chapters.');
     }
-    
+
     if (foreshadowingDensity > 2.0) {
       recommendations.push('Very high foreshadowing density. Ensure payoffs are happening regularly to maintain reader trust.');
     }
-    
+
     const result = {
       activeForeshadowing: activeElements,
       paidOffForeshadowing: paidOffElements,
@@ -2171,13 +2171,13 @@ export function analyzeForeshadowing(
       foreshadowingDensity,
       subtleForeshadowingCount,
     };
-    
+
     // Cache the result
     analysisCache.set(cacheKey, {
       timestamp: Date.now(),
       foreshadowing: result,
     });
-    
+
     return result;
   } catch (error) {
     console.error('Error in analyzeForeshadowing:', error);
@@ -2250,24 +2250,24 @@ export function analyzeConflictEscalation(
 
     // Detect conflict types
     const conflictTypes: string[] = [];
-    
+
     // Internal vs external
-    if (allContent.includes('internal') || allContent.includes('inner conflict') || 
-        allContent.includes('struggle with') || allContent.includes('doubt')) {
+    if (allContent.includes('internal') || allContent.includes('inner conflict') ||
+      allContent.includes('struggle with') || allContent.includes('doubt')) {
       conflictTypes.push('Internal');
     }
-    if (allContent.includes('enemy') || allContent.includes('opponent') || 
-        allContent.includes('rival') || allContent.includes('antagonist')) {
+    if (allContent.includes('enemy') || allContent.includes('opponent') ||
+      allContent.includes('rival') || allContent.includes('antagonist')) {
       conflictTypes.push('External');
     }
-    
+
     // Character vs Nature/Society/etc
-    if (allContent.includes('tribulation') || allContent.includes('natural disaster') || 
-        allContent.includes('heaven') || allContent.includes('divine punishment')) {
+    if (allContent.includes('tribulation') || allContent.includes('natural disaster') ||
+      allContent.includes('heaven') || allContent.includes('divine punishment')) {
       conflictTypes.push('Character vs Nature');
     }
-    if (allContent.includes('society') || allContent.includes('authorities') || 
-        allContent.includes('rules') || allContent.includes('system')) {
+    if (allContent.includes('society') || allContent.includes('authorities') ||
+      allContent.includes('rules') || allContent.includes('system')) {
       conflictTypes.push('Character vs Society');
     }
     if (conflictTypes.length === 0) {
@@ -2333,10 +2333,10 @@ export function analyzeConflictEscalation(
     }
 
     // Check for proper escalation curve
-    const hasEscalated = escalationPattern.length >= 3 && 
-      stakesLevels.indexOf(escalationPattern[escalationPattern.length - 1].stakesLevel) > 
+    const hasEscalated = escalationPattern.length >= 3 &&
+      stakesLevels.indexOf(escalationPattern[escalationPattern.length - 1].stakesLevel) >
       stakesLevels.indexOf(escalationPattern[0].stakesLevel);
-    
+
     if (!hasEscalated && escalationPattern.length >= 3) {
       recommendations.push('Consider escalating stakes across arcs to maintain narrative momentum and reader engagement.');
     }
@@ -2434,7 +2434,7 @@ export function analyzeEmotionalArcs(
     // Determine emotional shift from start to end
     const startChapter = arcChapters[0];
     const endChapter = arcChapters[arcChapters.length - 1];
-    
+
     const startContent = ((startChapter?.content || '') + ' ' + (startChapter?.summary || '')).toLowerCase();
     const endContent = ((endChapter?.content || '') + ' ' + (endChapter?.summary || '')).toLowerCase();
 
@@ -2446,7 +2446,7 @@ export function analyzeEmotionalArcs(
       keywords.some(kw => textContainsCharacterName(endContent, protagonist.name) && endContent.includes(kw))
     )?.[0] || 'neutral';
 
-    const emotionalShift = startEmotion !== endEmotion 
+    const emotionalShift = startEmotion !== endEmotion
       ? `${startEmotion} → ${endEmotion}`
       : `Stable: ${startEmotion}`;
 
@@ -2478,7 +2478,7 @@ export function analyzeEmotionalArcs(
     }
 
     // Check for appropriate emotional contrast (not constantly in despair)
-    const despairCount = protagonistEmotionalJourney.filter(j => 
+    const despairCount = protagonistEmotionalJourney.filter(j =>
       j.dominantEmotion === 'despair' || j.dominantEmotion === 'sadness'
     ).length;
     if (despairCount > protagonistEmotionalJourney.length * 0.6) {
@@ -2518,16 +2518,16 @@ export function analyzeEmotionalPayoffs(
   if (cached && cached.emotionalPayoffs && isCacheValid(cached)) {
     return cached.emotionalPayoffs;
   }
-  
+
   try {
     const existingPayoffs = state.emotionalPayoffs || [];
     const allChapters = state.chapters;
     const activeArc = state.plotLedger.find(a => a.status === 'active');
     const currentChapter = allChapters.length;
-    
+
     // Detect new payoff moments from recent chapters
     const detectedPayoffs: EmotionalPayoffMoment[] = [];
-    
+
     // Patterns for different payoff types
     const payoffPatterns: Record<EmotionalPayoffType, { keywords: string[]; contextClues: string[] }> = {
       revelation: {
@@ -2563,201 +2563,201 @@ export function analyzeEmotionalPayoffs(
         contextClues: ['second chance', 'made right', 'proved themselves', 'earned forgiveness']
       }
     };
-    
+
     // Analyze recent chapters for payoff moments
     const recentChapters = allChapters.slice(-5);
     recentChapters.forEach(chapter => {
-    const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
-    
-    Object.entries(payoffPatterns).forEach(([type, patterns]) => {
-      const hasKeyword = patterns.keywords.some(kw => content.includes(kw));
-      const hasContext = patterns.contextClues.some(cc => content.includes(cc));
-      
-      if (hasKeyword || hasContext) {
-        // Extract the payoff moment
-        const sentences = (chapter.content + ' ' + (chapter.summary || '')).split(/[.!?]+/);
-        const relevantSentences = sentences.filter(s => {
-          const sLower = s.toLowerCase();
-          return patterns.keywords.some(kw => sLower.includes(kw)) ||
-                 patterns.contextClues.some(cc => sLower.includes(cc));
-        });
-        
-        if (relevantSentences.length > 0) {
-          // Calculate intensity based on context and keywords
-          let intensity: EmotionalIntensity = 3; // Default medium
-          const intensityIndicators = {
-            5: ['ultimate', 'complete', 'absolute', 'devastating', 'triumphant', 'perfect'],
-            4: ['major', 'significant', 'huge', 'great', 'massive', 'powerful'],
-            2: ['slight', 'minor', 'small', 'little', 'somewhat'],
-            1: ['hint', 'trace', 'subtle', 'faint']
-          };
-          
-          for (const [level, keywords] of Object.entries(intensityIndicators)) {
-            if (keywords.some(kw => content.includes(kw))) {
-              intensity = parseInt(level) as EmotionalIntensity;
-              break;
+      const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
+
+      Object.entries(payoffPatterns).forEach(([type, patterns]) => {
+        const hasKeyword = patterns.keywords.some(kw => content.includes(kw));
+        const hasContext = patterns.contextClues.some(cc => content.includes(cc));
+
+        if (hasKeyword || hasContext) {
+          // Extract the payoff moment
+          const sentences = (chapter.content + ' ' + (chapter.summary || '')).split(/[.!?]+/);
+          const relevantSentences = sentences.filter(s => {
+            const sLower = s.toLowerCase();
+            return patterns.keywords.some(kw => sLower.includes(kw)) ||
+              patterns.contextClues.some(cc => sLower.includes(cc));
+          });
+
+          if (relevantSentences.length > 0) {
+            // Calculate intensity based on context and keywords
+            let intensity: EmotionalIntensity = 3; // Default medium
+            const intensityIndicators = {
+              5: ['ultimate', 'complete', 'absolute', 'devastating', 'triumphant', 'perfect'],
+              4: ['major', 'significant', 'huge', 'great', 'massive', 'powerful'],
+              2: ['slight', 'minor', 'small', 'little', 'somewhat'],
+              1: ['hint', 'trace', 'subtle', 'faint']
+            };
+
+            for (const [level, keywords] of Object.entries(intensityIndicators)) {
+              if (keywords.some(kw => content.includes(kw))) {
+                intensity = parseInt(level) as EmotionalIntensity;
+                break;
+              }
+            }
+
+            // Extract character names involved
+            const charactersInvolved = state.characterCodex
+              .filter(char => content.includes(char.name.toLowerCase()))
+              .map(char => char.name);
+
+            const payoff: EmotionalPayoffMoment = {
+              id: generateUUID(),
+              novelId: state.id,
+              type: type as EmotionalPayoffType,
+              description: relevantSentences[0].trim().substring(0, 300),
+              chapterNumber: chapter.number,
+              intensity,
+              charactersInvolved,
+              setupChapters: [], // Will be filled by analyzing earlier chapters
+              readerImpact: `Expected ${intensity >= 4 ? 'strong' : intensity >= 3 ? 'moderate' : 'mild'} emotional impact`,
+              notes: `Detected in chapter ${chapter.number}`,
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            };
+
+            // Check for duplicates
+            const existing = existingPayoffs.find(e =>
+              e.type === payoff.type &&
+              e.chapterNumber === payoff.chapterNumber &&
+              e.description.toLowerCase().includes(payoff.description.toLowerCase().substring(0, 50))
+            );
+
+            if (!existing) {
+              detectedPayoffs.push(payoff);
             }
           }
-          
-          // Extract character names involved
-          const charactersInvolved = state.characterCodex
-            .filter(char => content.includes(char.name.toLowerCase()))
-            .map(char => char.name);
-          
-          const payoff: EmotionalPayoffMoment = {
-            id: generateUUID(),
-            novelId: state.id,
-            type: type as EmotionalPayoffType,
-            description: relevantSentences[0].trim().substring(0, 300),
-            chapterNumber: chapter.number,
-            intensity,
-            charactersInvolved,
-            setupChapters: [], // Will be filled by analyzing earlier chapters
-            readerImpact: `Expected ${intensity >= 4 ? 'strong' : intensity >= 3 ? 'moderate' : 'mild'} emotional impact`,
-            notes: `Detected in chapter ${chapter.number}`,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          };
-          
-          // Check for duplicates
-          const existing = existingPayoffs.find(e => 
-            e.type === payoff.type &&
-            e.chapterNumber === payoff.chapterNumber &&
-            e.description.toLowerCase().includes(payoff.description.toLowerCase().substring(0, 50))
-          );
-          
-          if (!existing) {
-            detectedPayoffs.push(payoff);
-          }
         }
-      }
+      });
     });
-  });
-  
-  // Combine existing and detected payoffs
-  const allPayoffs = [...existingPayoffs, ...detectedPayoffs];
-  const recentPayoffs = allPayoffs.filter(p => 
-    currentChapter - p.chapterNumber <= 5
-  );
-  
-  // Calculate average emotional intensity
-  const emotionalIntensityScore = recentPayoffs.length > 0
-    ? recentPayoffs.reduce((sum, p) => sum + p.intensity, 0) / recentPayoffs.length
-    : 3; // Default to medium if no payoffs
-  
-  // Identify upcoming payoff opportunities based on arc stage
-  const upcomingPayoffOpportunities: Array<{
-    arcStage: string;
-    recommendedType: EmotionalPayoffType;
-    suggestedIntensity: EmotionalIntensity;
-    reason: string;
-  }> = [];
-  
-  if (activeArc) {
-    const idx = activeArc.startedAtChapter 
-      ? Math.max(0, currentChapter - activeArc.startedAtChapter)
-      : 0;
-    
-    if (idx === 0) {
-      // Beginning of arc - setup phase
-      upcomingPayoffOpportunities.push({
-        arcStage: 'Beginning',
-        recommendedType: 'revelation',
-        suggestedIntensity: 2,
-        reason: 'Early revelations can hook readers and set up emotional journey'
-      });
-    } else if (idx <= 2) {
-      // Early arc - build tension
-      upcomingPayoffOpportunities.push({
-        arcStage: 'Early',
-        recommendedType: 'transformation',
-        suggestedIntensity: 3,
-        reason: 'Character growth moments create emotional connection in early arc'
-      });
-    } else if (idx <= 5) {
-      // Middle arc - escalation
-      upcomingPayoffOpportunities.push({
-        arcStage: 'Middle',
-        recommendedType: 'victory',
-        suggestedIntensity: 4,
-        reason: 'Mid-arc victories build momentum, but should be earned and meaningful'
-      });
-    } else {
-      // Late arc - climax preparation
-      upcomingPayoffOpportunities.push({
-        arcStage: 'Late',
-        recommendedType: 'sacrifice',
-        suggestedIntensity: 5,
-        reason: 'High-intensity payoffs appropriate as arc approaches climax'
-      });
+
+    // Combine existing and detected payoffs
+    const allPayoffs = [...existingPayoffs, ...detectedPayoffs];
+    const recentPayoffs = allPayoffs.filter(p =>
+      currentChapter - p.chapterNumber <= 5
+    );
+
+    // Calculate average emotional intensity
+    const emotionalIntensityScore = recentPayoffs.length > 0
+      ? recentPayoffs.reduce((sum, p) => sum + p.intensity, 0) / recentPayoffs.length
+      : 3; // Default to medium if no payoffs
+
+    // Identify upcoming payoff opportunities based on arc stage
+    const upcomingPayoffOpportunities: Array<{
+      arcStage: string;
+      recommendedType: EmotionalPayoffType;
+      suggestedIntensity: EmotionalIntensity;
+      reason: string;
+    }> = [];
+
+    if (activeArc) {
+      const idx = activeArc.startedAtChapter
+        ? Math.max(0, currentChapter - activeArc.startedAtChapter)
+        : 0;
+
+      if (idx === 0) {
+        // Beginning of arc - setup phase
+        upcomingPayoffOpportunities.push({
+          arcStage: 'Beginning',
+          recommendedType: 'revelation',
+          suggestedIntensity: 2,
+          reason: 'Early revelations can hook readers and set up emotional journey'
+        });
+      } else if (idx <= 2) {
+        // Early arc - build tension
+        upcomingPayoffOpportunities.push({
+          arcStage: 'Early',
+          recommendedType: 'transformation',
+          suggestedIntensity: 3,
+          reason: 'Character growth moments create emotional connection in early arc'
+        });
+      } else if (idx <= 5) {
+        // Middle arc - escalation
+        upcomingPayoffOpportunities.push({
+          arcStage: 'Middle',
+          recommendedType: 'victory',
+          suggestedIntensity: 4,
+          reason: 'Mid-arc victories build momentum, but should be earned and meaningful'
+        });
+      } else {
+        // Late arc - climax preparation
+        upcomingPayoffOpportunities.push({
+          arcStage: 'Late',
+          recommendedType: 'sacrifice',
+          suggestedIntensity: 5,
+          reason: 'High-intensity payoffs appropriate as arc approaches climax'
+        });
+      }
     }
-  }
-  
-  // Generate emotional arc templates based on genre
-  const templates: EmotionalArcTemplate[] = [
-    {
-      name: 'Xianxia Cultivation Arc',
-      stages: [
-        { stage: 'Humiliation', emotion: 'anger', intensity: 2, description: 'Protagonist faces disrespect or defeat' },
-        { stage: 'Determination', emotion: 'determination', intensity: 3, description: 'Resolves to improve through cultivation' },
-        { stage: 'Breakthrough', emotion: 'hope', intensity: 4, description: 'Achieves cultivation advancement' },
-        { stage: 'Revenge/Recognition', emotion: 'joy', intensity: 5, description: 'Proves worth and gains respect' }
-      ],
-      genre: ['Xianxia']
-    },
-    {
-      name: 'Standard Hero\'s Journey',
-      stages: [
-        { stage: 'Call to Adventure', emotion: 'hope', intensity: 2, description: 'Opportunity presents itself' },
-        { stage: 'Tests and Trials', emotion: 'determination', intensity: 3, description: 'Faces challenges and grows' },
-        { stage: 'Darkest Hour', emotion: 'despair', intensity: 4, description: 'Major setback or loss' },
-        { stage: 'Triumph', emotion: 'joy', intensity: 5, description: 'Overcomes adversity through growth' }
-      ],
-      genre: ['Xianxia', 'Xuanhuan', 'Fantasy']
+
+    // Generate emotional arc templates based on genre
+    const templates: EmotionalArcTemplate[] = [
+      {
+        name: 'Xianxia Cultivation Arc',
+        stages: [
+          { stage: 'Humiliation', emotion: 'anger', intensity: 2, description: 'Protagonist faces disrespect or defeat' },
+          { stage: 'Determination', emotion: 'determination', intensity: 3, description: 'Resolves to improve through cultivation' },
+          { stage: 'Breakthrough', emotion: 'hope', intensity: 4, description: 'Achieves cultivation advancement' },
+          { stage: 'Revenge/Recognition', emotion: 'joy', intensity: 5, description: 'Proves worth and gains respect' }
+        ],
+        genre: ['Xianxia']
+      },
+      {
+        name: 'Standard Hero\'s Journey',
+        stages: [
+          { stage: 'Call to Adventure', emotion: 'hope', intensity: 2, description: 'Opportunity presents itself' },
+          { stage: 'Tests and Trials', emotion: 'determination', intensity: 3, description: 'Faces challenges and grows' },
+          { stage: 'Darkest Hour', emotion: 'despair', intensity: 4, description: 'Major setback or loss' },
+          { stage: 'Triumph', emotion: 'joy', intensity: 5, description: 'Overcomes adversity through growth' }
+        ],
+        genre: ['Xianxia', 'Xuanhuan', 'Fantasy']
+      }
+    ];
+
+    // Generate recommendations
+    const recommendations: string[] = [];
+
+    if (recentPayoffs.length === 0 && currentChapter > 5) {
+      recommendations.push('No recent emotional payoff moments detected. Consider adding meaningful emotional moments (revelations, victories, losses, transformations) to create reader satisfaction.');
     }
-  ];
-  
-  // Generate recommendations
-  const recommendations: string[] = [];
-  
-  if (recentPayoffs.length === 0 && currentChapter > 5) {
-    recommendations.push('No recent emotional payoff moments detected. Consider adding meaningful emotional moments (revelations, victories, losses, transformations) to create reader satisfaction.');
-  }
-  
-  if (emotionalIntensityScore < 2.5) {
-    recommendations.push('Recent emotional payoffs have low intensity. Consider increasing emotional stakes and intensity for stronger reader engagement.');
-  }
-  
-  if (emotionalIntensityScore > 4.5) {
-    recommendations.push('Very high emotional intensity in recent payoffs. Consider varying intensity - include some quieter emotional moments to prevent reader fatigue.');
-  }
-  
-  const lastPayoff = recentPayoffs[recentPayoffs.length - 1];
-  if (lastPayoff && (currentChapter - lastPayoff.chapterNumber) > 8) {
-    recommendations.push(`Last emotional payoff was ${currentChapter - lastPayoff.chapterNumber} chapters ago. Consider adding an emotional payoff moment in upcoming chapters to maintain reader engagement.`);
-  }
-  
-  // Check for emotional diversity
-  const recentTypes = new Set(recentPayoffs.map(p => p.type));
-  if (recentTypes.size < 3 && recentPayoffs.length >= 5) {
-    recommendations.push('Recent payoffs lack diversity. Consider varying payoff types (revelations, victories, losses, transformations) for richer emotional journey.');
-  }
-  
-  const result = {
-    recentPayoffs: recentPayoffs.slice(-5), // Last 5 payoffs
-    upcomingPayoffOpportunities,
-    emotionalIntensityScore: Math.round(emotionalIntensityScore * 10) / 10,
-    recommendations,
-    templates: templates.filter(t => t.genre.includes(state.genre) || t.genre.length === 0),
-  };
-  
-  // Cache the result
-  analysisCache.set(cacheKey, {
-    timestamp: Date.now(),
-    emotionalPayoffs: result,
-  });
-  
-  return result;
+
+    if (emotionalIntensityScore < 2.5) {
+      recommendations.push('Recent emotional payoffs have low intensity. Consider increasing emotional stakes and intensity for stronger reader engagement.');
+    }
+
+    if (emotionalIntensityScore > 4.5) {
+      recommendations.push('Very high emotional intensity in recent payoffs. Consider varying intensity - include some quieter emotional moments to prevent reader fatigue.');
+    }
+
+    const lastPayoff = recentPayoffs[recentPayoffs.length - 1];
+    if (lastPayoff && (currentChapter - lastPayoff.chapterNumber) > 8) {
+      recommendations.push(`Last emotional payoff was ${currentChapter - lastPayoff.chapterNumber} chapters ago. Consider adding an emotional payoff moment in upcoming chapters to maintain reader engagement.`);
+    }
+
+    // Check for emotional diversity
+    const recentTypes = new Set(recentPayoffs.map(p => p.type));
+    if (recentTypes.size < 3 && recentPayoffs.length >= 5) {
+      recommendations.push('Recent payoffs lack diversity. Consider varying payoff types (revelations, victories, losses, transformations) for richer emotional journey.');
+    }
+
+    const result = {
+      recentPayoffs: recentPayoffs.slice(-5), // Last 5 payoffs
+      upcomingPayoffOpportunities,
+      emotionalIntensityScore: Math.round(emotionalIntensityScore * 10) / 10,
+      recommendations,
+      templates: templates.filter(t => t.genre.includes(state.genre) || t.genre.length === 0),
+    };
+
+    // Cache the result
+    analysisCache.set(cacheKey, {
+      timestamp: Date.now(),
+      emotionalPayoffs: result,
+    });
+
+    return result;
   } catch (error) {
     console.error('Error analyzing emotional payoffs:', error);
     // Return default structure on error
@@ -2805,12 +2805,12 @@ export function analyzePacing(
   if (cached && cached.pacing && isCacheValid(cached)) {
     return cached.pacing;
   }
-  
+
   try {
     const allChapters = state.chapters;
     const activeArc = state.plotLedger.find(a => a.status === 'active');
     const currentChapter = allChapters.length;
-    
+
     // Analyze scene-level pacing
     const sceneLevelPacing: Array<{
       chapterNumber: number;
@@ -2819,126 +2819,126 @@ export function analyzePacing(
       pacingVariation: 'low' | 'medium' | 'high';
       dominantPacingType: 'action' | 'dialogue' | 'reflection' | 'description' | 'mixed';
     }> = [];
-    
+
     // Analyze recent chapters (last 10) for scene-level pacing
     const recentChapters = allChapters.slice(-10);
     recentChapters.forEach(chapter => {
-    const scenes = chapter.scenes || [];
-    const sceneCount = scenes.length || 1; // At least 1 scene (the chapter itself)
-    
-    // Calculate average scene length (words)
-    let totalSceneWords = 0;
-    if (scenes.length > 0) {
-      totalSceneWords = scenes.reduce((sum, scene) => {
-        const words = (scene.content || '').split(/\s+/).filter(w => w.length > 0).length;
-        return sum + words;
+      const scenes = chapter.scenes || [];
+      const sceneCount = scenes.length || 1; // At least 1 scene (the chapter itself)
+
+      // Calculate average scene length (words)
+      let totalSceneWords = 0;
+      if (scenes.length > 0) {
+        totalSceneWords = scenes.reduce((sum, scene) => {
+          const words = (scene.content || '').split(/\s+/).filter(w => w.length > 0).length;
+          return sum + words;
+        }, 0);
+      } else {
+        // If no scenes, use chapter content
+        totalSceneWords = chapter.content.split(/\s+/).filter(w => w.length > 0).length;
+      }
+      const averageSceneLength = sceneCount > 0 ? totalSceneWords / sceneCount : 0;
+
+      // Determine pacing variation within chapter
+      let pacingVariation: 'low' | 'medium' | 'high' = 'low';
+      if (scenes.length > 2) {
+        const sceneLengths = scenes.map(s => {
+          return (s.content || '').split(/\s+/).filter(w => w.length > 0).length;
+        });
+        const min = Math.min(...sceneLengths);
+        const max = Math.max(...sceneLengths);
+        const variation = (max - min) / averageSceneLength;
+        if (variation > 0.5) pacingVariation = 'high';
+        else if (variation > 0.2) pacingVariation = 'medium';
+      }
+
+      // Determine dominant pacing type
+      const chapterContent = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
+
+      // Count different pacing indicators
+      const actionIndicators = ['moved', 'ran', 'fought', 'attacked', 'defended', 'dodged', 'struck', 'jumped', 'charged'];
+      const dialogueIndicators = ['said', 'asked', 'replied', 'shouted', 'whispered', 'spoke', 'exclaimed'];
+      const reflectionIndicators = ['thought', 'wondered', 'considered', 'realized', 'remembered', 'pondered', 'reflected'];
+      const descriptionIndicators = ['was', 'had', 'seemed', 'appeared', 'looked', 'felt like', 'resembled'];
+
+      const actionCount = actionIndicators.reduce((sum, ind) => {
+        const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
+        return sum + (matches ? matches.length : 0);
       }, 0);
-    } else {
-      // If no scenes, use chapter content
-      totalSceneWords = chapter.content.split(/\s+/).filter(w => w.length > 0).length;
-    }
-    const averageSceneLength = sceneCount > 0 ? totalSceneWords / sceneCount : 0;
-    
-    // Determine pacing variation within chapter
-    let pacingVariation: 'low' | 'medium' | 'high' = 'low';
-    if (scenes.length > 2) {
-      const sceneLengths = scenes.map(s => {
-        return (s.content || '').split(/\s+/).filter(w => w.length > 0).length;
+
+      const dialogueCount = dialogueIndicators.reduce((sum, ind) => {
+        const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
+        return sum + (matches ? matches.length : 0);
+      }, 0);
+
+      const reflectionCount = reflectionIndicators.reduce((sum, ind) => {
+        const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
+        return sum + (matches ? matches.length : 0);
+      }, 0);
+
+      const descriptionCount = descriptionIndicators.reduce((sum, ind) => {
+        const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
+        return sum + (matches ? matches.length : 0);
+      }, 0);
+
+      const counts = { action: actionCount, dialogue: dialogueCount, reflection: reflectionCount, description: descriptionCount };
+      const maxCount = Math.max(...Object.values(counts));
+      const dominantType = Object.entries(counts).find(([_, count]) => count === maxCount)?.[0] || 'mixed';
+
+      // Determine if mixed (if top 2 are within 20% of each other)
+      const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      const isMixed = sortedCounts.length >= 2 &&
+        sortedCounts[0][1] > 0 &&
+        sortedCounts[1][1] > 0 &&
+        (sortedCounts[0][1] - sortedCounts[1][1]) / sortedCounts[0][1] < 0.2;
+
+      sceneLevelPacing.push({
+        chapterNumber: chapter.number,
+        sceneCount,
+        averageSceneLength: Math.round(averageSceneLength),
+        pacingVariation,
+        dominantPacingType: isMixed ? 'mixed' : dominantType as 'action' | 'dialogue' | 'reflection' | 'description' | 'mixed',
       });
-      const min = Math.min(...sceneLengths);
-      const max = Math.max(...sceneLengths);
-      const variation = (max - min) / averageSceneLength;
-      if (variation > 0.5) pacingVariation = 'high';
-      else if (variation > 0.2) pacingVariation = 'medium';
-    }
-    
-    // Determine dominant pacing type
-    const chapterContent = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
-    
-    // Count different pacing indicators
-    const actionIndicators = ['moved', 'ran', 'fought', 'attacked', 'defended', 'dodged', 'struck', 'jumped', 'charged'];
-    const dialogueIndicators = ['said', 'asked', 'replied', 'shouted', 'whispered', 'spoke', 'exclaimed'];
-    const reflectionIndicators = ['thought', 'wondered', 'considered', 'realized', 'remembered', 'pondered', 'reflected'];
-    const descriptionIndicators = ['was', 'had', 'seemed', 'appeared', 'looked', 'felt like', 'resembled'];
-    
-    const actionCount = actionIndicators.reduce((sum, ind) => {
-      const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
-      return sum + (matches ? matches.length : 0);
-    }, 0);
-    
-    const dialogueCount = dialogueIndicators.reduce((sum, ind) => {
-      const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
-      return sum + (matches ? matches.length : 0);
-    }, 0);
-    
-    const reflectionCount = reflectionIndicators.reduce((sum, ind) => {
-      const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
-      return sum + (matches ? matches.length : 0);
-    }, 0);
-    
-    const descriptionCount = descriptionIndicators.reduce((sum, ind) => {
-      const matches = chapterContent.match(new RegExp(`\\b${ind}\\b`, 'gi'));
-      return sum + (matches ? matches.length : 0);
-    }, 0);
-    
-    const counts = { action: actionCount, dialogue: dialogueCount, reflection: reflectionCount, description: descriptionCount };
-    const maxCount = Math.max(...Object.values(counts));
-    const dominantType = Object.entries(counts).find(([_, count]) => count === maxCount)?.[0] || 'mixed';
-    
-    // Determine if mixed (if top 2 are within 20% of each other)
-    const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    const isMixed = sortedCounts.length >= 2 && 
-                    sortedCounts[0][1] > 0 && 
-                    sortedCounts[1][1] > 0 &&
-                    (sortedCounts[0][1] - sortedCounts[1][1]) / sortedCounts[0][1] < 0.2;
-    
-    sceneLevelPacing.push({
-      chapterNumber: chapter.number,
-      sceneCount,
-      averageSceneLength: Math.round(averageSceneLength),
-      pacingVariation,
-      dominantPacingType: isMixed ? 'mixed' : dominantType as 'action' | 'dialogue' | 'reflection' | 'description' | 'mixed',
     });
-    });
-    
+
     // Analyze rhythm patterns (alternating pacing across chapters)
     const rhythmPattern: Array<{
       chapters: string;
       pattern: string;
       description: string;
     }> = [];
-    
+
     if (allChapters.length >= 3) {
       // Analyze recent 6 chapters for rhythm
       const recent6 = allChapters.slice(-6);
       const pacingSequence: ('fast' | 'medium' | 'slow')[] = [];
-      
+
       recent6.forEach(chapter => {
         const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
         const wordCount = content.split(/\s+/).length;
         const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
         const avgSentenceLength = sentences.length > 0 ? wordCount / sentences.length : 15;
-        
+
         let pacing: 'fast' | 'medium' | 'slow' = 'medium';
         if (avgSentenceLength < 12 && wordCount < 3000) pacing = 'fast';
         else if (avgSentenceLength > 20 || wordCount > 6000) pacing = 'slow';
-        
+
         pacingSequence.push(pacing);
       });
-      
+
       // Identify patterns
       if (pacingSequence.length >= 3) {
         const patternStr = pacingSequence.join(' → ');
         rhythmPattern.push({
           chapters: `Ch ${recent6[0].number}-${recent6[recent6.length - 1].number}`,
           pattern: patternStr,
-          description: pacingSequence.length >= 4 
+          description: pacingSequence.length >= 4
             ? `${pacingSequence.length} chapters analyzed. Pattern: ${patternStr}`
             : `Recent pacing pattern: ${patternStr}`,
         });
       }
     }
-    
+
     // Arc-position-specific pacing recommendations
     const arcPositionPacing = {
       beginning: {
@@ -2958,11 +2958,11 @@ export function analyzePacing(
         reason: 'Late arc should accelerate toward climax with faster pacing and rising tension'
       }
     };
-    
+
     // Identify pacing issues
     const pacingIssues: string[] = [];
     const recommendations: string[] = [];
-    
+
     // Check for pacing stagnation (same pacing for too many chapters)
     if (sceneLevelPacing.length >= 5) {
       const recentTypes = sceneLevelPacing.slice(-5).map(s => s.dominantPacingType);
@@ -2972,30 +2972,30 @@ export function analyzePacing(
         recommendations.push('Alternate pacing types: action scenes → dialogue scenes → reflection moments → description/atmosphere.');
       }
     }
-    
+
     // Check for lack of pacing variation within chapters
     const lowVariationCount = sceneLevelPacing.filter(s => s.pacingVariation === 'low').length;
     if (lowVariationCount > sceneLevelPacing.length * 0.7 && sceneLevelPacing.length >= 3) {
       pacingIssues.push('Most chapters have low pacing variation. Chapters feel flat without rhythm changes.');
       recommendations.push('Vary pacing within chapters: mix fast action beats with slower reflection or dialogue beats.');
     }
-    
+
     // Check for inappropriate pacing for arc stage
     if (activeArc && activeArc.startedAtChapter) {
       const idx = Math.max(0, currentChapter - activeArc.startedAtChapter);
       const recentPacing = sceneLevelPacing[sceneLevelPacing.length - 1];
       if (recentPacing) {
         const recommendedPacing = idx === 0 ? arcPositionPacing.beginning.recommendedPacing :
-                                  idx <= 2 ? arcPositionPacing.early.recommendedPacing :
-                                  idx <= 5 ? arcPositionPacing.middle.recommendedPacing :
-                                  arcPositionPacing.late.recommendedPacing;
-        
+          idx <= 2 ? arcPositionPacing.early.recommendedPacing :
+            idx <= 5 ? arcPositionPacing.middle.recommendedPacing :
+              arcPositionPacing.late.recommendedPacing;
+
         // This is a simplified check - in reality, we'd need to map dominantPacingType to fast/medium/slow
         // For now, we'll just include this in recommendations
         recommendations.push(`Current arc stage: ${idx === 0 ? 'Beginning' : idx <= 2 ? 'Early' : idx <= 5 ? 'Middle' : 'Late'}. Recommended pacing: ${recommendedPacing}.`);
       }
     }
-    
+
     // Check for monotonous rhythm (no alternation)
     if (rhythmPattern.length > 0) {
       const pattern = rhythmPattern[rhythmPattern.length - 1].pattern;
@@ -3005,7 +3005,7 @@ export function analyzePacing(
         recommendations.push('Alternate pacing: follow fast chapters with slower ones, action with reflection, tension with release.');
       }
     }
-    
+
     const result = {
       sceneLevelPacing: sceneLevelPacing.slice(-5), // Last 5 chapters
       rhythmPattern,
@@ -3013,13 +3013,13 @@ export function analyzePacing(
       pacingIssues,
       recommendations,
     };
-    
+
     // Cache the result
     analysisCache.set(cacheKey, {
       timestamp: Date.now(),
       pacing: result,
     });
-    
+
     return result;
   } catch (error) {
     console.error('Error in analyzePacing:', error);
@@ -3064,14 +3064,14 @@ export function analyzeSymbolism(
   if (cached && cached.symbolism && isCacheValid(cached)) {
     return cached.symbolism;
   }
-  
+
   try {
     const existingSymbols = state.symbolicElements || [];
     const allChapters = state.chapters;
-    
+
     // Detect symbolic objects, images, and actions from chapters
     const detectedSymbols: SymbolicElement[] = [];
-    
+
     // Common symbolic patterns in Xianxia/Xuanhuan
     const symbolicPatterns = {
       objects: ['jade', 'sword', 'pill', 'manual', 'token', 'ring', 'feather', 'crystal', 'slip', 'artifact', 'seal', 'talisman'],
@@ -3080,144 +3080,144 @@ export function analyzeSymbolism(
       natural: ['phoenix', 'dragon', 'tiger', 'crane', 'lotus', 'bamboo', 'plum blossom', 'cloud', 'mountain', 'river'],
       actions: ['ascend', 'descend', 'transcend', 'breakthrough', 'awaken', 'unleash', 'seal', 'release'],
     };
-    
+
     // Analyze chapters for symbolic elements
     allChapters.forEach(chapter => {
-    const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
-    
-    // Check for symbolic objects
-    symbolicPatterns.objects.forEach(object => {
-      if (content.includes(object)) {
-        // Extract context around the object
-        const sentences = (chapter.content + ' ' + (chapter.summary || '')).split(/[.!?]+/);
-        const relevantSentences = sentences.filter(s => s.toLowerCase().includes(object));
-        
-        if (relevantSentences.length > 0) {
-          // Determine symbolic meaning based on context
-          let symbolicMeaning = '';
-          const sentence = relevantSentences[0].toLowerCase();
-          
-          if (sentence.includes('ancient') || sentence.includes('mysterious')) {
-            symbolicMeaning = 'Represents ancient wisdom or hidden power';
-          } else if (sentence.includes('glowing') || sentence.includes('radiant')) {
-            symbolicMeaning = 'Represents power, enlightenment, or divine connection';
-          } else if (sentence.includes('cracked') || sentence.includes('broken')) {
-            symbolicMeaning = 'Represents imperfection, struggle, or transformation';
-          } else if (sentence.includes('cold') || sentence.includes('dark')) {
-            symbolicMeaning = 'Represents danger, mystery, or hidden threat';
-          } else {
-            symbolicMeaning = 'Symbolic object with evolving meaning';
-          }
-          
-          // Check if this symbol already exists
-          const existing = existingSymbols.find(s => 
-            s.name.toLowerCase() === object &&
-            Math.abs(s.firstAppearedChapter - chapter.number) <= 3
-          );
-          
-          if (!existing) {
-            const symbol: SymbolicElement = {
-              id: generateUUID(),
-              novelId: state.id,
-              name: object,
-              symbolicMeaning,
-              firstAppearedChapter: chapter.number,
-              chaptersAppeared: [chapter.number],
-              evolutionNotes: [`First appearance in Ch ${chapter.number}: ${symbolicMeaning}`],
-              relatedThemes: [],
-              notes: `Detected in chapter ${chapter.number}`,
-              createdAt: Date.now(),
-              updatedAt: Date.now()
-            };
-            detectedSymbols.push(symbol);
-          } else {
-            // Update existing symbol
-            if (!existing.chaptersAppeared.includes(chapter.number)) {
-              existing.chaptersAppeared.push(chapter.number);
-              existing.updatedAt = Date.now();
+      const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
+
+      // Check for symbolic objects
+      symbolicPatterns.objects.forEach(object => {
+        if (content.includes(object)) {
+          // Extract context around the object
+          const sentences = (chapter.content + ' ' + (chapter.summary || '')).split(/[.!?]+/);
+          const relevantSentences = sentences.filter(s => s.toLowerCase().includes(object));
+
+          if (relevantSentences.length > 0) {
+            // Determine symbolic meaning based on context
+            let symbolicMeaning = '';
+            const sentence = relevantSentences[0].toLowerCase();
+
+            if (sentence.includes('ancient') || sentence.includes('mysterious')) {
+              symbolicMeaning = 'Represents ancient wisdom or hidden power';
+            } else if (sentence.includes('glowing') || sentence.includes('radiant')) {
+              symbolicMeaning = 'Represents power, enlightenment, or divine connection';
+            } else if (sentence.includes('cracked') || sentence.includes('broken')) {
+              symbolicMeaning = 'Represents imperfection, struggle, or transformation';
+            } else if (sentence.includes('cold') || sentence.includes('dark')) {
+              symbolicMeaning = 'Represents danger, mystery, or hidden threat';
+            } else {
+              symbolicMeaning = 'Symbolic object with evolving meaning';
+            }
+
+            // Check if this symbol already exists
+            const existing = existingSymbols.find(s =>
+              s.name.toLowerCase() === object &&
+              Math.abs(s.firstAppearedChapter - chapter.number) <= 3
+            );
+
+            if (!existing) {
+              const symbol: SymbolicElement = {
+                id: generateUUID(),
+                novelId: state.id,
+                name: object,
+                symbolicMeaning,
+                firstAppearedChapter: chapter.number,
+                chaptersAppeared: [chapter.number],
+                evolutionNotes: [`First appearance in Ch ${chapter.number}: ${symbolicMeaning}`],
+                relatedThemes: [],
+                notes: `Detected in chapter ${chapter.number}`,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+              };
+              detectedSymbols.push(symbol);
+            } else {
+              // Update existing symbol
+              if (!existing.chaptersAppeared.includes(chapter.number)) {
+                existing.chaptersAppeared.push(chapter.number);
+                existing.updatedAt = Date.now();
+              }
             }
           }
         }
-      }
+      });
     });
-  });
-  
-  // Combine existing and detected symbols
-  const allSymbols = [...existingSymbols, ...detectedSymbols];
-  
-  // Analyze motif evolution
-  const motifEvolution: Array<{
-    motif: string;
-    firstAppearedChapter: number;
-    chaptersAppeared: number[];
-    evolution: string[];
-    currentMeaning: string;
-    relatedThemes: string[];
-  }> = [];
-  
-  allSymbols.forEach(symbol => {
-    // Group by symbolic name/meaning to track evolution
-    const evolution: string[] = [];
-    symbol.chaptersAppeared.forEach(chNum => {
-      const chapter = allChapters.find(c => c.number === chNum);
-      if (chapter) {
-        const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
-        const symbolMention = content.includes(symbol.name.toLowerCase());
-        if (symbolMention) {
-          evolution.push(`Ch ${chNum}: ${symbol.symbolicMeaning}`);
+
+    // Combine existing and detected symbols
+    const allSymbols = [...existingSymbols, ...detectedSymbols];
+
+    // Analyze motif evolution
+    const motifEvolution: Array<{
+      motif: string;
+      firstAppearedChapter: number;
+      chaptersAppeared: number[];
+      evolution: string[];
+      currentMeaning: string;
+      relatedThemes: string[];
+    }> = [];
+
+    allSymbols.forEach(symbol => {
+      // Group by symbolic name/meaning to track evolution
+      const evolution: string[] = [];
+      symbol.chaptersAppeared.forEach(chNum => {
+        const chapter = allChapters.find(c => c.number === chNum);
+        if (chapter) {
+          const content = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
+          const symbolMention = content.includes(symbol.name.toLowerCase());
+          if (symbolMention) {
+            evolution.push(`Ch ${chNum}: ${symbol.symbolicMeaning}`);
+          }
         }
-      }
+      });
+
+      motifEvolution.push({
+        motif: symbol.name,
+        firstAppearedChapter: symbol.firstAppearedChapter,
+        chaptersAppeared: symbol.chaptersAppeared,
+        evolution: evolution.length > 0 ? evolution : symbol.evolutionNotes,
+        currentMeaning: symbol.symbolicMeaning,
+        relatedThemes: symbol.relatedThemes,
+      });
     });
-    
-    motifEvolution.push({
-      motif: symbol.name,
-      firstAppearedChapter: symbol.firstAppearedChapter,
-      chaptersAppeared: symbol.chaptersAppeared,
-      evolution: evolution.length > 0 ? evolution : symbol.evolutionNotes,
-      currentMeaning: symbol.symbolicMeaning,
-      relatedThemes: symbol.relatedThemes,
-    });
-  });
-  
+
     // Calculate symbolism density
     const symbolismDensity = allChapters.length > 0
       ? allSymbols.length / allChapters.length
       : 0;
-    
+
     // Generate recommendations
     const recommendations: string[] = [];
-  
-  if (allSymbols.length === 0 && allChapters.length > 5) {
-    recommendations.push('No symbolic elements detected. Consider adding symbolic objects, imagery, or actions that carry deeper meaning.');
-  }
-  
-  if (symbolismDensity < 0.3 && allChapters.length > 5) {
-    recommendations.push('Low symbolism density. Consider weaving more symbolic elements (objects, colors, natural imagery) throughout chapters.');
-  }
-  
+
+    if (allSymbols.length === 0 && allChapters.length > 5) {
+      recommendations.push('No symbolic elements detected. Consider adding symbolic objects, imagery, or actions that carry deeper meaning.');
+    }
+
+    if (symbolismDensity < 0.3 && allChapters.length > 5) {
+      recommendations.push('Low symbolism density. Consider weaving more symbolic elements (objects, colors, natural imagery) throughout chapters.');
+    }
+
     if (symbolismDensity > 1.5) {
       recommendations.push('High symbolism density. Ensure symbols have clear meaning and evolve over time rather than just appearing frequently.');
     }
-    
+
     // Check for symbol evolution
     const symbolsWithoutEvolution = motifEvolution.filter(m => m.evolution.length <= 1);
     if (symbolsWithoutEvolution.length > allSymbols.length * 0.5 && allSymbols.length > 0) {
       recommendations.push('Many symbols appear without evolution. Consider having symbols gain new meaning or layers as the story progresses.');
     }
-    
+
     const result = {
       symbolicElements: allSymbols.slice(-20), // Last 20 symbols
       motifEvolution: motifEvolution.slice(-10), // Last 10 motifs
       symbolismDensity: Math.round(symbolismDensity * 10) / 10,
       recommendations,
     };
-    
+
     // Cache the result
     analysisCache.set(cacheKey, {
       timestamp: Date.now(),
       symbolism: result,
     });
-    
+
     return result;
   } catch (error) {
     // Import logger dynamically to avoid circular dependencies
@@ -3363,4 +3363,94 @@ export function analyzeThemesAndMotifs(
     motifs: motifs.slice(0, 5),
     themeConsistency,
   };
+}
+
+/**
+ * Detects suggested narrative archetypes based on story state and context
+ */
+export function detectSuggestedArchetypes(
+  state: NovelState,
+  context: ArcContextSummary | { arcSummaries: ArcContextSummary[] }
+): NarrativeArchetypeSuggestion[] {
+  const suggestions: NarrativeArchetypeSuggestion[] = [];
+  const recentChapters = state.chapters.slice(-10);
+
+  // Safe extraction of unresolved threads handling both structure types
+  let unresolvedThreads: Array<{ description: string; status: string }> = [];
+
+  if (context && 'plotThreads' in context) {
+    // Single ArcContextSummary
+    unresolvedThreads = (context as any).plotThreads.filter((t: any) => t.status === 'unresolved');
+  } else if (context && 'arcSummaries' in context) {
+    // PromptContext.arcContext wrapper
+    const summaries = (context as any).arcSummaries as ArcContextSummary[];
+    unresolvedThreads = summaries.flatMap(s => s.plotThreads || []).filter(t => t.status === 'unresolved');
+  }
+
+  // 1. Check for Tournament/Competition indicators
+  const combatThreads = unresolvedThreads.filter(t =>
+    t.description.toLowerCase().includes('rival') ||
+    t.description.toLowerCase().includes('tournament') ||
+    t.description.toLowerCase().includes('competition') ||
+    t.description.toLowerCase().includes('ranking')
+  );
+
+  if (combatThreads.length > 0) {
+    suggestions.push({
+      type: 'tournament',
+      confidence: 0.8,
+      reasoning: 'Several unresolved threads involve rivalry or competition.',
+      focus: 'Prove strength against rivals in a structured setting.'
+    });
+  }
+
+  // 2. Check for Secret Realm/Exploration
+  const explorationKeywords = ['map', 'key', 'ruin', 'legacy', 'treasure', 'secret realm', 'dungeon'];
+  const explorationThreads = unresolvedThreads.filter(t =>
+    explorationKeywords.some(k => t.description.toLowerCase().includes(k))
+  );
+
+  if (explorationThreads.length > 0) {
+    suggestions.push({
+      type: 'secret_realm',
+      confidence: 0.75,
+      reasoning: 'Threads hint at undiscovered locations or treasures.',
+      focus: 'Explore a dangerous new environment to acquire resources.'
+    });
+  }
+
+  // 3. Check for Sect War/Conflict
+  const warKeywords = ['war', 'invasion', 'army', 'sect', 'annihilate', 'attack'];
+  const warThreads = unresolvedThreads.filter(t =>
+    warKeywords.some(k => t.description.toLowerCase().includes(k))
+  );
+
+  if (warThreads.length > 0) {
+    suggestions.push({
+      type: 'sect_war',
+      confidence: 0.85,
+      reasoning: 'High-stakes conflict keywords detected in unresolved threads.',
+      focus: 'Large scale conflict involving multiple organizations.'
+    });
+  }
+
+  // 4. Default/Fallback Suggestions based on generic story flow
+  if (suggestions.length < 2) {
+    suggestions.push({
+      type: 'journey',
+      confidence: 0.6,
+      reasoning: 'A change of setting can drive character growth.',
+      focus: 'Travel to a new region (e.g., a city, a new sect) to encounter new opportunities.'
+    });
+
+    suggestions.push({
+      type: 'training',
+      confidence: 0.5,
+      reasoning: 'Consolidate gains after recent events.',
+      focus: 'Focus on cultivation, learning new techniques, or deep seclusion.'
+    });
+  }
+
+  // Sort by confidence
+  return suggestions.sort((a, b) => b.confidence - a.confidence).slice(0, 3);
 }

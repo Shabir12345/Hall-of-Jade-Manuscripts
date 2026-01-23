@@ -4,7 +4,7 @@
  */
 
 import React, { memo, useState, useMemo, useCallback } from 'react';
-import type { NovelState, Character, Chapter } from '../../types';
+import type { NovelState, Character } from '../../types';
 import { SkeletonList } from '../Skeleton';
 import { CharacterDetailPanel } from '../CharacterDetailPanel';
 import { RelationshipNetworkGraph } from '../RelationshipNetworkGraph';
@@ -58,7 +58,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
       const count = novel.chapters.filter(ch => {
         if (ch.content && textContainsCharacterName(ch.content, char.name)) return true;
         if (ch.summary && textContainsCharacterName(ch.summary, char.name)) return true;
-        if (ch.scenes?.some(scene => 
+        if (ch.scenes?.some(scene =>
           (scene.content && textContainsCharacterName(scene.content, char.name)) ||
           (scene.summary && textContainsCharacterName(scene.summary, char.name))
         )) return true;
@@ -79,14 +79,14 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
       filtered = filtered.filter(char => {
         // Basic fields
         if (char.name.toLowerCase().includes(query) ||
-            char.currentCultivation?.toLowerCase().includes(query) ||
-            char.age?.toLowerCase().includes(query) ||
-            char.personality?.toLowerCase().includes(query) ||
-            char.background?.toLowerCase().includes(query) ||
-            char.goals?.toLowerCase().includes(query)) {
+          char.currentCultivation?.toLowerCase().includes(query) ||
+          char.age?.toLowerCase().includes(query) ||
+          char.personality?.toLowerCase().includes(query) ||
+          char.background?.toLowerCase().includes(query) ||
+          char.goals?.toLowerCase().includes(query)) {
           return true;
         }
-        
+
         // Search in items
         if (char.itemPossessions) {
           const hasMatchingItem = char.itemPossessions.some(poss => {
@@ -95,7 +95,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
           });
           if (hasMatchingItem) return true;
         }
-        
+
         // Search in techniques
         if (char.techniqueMasteries) {
           const hasMatchingTechnique = char.techniqueMasteries.some(mast => {
@@ -104,17 +104,17 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
           });
           if (hasMatchingTechnique) return true;
         }
-        
+
         // Search in relationships
         if (char.relationships) {
           const hasMatchingRelationship = char.relationships.some(rel => {
             const target = novel.characterCodex.find(c => c.id === rel.characterId);
             return rel.type.toLowerCase().includes(query) ||
-                   target?.name.toLowerCase().includes(query);
+              target?.name.toLowerCase().includes(query);
           });
           if (hasMatchingRelationship) return true;
         }
-        
+
         return false;
       });
     }
@@ -236,7 +236,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
 
   if (isLoading) {
     return (
-      <div 
+      <div
         className="p-3 xs:p-4 md:p-5 lg:p-6 max-w-7xl mx-auto"
         style={{ paddingTop: 'max(3rem, calc(env(safe-area-inset-top, 1rem) + 2.5rem))' }}
       >
@@ -251,7 +251,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
 
   return (
     <>
-      <div 
+      <div
         className="p-3 xs:p-4 md:p-6 lg:p-8 max-w-7xl mx-auto"
         style={{ paddingTop: 'max(4rem, calc(env(safe-area-inset-top, 1rem) + 3.5rem))' }}
       >
@@ -264,11 +264,10 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
             <div className="flex items-center gap-1 bg-zinc-800/50 rounded-lg p-1 border border-zinc-700">
               <button
                 onClick={() => setViewMode('grid')}
-                className={`px-3 py-1.5 rounded text-xs font-semibold transition-all ${
-                  viewMode === 'grid'
-                    ? 'bg-amber-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
+                className={`px-3 py-1.5 rounded text-xs font-semibold transition-all ${viewMode === 'grid'
+                  ? 'bg-amber-600 text-white'
+                  : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
                 aria-label="Grid view"
                 title="Grid view"
               >
@@ -278,11 +277,10 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
               </button>
               <button
                 onClick={() => setViewMode('list')}
-                className={`px-3 py-1.5 rounded text-xs font-semibold transition-all ${
-                  viewMode === 'list'
-                    ? 'bg-amber-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
+                className={`px-3 py-1.5 rounded text-xs font-semibold transition-all ${viewMode === 'list'
+                  ? 'bg-amber-600 text-white'
+                  : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
                 aria-label="List view"
                 title="List view"
               >
@@ -292,11 +290,10 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
               </button>
               <button
                 onClick={() => setViewMode('network')}
-                className={`px-3 py-1.5 rounded text-xs font-semibold transition-all ${
-                  viewMode === 'network'
-                    ? 'bg-amber-600 text-white'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
+                className={`px-3 py-1.5 rounded text-xs font-semibold transition-all ${viewMode === 'network'
+                  ? 'bg-amber-600 text-white'
+                  : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
                 aria-label="Network view"
                 title="Relationship network view"
               >
@@ -305,7 +302,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
                 </svg>
               </button>
             </div>
-            
+
             {/* Export Button */}
             <button
               onClick={() => {
@@ -352,8 +349,8 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
             >
               Export
             </button>
-            
-            <button 
+
+            <button
               onClick={handleBackfillChapters}
               disabled={isBackfilling || !onUpdateNovel || novel.chapters.length === 0}
               className="bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-6 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 shadow-lg shadow-blue-900/20 hover:scale-105 whitespace-nowrap disabled:opacity-50"
@@ -362,7 +359,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
             >
               {isBackfilling ? 'Backfilling...' : 'Backfill Codex'}
             </button>
-            <button 
+            <button
               onClick={onAddCharacter}
               className="bg-amber-600 hover:bg-amber-500 px-6 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 shadow-lg shadow-amber-900/20 hover:scale-105 whitespace-nowrap"
               aria-label="Add new character"
@@ -519,8 +516,8 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
                   {/* Avatar */}
                   <div className="flex-shrink-0">
                     {char.portraitUrl ? (
-                      <img 
-                        src={char.portraitUrl} 
+                      <img
+                        src={char.portraitUrl}
                         alt={`${char.name} portrait`}
                         className="w-16 h-16 rounded-full object-cover border-2 border-amber-600/30"
                       />
@@ -530,7 +527,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
                       </div>
                     )}
                   </div>
-                  
+
                   {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -549,7 +546,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
                       <span>{appearanceCount} Chapters</span>
                     </div>
                   </div>
-                  
+
                   {/* Actions */}
                   <div className="flex gap-2">
                     <button
@@ -572,11 +569,7 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
               const appearanceCount = characterAppearances.get(char.id) || 0;
               const activeItems = (char.itemPossessions || []).filter(p => p.status === 'active').length;
               const activeTechniques = (char.techniqueMasteries || []).filter(m => m.status === 'active').length;
-              // #region agent log
-              if (char.name === 'ALEX' || char.name === 'MEI LIN' || char.name === 'ZHAO') {
-                fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CharactersView.tsx:567',message:'Character display data',data:{characterName:char.name,activeItems,activeTechniques,relationshipsCount:char.relationships?.length||0,appearanceCount,itemPossessionsCount:char.itemPossessions?.length||0,itemPossessionsRaw:char.itemPossessions,techniqueMasteriesCount:char.techniqueMasteries?.length||0,techniqueMasteriesRaw:char.techniqueMasteries},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-              }
-              // #endregion
+
 
               return (
                 <div
@@ -606,8 +599,8 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
                       )}
                       <div className="relative mb-3">
                         {char.portraitUrl ? (
-                          <img 
-                            src={char.portraitUrl} 
+                          <img
+                            src={char.portraitUrl}
                             alt={`${char.name} portrait`}
                             className="w-20 h-20 rounded-full object-cover border-2 border-amber-600/30 shadow-lg"
                           />
@@ -622,11 +615,10 @@ const CharactersViewComponent: React.FC<CharactersViewProps> = ({
                         <p className="text-xs text-zinc-400 mb-2 line-clamp-1">{char.currentCultivation}</p>
                       )}
                       <div className="flex gap-1 flex-wrap justify-center mt-2">
-                        <span className={`text-[10px] px-2 py-0.5 rounded border ${
-                          char.status === 'Alive' ? 'bg-emerald-950/40 text-emerald-400 border-emerald-900/40' :
+                        <span className={`text-[10px] px-2 py-0.5 rounded border ${char.status === 'Alive' ? 'bg-emerald-950/40 text-emerald-400 border-emerald-900/40' :
                           char.status === 'Deceased' ? 'bg-red-950/40 text-red-400 border-red-900/40' :
-                          'bg-zinc-800/40 text-zinc-500 border-zinc-700'
-                        }`}>
+                            'bg-zinc-800/40 text-zinc-500 border-zinc-700'
+                          }`}>
                           {char.status}
                         </span>
                       </div>

@@ -1,7 +1,7 @@
-import { NovelState, Chapter, Arc, ChapterQualityMetrics, NarrativeCraftScore, ChapterOriginalityScore } from '../types';
+import { NovelState, Chapter, ChapterQualityMetrics, NarrativeCraftScore, ChapterOriginalityScore } from '../types';
 import { analyzeForeshadowing, analyzeEmotionalPayoffs, analyzePacing } from './promptEngine/arcContextAnalyzer';
-import * as arcAnalyzerModule from './promptEngine/arcContextAnalyzer';
-import { getActiveAntagonists, getPrimaryAntagonist } from '../utils/antagonistHelpers';
+
+import { getActiveAntagonists } from '../utils/antagonistHelpers';
 import { generateUUID } from '../utils/uuid';
 import { extractAuthorialVoiceProfile } from './promptEngine/styleAnalyzer';
 import { analyzeOriginality, analyzeChapterOriginality } from './originalityDetector';
@@ -11,12 +11,7 @@ import { checkForForbiddenWords, checkForForbiddenStructures } from '../utils/ai
 import { verifyPerplexityThreshold } from './perplexityVerification';
 import { AI_DETECTION_CONFIG, QUALITY_CONFIG } from '../constants';
 
-// Cache for expensive analysis operations
-const analysisCache = new Map<string, {
-  timestamp: number;
-  data: unknown;
-}>();
-const CACHE_TTL = 60000; // 1 minute
+
 
 /**
  * Identifies core story elements that should NOT be flagged as "overused tropes"
@@ -96,7 +91,7 @@ export interface ChapterQualityCheck {
  */
 function checkNarrativeCraftReadiness(
   state: NovelState,
-  nextChapterNumber: number
+  _nextChapterNumber: number
 ): {
   isReady: boolean;
   issues: string[];
@@ -144,7 +139,7 @@ function checkNarrativeCraftReadiness(
  */
 export function checkOriginalityPreparation(
   state: NovelState,
-  nextChapterNumber: number
+  _nextChapterNumber: number
 ): {
   isReady: boolean;
   repetitivePatterns: string[];
@@ -255,7 +250,7 @@ export function checkOriginalityPreparation(
       'revelation scene',
     ];
 
-    const recentSummaries = recentChapters.map(ch => (ch.summary || ch.title).toLowerCase()).join(' ');
+    const recentSummaries = recentChapters.map(ch => (ch.summary || ch.title || '').toLowerCase()).join(' ');
     const detectedPatterns = scenePatterns.filter(pattern => {
       const count = (recentSummaries.match(new RegExp(pattern, 'gi')) || []).length;
       return count >= 2;
@@ -422,7 +417,7 @@ export function validateChapterGenerationQuality(
           idx <= 5 ? pacing.arcPositionPacing.middle.recommendedPacing :
             pacing.arcPositionPacing.late.recommendedPacing;
 
-      if (pacing.recommendations.length > 0) {
+      if (recommendedPacing && pacing.recommendations.length > 0) {
         suggestions.push(`Pacing: ${pacing.recommendations[0]}`);
         qualityScore -= 5;
       }
@@ -442,7 +437,7 @@ export function validateChapterGenerationQuality(
     if (state.chapters.length > 5) {
       const recentChapters = state.chapters.slice(-3);
       const dialogueCount = recentChapters.reduce((sum, ch) => {
-        const content = (ch.content + ' ' + (ch.summary || '')).toLowerCase();
+        const content = ((ch.content || '') + ' ' + (ch.summary || '')).toLowerCase();
         return sum + (content.match(/(said|asked|replied|shouted|whispered|spoke|exclaimed)/gi) || []).length;
       }, 0);
 
@@ -519,7 +514,8 @@ export async function validateGeneratedChapter(
   let qualityScore = 100;
 
   // Check 1: Word count minimum
-  const wordCount = chapter.content.split(/\s+/).filter(w => w.length > 0).length;
+  const content = chapter.content || '';
+  const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
   if (wordCount < 1500) {
     errors.push(`Chapter is ${wordCount} words, below minimum requirement of 1500 words.`);
     qualityScore -= 20;
@@ -529,7 +525,7 @@ export async function validateGeneratedChapter(
   }
 
   // Check 2: Paragraph structure
-  const paragraphs = chapter.content.split(/\n\n/).filter(p => p.trim().length > 0);
+  const paragraphs = content.split(/\n\n/).filter(p => p.trim().length > 0);
   if (paragraphs.length < 3) {
     errors.push(`Chapter has only ${paragraphs.length} paragraphs. Minimum 3 paragraphs required.`);
     qualityScore -= 15;
@@ -571,17 +567,17 @@ export async function validateGeneratedChapter(
   // Check 6: Foreshadowing presence (should have at least some in most chapters)
   const foreshadowingKeywords = ['mystery', 'secret', 'prophecy', 'hint', 'seemed', 'felt', 'appeared', 'strange', 'ancient', 'mysterious'];
   const hasForeshadowing = foreshadowingKeywords.some(kw =>
-    chapter.content.toLowerCase().includes(kw) ||
+    content.toLowerCase().includes(kw) ||
     (chapter.summary && chapter.summary.toLowerCase().includes(kw))
   );
 
-  if (!hasForeshadowing && state.chapters.length > 3) {
+  if (!hasForeshadowing && state?.chapters && state.chapters.length > 3) {
     suggestions.push('Chapter may benefit from subtle foreshadowing elements.');
     qualityScore -= 3;
   }
 
   // Check 7: Dialogue presence (most chapters should have dialogue)
-  const hasDialogue = chapter.content.includes('"') || chapter.content.includes("'") || chapter.content.includes('"');
+  const hasDialogue = content.includes('"') || content.includes("'") || content.includes('"');
   if (!hasDialogue && wordCount > 2000) {
     suggestions.push('Long chapter without dialogue. Consider adding dialogue with subtext for character development.');
     qualityScore -= 3;
@@ -650,15 +646,15 @@ export async function validateGeneratedChapter(
   }
 
   // Check 9: Continuity with previous chapter (CRITICAL) - Enhanced with transition validator
-  let transitionQualityScore: number | undefined = undefined;
-  if (state.chapters.length > 0) {
+
+  if (state.chapters && state.chapters.length > 0) {
     const previousChapter = state.chapters[state.chapters.length - 1];
     if (previousChapter && previousChapter.number === chapter.number - 1) {
       // Use comprehensive transition validator
       try {
         const { validateChapterTransition } = await import('./chapterTransitionValidator');
         const transitionValidation = validateChapterTransition(previousChapter, chapter);
-        transitionQualityScore = transitionValidation.score;
+
 
         // Add transition issues to warnings/errors
         // Reduced penalties to be less harsh - transition issues are important but shouldn't dominate scoring
@@ -701,7 +697,7 @@ export async function validateGeneratedChapter(
       } catch (error) {
         console.warn('[Chapter Quality] Failed to run transition validator, using fallback checks:', error);
         // Fallback to original checks if validator fails
-        const chapterStart = chapter.content.substring(0, 300).toLowerCase();
+        const chapterStart = content.substring(0, 300).toLowerCase();
         const timeSkipPatterns = [
           /(later|after|hours?|days?|weeks?|months?|years?|the next|the following|eventually|meanwhile)/i,
           /(some time|a while|much|long) (later|after|passed|went by)/i
@@ -719,8 +715,8 @@ export async function validateGeneratedChapter(
 
   // Check 10: Subtext in dialogue (if dialogue exists)
   if (hasDialogue) {
-    const questionCount = (chapter.content.match(/\?/g) || []).length;
-    const dialogueTagCount = (chapter.content.match(/(said|asked|replied|whispered|shouted|spoke|exclaimed)/gi) || []).length;
+    const questionCount = (content.match(/\?/g) || []).length;
+    const dialogueTagCount = (content.match(/(said|asked|replied|whispered|shouted|spoke|exclaimed)/gi) || []).length;
 
     if (dialogueTagCount > 5 && questionCount < 2) {
       suggestions.push('Dialogue may lack subtext. Consider adding questions or indirect speech that implies hidden meaning.');
@@ -734,7 +730,7 @@ export async function validateGeneratedChapter(
     const activeAntagonists = getActiveAntagonists(antagonists);
     const hasAntagonistMention = activeAntagonists.some(ant => {
       const nameLower = ant.name.toLowerCase();
-      return chapter.content.toLowerCase().includes(nameLower) ||
+      return content.toLowerCase().includes(nameLower) ||
         (chapter.summary && chapter.summary.toLowerCase().includes(nameLower));
     });
 
@@ -742,7 +738,7 @@ export async function validateGeneratedChapter(
       suggestions.push('Long chapter without antagonist presence. Consider featuring an active antagonist to maintain conflict.');
       qualityScore -= 3;
     }
-  } else if (state.chapters.length > 5) {
+  } else if (state?.chapters && state.chapters.length > 5) {
     suggestions.push('No antagonists in story. Consider introducing opposition to create narrative tension.');
     qualityScore -= 5;
   }
@@ -752,7 +748,7 @@ export async function validateGeneratedChapter(
   const activeThreads = threads.filter(t => t.status === 'active');
 
   if (activeThreads.length > 0) {
-    const chapterContent = (chapter.content + ' ' + (chapter.summary || '')).toLowerCase();
+    const chapterContent = (content + ' ' + (chapter.summary || '')).toLowerCase();
 
     // Check if any thread was referenced or progressed in this chapter
     const referencedThreads = activeThreads.filter(thread => {
@@ -947,7 +943,7 @@ function validateOriginality(chapter: Chapter, state: NovelState): {
 /**
  * Validates voice consistency for a generated chapter
  */
-function validateVoiceConsistency(chapter: Chapter, state: NovelState, voiceProfile: ReturnType<typeof extractAuthorialVoiceProfile>): {
+function validateVoiceConsistency(chapter: Chapter, _state: NovelState, voiceProfile: ReturnType<typeof extractAuthorialVoiceProfile>): {
   score: number;
   sentenceComplexityMatch: number;
   toneConsistency: number;
@@ -1076,7 +1072,7 @@ function validateVoiceConsistency(chapter: Chapter, state: NovelState, voiceProf
 /**
  * Validates editorial quality
  */
-function validateEditorialQuality(chapter: Chapter, state: NovelState): {
+function validateEditorialQuality(chapter: Chapter, _state: NovelState): {
   readability: number;
   flow: number;
   emotionalAuthenticity: number;
@@ -1289,7 +1285,7 @@ export async function validateChapterQuality(
   ]).catch(async (error) => {
     console.error('[Quality Validator] Validation failed or timed out:', error);
     // Return safe defaults on timeout or failure
-    return await getDefaultQualityMetrics(chapter, state, error instanceof Error ? error.message : 'Validation failed');
+    return await getDefaultQualityMetrics(chapter, state);
   });
 }
 
@@ -1344,7 +1340,7 @@ async function validateChapterQualityInternal(
     );
 
     const voiceProfile = withTimeout(
-      () => extractAuthorialVoiceProfile(state.chapters, state),
+      () => extractAuthorialVoiceProfile(state?.chapters || [], state),
       8000,
       null, // extractAuthorialVoiceProfile returns AuthorialVoiceProfile | null
       'extractAuthorialVoiceProfile'
@@ -1382,8 +1378,8 @@ async function validateChapterQualityInternal(
     const blacklistViolations = AI_DETECTION_CONFIG.blacklist.enforcePostProcess
       ? withTimeout(
         () => [
-          ...checkForForbiddenWords(chapter.content),
-          ...checkForForbiddenStructures(chapter.content),
+          ...checkForForbiddenWords(chapter.content || ''),
+          ...checkForForbiddenStructures(chapter.content || ''),
         ],
         5000,
         [],
@@ -1394,7 +1390,7 @@ async function validateChapterQualityInternal(
     const perplexityResult = AI_DETECTION_CONFIG.perplexity.enabled
       ? withTimeout(
         () => verifyPerplexityThreshold(
-          chapter.content,
+          chapter.content || '',
           AI_DETECTION_CONFIG.perplexity.threshold,
           { checkParagraphs: AI_DETECTION_CONFIG.perplexity.checkParagraphs }
         ),
@@ -1410,7 +1406,7 @@ async function validateChapterQualityInternal(
 
     // N-gram analysis with timeout protection
     let ngramScore = 100;
-    let ngramViolations: string[] = [];
+
     if (AI_DETECTION_CONFIG.nGramControl?.enabled) {
       try {
         const result = await withAsyncTimeout(
@@ -1423,10 +1419,10 @@ async function validateChapterQualityInternal(
           'nGramAnalysis'
         );
         ngramScore = result.overallScore;
-        if (result.trigramScore < AI_DETECTION_CONFIG.nGramControl.minTrigramScore ||
-          result.fourgramScore < AI_DETECTION_CONFIG.nGramControl.minFourgramScore) {
-          ngramViolations = result.recommendations;
-        }
+        // if (result.trigramScore < AI_DETECTION_CONFIG.nGramControl.minTrigramScore ||
+        //   result.fourgramScore < AI_DETECTION_CONFIG.nGramControl.minFourgramScore) {
+        //   ngramViolations = result.recommendations;
+        // }
       } catch (error) {
         console.warn('[Quality Validator] N-gram analysis failed:', error);
       }
@@ -1434,7 +1430,7 @@ async function validateChapterQualityInternal(
 
     // Lexical balance analysis with timeout protection
     let lexicalBalanceScore = 100;
-    let lexicalViolations: string[] = [];
+
     if (AI_DETECTION_CONFIG.lexicalBalance?.enabled) {
       try {
         const result = await withAsyncTimeout(
@@ -1447,9 +1443,9 @@ async function validateChapterQualityInternal(
           'lexicalBalanceAnalysis'
         );
         lexicalBalanceScore = result.balanceScore;
-        if (result.balanceScore < AI_DETECTION_CONFIG.lexicalBalance.minBalanceScore) {
-          lexicalViolations = result.recommendations;
-        }
+        // if (result.balanceScore < AI_DETECTION_CONFIG.lexicalBalance.minBalanceScore) {
+        //   lexicalViolations = result.recommendations;
+        // }
       } catch (error) {
         console.warn('[Quality Validator] Lexical balance analysis failed:', error);
       }
@@ -1530,7 +1526,7 @@ async function validateChapterQualityInternal(
 
     // Calculate transition quality score (if there's a previous chapter)
     let transitionQualityScore: number | undefined = undefined;
-    if (state.chapters.length > 0) {
+    if (state?.chapters && state.chapters.length > 0) {
       const previousChapter = state.chapters[state.chapters.length - 1];
       if (previousChapter && previousChapter.number === chapter.number - 1) {
         try {
@@ -1630,11 +1626,11 @@ async function validateChapterQualityInternal(
     return metrics;
   } catch (error) {
     console.error('Error validating chapter quality:', error);
-    return await getDefaultQualityMetrics(chapter, state, error instanceof Error ? error.message : 'Unknown error');
+    return await getDefaultQualityMetrics(chapter, state);
   }
 }
 
-async function getDefaultQualityMetrics(chapter: Chapter, state: NovelState, errorMessage: string): Promise<ChapterQualityMetrics> {
+async function getDefaultQualityMetrics(chapter: Chapter, state: NovelState): Promise<ChapterQualityMetrics> {
   // Return safe defaults
   let qualityCheck;
   try {

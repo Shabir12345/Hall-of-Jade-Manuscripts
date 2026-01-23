@@ -89,20 +89,21 @@ Score 1-10 where 10 = perfectly humble and cold, 1 = arrogant or overly emotiona
   show_dont_tell: {
     id: 'show_dont_tell',
     name: 'Show, Don\'t Tell',
-    description: 'Demonstrates emotions and situations through action, dialogue, and sensory detail rather than stating them directly.',
-    weight: 8,
+    description: 'Demonstrates emotions and situations through action, dialogue, and sensory detail rather than stating them directly. Actively avoids overexplanation.',
+    weight: 9, // Increased weight
     category: 'narrative',
-    evaluationPrompt: `Evaluate "show don't tell" quality:
+    evaluationPrompt: `Evaluate "show don't tell" and "overexplanation":
 - Are emotions shown through physical reactions, dialogue, and actions?
 - Are character traits demonstrated through behavior rather than stated?
-- Are settings conveyed through sensory details rather than labels?
-- Does the text avoid phrases like "He felt angry" or "She was beautiful"?
+- Does the text avoid "tell-then-show" patterns (explaining an emotion then demonstrating it)?
+- CRITICAL: Detect overexplanation. Does the text use redundant explanatory phrases like "in other words," "to clarify," or "because [obvious emotion]"?
+- Does the trust the reader to infer meaning without explicit hand-holding?
 
-Score 1-10 where 10 = masterful showing throughout, 1 = constant telling with no showing.`,
+Score 1-10 where 10 = masterful showing with ZERO overexplanation, 1 = constant telling and redundant explanations.`,
     examples: [
       {
         good: 'His jaw clenched. The teacup in his hand cracked, hot liquid spilling over white knuckles.',
-        bad: 'He was very angry. He felt rage building inside him.',
+        bad: 'He was very angry, because he felt his power was being challenged. His jaw clenched to show his rage.',
       },
     ],
   },
@@ -131,17 +132,18 @@ Score 1-10 where 10 = completely natural and distinctive, 1 = stilted and roboti
 
   sentence_variety: {
     id: 'sentence_variety',
-    name: 'Sentence Variety',
-    description: 'Uses varied sentence lengths and structures to create rhythm and prevent monotony.',
-    weight: 6,
+    name: 'Sentence Variety & Burstiness',
+    description: 'Uses varied sentence lengths and structures to create rhythm and prevent AI-style monotony (burstiness).',
+    weight: 8, // Increased weight
     category: 'style',
-    evaluationPrompt: `Evaluate sentence variety:
-- Is there a good mix of short, medium, and long sentences?
-- Do sentence openings vary (not always starting with "He" or "The")?
+    evaluationPrompt: `Evaluate sentence variety and "burstiness":
+- Is there a dramatic mix of very short (3-5 words) and long (25-30+ words) sentences?
+- Does the text avoid sequences of 3+ sentences with similar word counts (rhythmic ruts)?
 - Are there occasional fragments for emphasis?
 - Does the rhythm match the content (fast sentences for action, longer for reflection)?
+- CRITICAL: If more than 3 paragraphs have uniform sentence lengths, the score must be below 6.
 
-Score 1-10 where 10 = excellent variety creating strong rhythm, 1 = monotonous same-length sentences.`,
+Score 1-10 where 10 = excellent burstiness and strong rhythm, 1 = monotonous, robotic AI sentence patterns.`,
     examples: [
       {
         good: 'He struck. The blade sang. Three moves—each precise, each deadly. His opponent never saw the fourth coming, a sweeping arc that ended everything in silence.',

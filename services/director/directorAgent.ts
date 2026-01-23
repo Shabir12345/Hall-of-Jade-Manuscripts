@@ -15,7 +15,7 @@
  * - Pacing inconsistencies
  */
 
-import { NovelState, Arc, Chapter, StoryThread } from '../../types';
+import { NovelState, Arc, Chapter, StoryThread, ChapterGenerationReport } from '../../types';
 import {
   DirectorBeatSheet,
   DirectorConfig,
@@ -27,7 +27,6 @@ import {
   ClimaxProtection,
   ArcPositionAnalysis,
   DEFAULT_DIRECTOR_CONFIG,
-  DEFAULT_XIANXIA_PACING_RULES,
 } from '../../types/director';
 import { deepseekJson } from '../deepseekService';
 import { logger } from '../loggingService';
@@ -41,6 +40,7 @@ import { formatRecoveredThreadsForPrompt } from '../../hooks/useNarrativeForensi
 export async function runDirectorAgent(
   state: NovelState,
   userInstruction?: string,
+  warningReport?: ChapterGenerationReport,
   config: Partial<DirectorConfig> = {}
 ): Promise<DirectorResult> {
   const startTime = Date.now();
@@ -57,7 +57,7 @@ export async function runDirectorAgent(
   }
 
   const nextChapterNumber = state.chapters.length + 1;
-  
+
   logger.info(`Running Director for Chapter ${nextChapterNumber}`, 'director', {
     chapterNumber: nextChapterNumber,
     useReasonerMode: finalConfig.useReasonerMode,
@@ -103,6 +103,7 @@ export async function runDirectorAgent(
       userInstruction,
       config: finalConfig,
       recoveredThreadsPrompt,
+      warningReport,
     });
 
     // Call DeepSeek
@@ -121,11 +122,12 @@ export async function runDirectorAgent(
       arcPosition,
       nextChapterNumber,
       activeThreads,
-      finalConfig
+      finalConfig,
+      warningReport
     );
 
     const durationMs = Date.now() - startTime;
-    
+
     logger.info(`Director completed beat sheet in ${durationMs}ms`, 'director', {
       chapterNumber: nextChapterNumber,
       beatCount: beatSheet.beats.length,
@@ -215,7 +217,8 @@ function processDirectorResponse(
   arcPosition: ArcPositionAnalysis,
   chapterNumber: number,
   activeThreads: StoryThread[],
-  config: DirectorConfig
+  config: DirectorConfig,
+  warningReport?: ChapterGenerationReport
 ): DirectorBeatSheet {
   // Process beats
   const beats: MicroBeat[] = (raw.beats || []).map((beat, index) => ({
@@ -257,16 +260,24 @@ function processDirectorResponse(
 
   // Process climax protection
   let climaxProtection: ClimaxProtection | undefined;
-  if (raw.climaxProtection?.isClimaxProximate || arcPosition.arcPhase === 'climax_approach') {
+
+  // SMARTER CLIMAX PROTECTION: 
+  // If we have critical resolution urgency, we MUST allow some resolutions even in climax approach
+  const hasResolutionUrgency = warningReport?.blockers.some(b => b.category === 'resolution_urgency') ||
+    warningReport?.warnings.some(w => w.category === 'resolution_urgency' && (w.severity === 'high' || w.severity === 'critical'));
+
+  if (raw.climaxProtection?.isClimaxProximate || (arcPosition.arcPhase === 'climax_approach' && !hasResolutionUrgency)) {
     climaxProtection = {
       isClimaxProximate: true,
-      protectedThreadIds: raw.climaxProtection?.protectedThreads || 
+      protectedThreadIds: raw.climaxProtection?.protectedThreads ||
         activeThreads.filter(t => t.priority === 'critical').map(t => t.id),
       protectedConflicts: raw.climaxProtection?.protectedConflicts || [],
-      minimumChaptersUntilResolution: raw.climaxProtection?.minimumChaptersUntilResolution || 
+      minimumChaptersUntilResolution: raw.climaxProtection?.minimumChaptersUntilResolution ||
         Math.max(1, Math.ceil((100 - arcPosition.progressPercent) / 100 * arcPosition.targetChapters)),
-      warningMessage: raw.climaxProtection?.warningMessage || 
-        'CLIMAX PROTECTION: Do not resolve major conflicts prematurely. Build tension toward the arc climax.',
+      warningMessage: raw.climaxProtection?.warningMessage ||
+        (hasResolutionUrgency
+          ? 'URGENT RESOLUTION NEEDED: Some threads require resolution despite climax approach. Adjust pacing to accommodate.'
+          : 'CLIMAX PROTECTION: Do not resolve major conflicts prematurely. Build tension toward the arc climax.'),
     };
   }
 
@@ -380,13 +391,13 @@ function normalizeBeatType(type: string | undefined): MicroBeatType {
     'setup', 'tension', 'release', 'cliffhanger', 'revelation',
     'action', 'reflection', 'escalation', 'breakthrough', 'setback', 'foreshadow'
   ];
-  
+
   const normalized = (type || '').toLowerCase().replace(/[^a-z]/g, '_');
-  
+
   if (validTypes.includes(normalized as MicroBeatType)) {
     return normalized as MicroBeatType;
   }
-  
+
   // Map common variations
   if (normalized.includes('fight') || normalized.includes('combat') || normalized.includes('battle')) {
     return 'action';
@@ -406,7 +417,7 @@ function normalizeBeatType(type: string | undefined): MicroBeatType {
   if (normalized.includes('break') || normalized.includes('advanc') || normalized.includes('level')) {
     return 'breakthrough';
   }
-  
+
   return 'action'; // Default fallback
 }
 
@@ -415,26 +426,26 @@ function normalizeBeatType(type: string | undefined): MicroBeatType {
  */
 function normalizeEmotionalTone(tone: string | undefined): MicroBeat['emotionalTone'] | undefined {
   if (!tone) return undefined;
-  
+
   const validTones: NonNullable<MicroBeat['emotionalTone']>[] = [
     'tense', 'hopeful', 'desperate', 'triumphant', 'melancholic', 'mysterious', 'comedic'
   ];
-  
+
   const normalized = tone.toLowerCase();
-  
+
   for (const validTone of validTones) {
     if (normalized.includes(validTone)) {
       return validTone;
     }
   }
-  
+
   // Map variations
   if (normalized.includes('anxi') || normalized.includes('suspense')) return 'tense';
   if (normalized.includes('sad') || normalized.includes('grief')) return 'melancholic';
   if (normalized.includes('win') || normalized.includes('victory')) return 'triumphant';
   if (normalized.includes('fun') || normalized.includes('humor')) return 'comedic';
   if (normalized.includes('dark') || normalized.includes('grim')) return 'desperate';
-  
+
   return undefined;
 }
 
@@ -443,15 +454,15 @@ function normalizeEmotionalTone(tone: string | undefined): MicroBeat['emotionalT
  */
 function normalizePace(pace: string | undefined): PacingGuidance['overallPace'] {
   if (!pace) return 'moderate';
-  
+
   const normalized = pace.toLowerCase();
-  
+
   if (normalized.includes('slow')) return 'slow';
   if (normalized.includes('fast')) return 'fast';
   if (normalized.includes('breakneck') || normalized.includes('rapid') || normalized.includes('intense')) {
     return 'breakneck';
   }
-  
+
   return 'moderate';
 }
 
@@ -460,12 +471,12 @@ function normalizePace(pace: string | undefined): PacingGuidance['overallPace'] 
  */
 export function formatBeatSheetForPrompt(beatSheet: DirectorBeatSheet): string {
   const lines: string[] = [];
-  
+
   lines.push('=== DIRECTOR BEAT SHEET ===');
   lines.push(`Arc: ${beatSheet.arcTitle} (${beatSheet.arcProgressPercent.toFixed(0)}% complete)`);
   lines.push(`Phase: ${beatSheet.arcPosition.arcPhase.replace(/_/g, ' ').toUpperCase()}`);
   lines.push('');
-  
+
   lines.push('REQUIRED BEATS FOR THIS CHAPTER:');
   for (const beat of beatSheet.beats) {
     const mandatory = beat.mandatory ? '[REQUIRED]' : '[OPTIONAL]';
@@ -475,7 +486,7 @@ export function formatBeatSheetForPrompt(beatSheet: DirectorBeatSheet): string {
     lines.push(`   ${beat.description}`);
   }
   lines.push('');
-  
+
   lines.push('PACING GUIDANCE:');
   lines.push(`- Overall Pace: ${beatSheet.pacingGuidance.overallPace.toUpperCase()}`);
   lines.push(`- Target Word Count: ${beatSheet.pacingGuidance.targetWordCount} words (min: ${beatSheet.pacingGuidance.minimumWordCount}, max: ${beatSheet.pacingGuidance.maximumWordCount})`);
@@ -487,7 +498,7 @@ export function formatBeatSheetForPrompt(beatSheet: DirectorBeatSheet): string {
     lines.push(`- ${note}`);
   }
   lines.push('');
-  
+
   if (beatSheet.climaxProtection?.isClimaxProximate) {
     lines.push('⚠️ CLIMAX PROTECTION ACTIVE:');
     lines.push(beatSheet.climaxProtection.warningMessage);
@@ -497,14 +508,14 @@ export function formatBeatSheetForPrompt(beatSheet: DirectorBeatSheet): string {
     lines.push(`Minimum ${beatSheet.climaxProtection.minimumChaptersUntilResolution} chapters until major resolutions allowed.`);
     lines.push('');
   }
-  
+
   if (beatSheet.warnings.length > 0) {
     lines.push('DIRECTOR WARNINGS:');
     for (const warning of beatSheet.warnings) {
       lines.push(`- ${warning}`);
     }
   }
-  
+
   return lines.join('\n');
 }
 
@@ -513,13 +524,13 @@ export function formatBeatSheetForPrompt(beatSheet: DirectorBeatSheet): string {
  */
 export function shouldRunDirector(state: NovelState, config: Partial<DirectorConfig> = {}): boolean {
   const finalConfig = { ...DEFAULT_DIRECTOR_CONFIG, ...config };
-  
+
   if (!finalConfig.enabled) {
     return false;
   }
-  
+
   // Always run if we have an active arc
   const hasActiveArc = state.plotLedger.some(a => a.status === 'active');
-  
+
   return hasActiveArc;
 }

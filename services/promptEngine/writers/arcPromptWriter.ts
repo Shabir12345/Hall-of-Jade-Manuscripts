@@ -2,9 +2,9 @@ import { NovelState, BuiltPrompt } from '../../../types';
 import { buildPrompt } from '../promptBuilder';
 import { SYSTEM_INSTRUCTION } from '../../../constants';
 import { gatherPromptContext } from '../contextGatherer';
-import { 
-  analyzeAllArcContexts, 
-  analyzeCharacterArcJourneys, 
+import {
+  analyzeAllArcContexts,
+  analyzeCharacterArcJourneys,
   analyzeArcProgression,
   formatArcContextForPrompt,
   analyzeArcTransitions,
@@ -13,7 +13,8 @@ import {
   analyzeEmotionalArcs,
   analyzeThemesAndMotifs,
   calculateSmartArcTargetChapters,
-  detectArcType
+  detectArcType,
+  detectSuggestedArchetypes
 } from '../arcContextAnalyzer';
 import { getGrandSagaCharacters, getAllGrandSagaCharacterNames } from '../../grandSagaAnalyzer';
 
@@ -45,7 +46,7 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
 
   // Calculate suggested target chapters based on complexity
   const suggestedTargetChapters = calculateSmartArcTargetChapters(state, context.arcContext);
-  
+
   // Detect arc type for better context
   const arcType = detectArcType(state, context.arcContext);
 
@@ -64,7 +65,7 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
   let arcContextSection = '';
   if (context.arcContext && completedArcs.length > 0) {
     arcContextSection = formatArcContextForPrompt(context.arcContext.arcSummaries);
-    
+
     // Add character arc journeys
     if (context.arcContext.characterArcJourneys.length > 0) {
       arcContextSection += '\n\n[CHARACTER ARC JOURNEYS]\n';
@@ -75,7 +76,7 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
 
     // Add progression analysis
     const progression = context.arcContext.progressionAnalysis;
-    
+
     arcContextSection += '\n\n[NARRATIVE MOMENTUM ANALYSIS]\n';
     arcContextSection += `Detected Arc Type: ${arcType.charAt(0).toUpperCase() + arcType.slice(1)} Arc\n`;
     arcContextSection += `Arc Type Description: ${arcTypeDescriptions[arcType]}\n`;
@@ -230,12 +231,12 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
   const grandSagaData = getAllGrandSagaCharacterNames(state);
   const grandSagaCharacters = grandSagaData.inCodex;
   const grandSagaExtracted = grandSagaData.notInCodex;
-  
+
   // Build Grand Saga characters section
   let grandSagaCharactersSection = '';
   if (state.grandSaga && state.grandSaga.trim().length > 0) {
     grandSagaCharactersSection = '\n[CHARACTERS FROM GRAND SAGA]\n';
-    
+
     if (grandSagaCharacters.length > 0) {
       grandSagaCharactersSection += 'Characters mentioned in Grand Saga (already in character codex):\n';
       grandSagaCharacters.forEach(char => {
@@ -246,7 +247,7 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
         grandSagaCharactersSection += '\n';
       });
     }
-    
+
     if (grandSagaExtracted.length > 0) {
       grandSagaCharactersSection += '\nPotential characters mentioned in Grand Saga (not yet in character codex):\n';
       grandSagaExtracted.forEach(extracted => {
@@ -257,11 +258,11 @@ export async function buildArcPrompt(state: NovelState): Promise<BuiltPrompt> {
         grandSagaCharactersSection += '\n';
       });
     }
-    
+
     if (grandSagaCharacters.length === 0 && grandSagaExtracted.length === 0) {
       grandSagaCharactersSection += 'No specific character names detected in Grand Saga. Focus on the themes and narrative direction.\n';
     }
-    
+
     grandSagaCharactersSection += '\nCRITICAL: The arc MUST feature and develop characters mentioned in the Grand Saga. ';
     grandSagaCharactersSection += 'If characters are mentioned in the Grand Saga, they should play significant roles in this arc.\n';
   }
@@ -391,20 +392,20 @@ function determineComprehensiveArcNeeds(
     // First arc - emphasize Grand Saga and its characters
     const needs: string[] = [];
     needs.push('ARC NEEDS: This is the beginning of the story. Plan the opening arc that establishes the protagonist, world, initial conflict, and sets up the Grand Saga.');
-    
+
     // Extract and list Grand Saga characters
     if (state.grandSaga && state.grandSaga.trim().length > 0) {
       const grandSagaData = getAllGrandSagaCharacterNames(state);
       const grandSagaChars = grandSagaData.inCodex;
       const extractedNames = grandSagaData.notInCodex;
-      
+
       needs.push('\nGRAND SAGA CONTEXT:');
       needs.push(`Full Grand Saga: "${state.grandSaga}"`);
-      
+
       if (grandSagaChars.length > 0 || extractedNames.length > 0) {
         needs.push('\nCHARACTERS TO FEATURE FROM GRAND SAGA:');
         needs.push('This opening arc MUST introduce and establish the characters mentioned in the Grand Saga.');
-        
+
         if (grandSagaChars.length > 0) {
           needs.push('\nCharacters from Grand Saga (already in character codex):');
           grandSagaChars.forEach(char => {
@@ -417,7 +418,7 @@ function determineComprehensiveArcNeeds(
             }
           });
         }
-        
+
         if (extractedNames.length > 0) {
           needs.push('\nPotential characters mentioned in Grand Saga (should be introduced in this arc):');
           extractedNames.forEach(extracted => {
@@ -425,7 +426,7 @@ function determineComprehensiveArcNeeds(
           });
           needs.push('NOTE: These characters should be introduced and established in this opening arc.');
         }
-        
+
         needs.push('\nCRITICAL REQUIREMENTS FOR OPENING ARC:');
         needs.push('1. The arc MUST introduce and establish ALL characters mentioned in the Grand Saga');
         needs.push('2. The arc MUST set up the Grand Saga narrative and its key themes');
@@ -438,12 +439,12 @@ function determineComprehensiveArcNeeds(
     } else {
       needs.push('\nNOTE: No Grand Saga defined yet. Focus on establishing the protagonist, world, and initial conflict.');
     }
-    
+
     return needs.join('\n');
   }
 
   let needs: string[] = [];
-  
+
   // Add arc type context
   const arcTypeDescriptions: Record<ReturnType<typeof detectArcType>, string> = {
     'opening': 'Focus: Extensive world-building, character introduction, establishing initial conflict and Grand Saga setup. Needs more chapters (12-18) for proper establishment.',
@@ -454,18 +455,18 @@ function determineComprehensiveArcNeeds(
     'interlude': 'Focus: Brief respite, character moments, world-building moments. Shorter format (5-8 chapters).',
     'transition': 'Focus: Bridging between major arcs, resolving some threads while setting up new conflicts.'
   };
-  
+
   needs.push(`\nARC TYPE: ${arcType.charAt(0).toUpperCase() + arcType.slice(1)} Arc`);
   needs.push(arcTypeDescriptions[arcType]);
-  
+
   // Add story position context
   const totalChapters = state.chapters.length;
-  const estimatedStoryLength = totalChapters > 20 
+  const estimatedStoryLength = totalChapters > 20
     ? Math.max(60, totalChapters * 2)
     : 60;
   const storyPosition = Math.round((totalChapters / estimatedStoryLength) * 100);
   needs.push(`\nSTORY POSITION: Approximately ${storyPosition}% through estimated story length.`);
-  
+
   if (storyPosition < 30) {
     needs.push('Early story - Focus on world-building, character introduction, and establishing foundational conflicts.');
   } else if (storyPosition < 70) {
@@ -476,11 +477,36 @@ function determineComprehensiveArcNeeds(
     needs.push('Final story - Resolving remaining threads and providing satisfying conclusion.');
   }
 
+  // SUGGESTED NARRATIVE ARCHETYPES
+  if (context.arcContext) {
+    const archetypes = detectSuggestedArchetypes(state, context.arcContext);
+    if (archetypes.length > 0) {
+      needs.push('\n[SUGGESTED NARRATIVE ARCHETYPES]');
+      needs.push('Based on the current story state, unresolved threads, and plot rhythm, consider these archetypes:');
+      archetypes.forEach(arch => {
+        needs.push(`\n• **${arch.type.toUpperCase().replace('_', ' ')}** (Confidence: ${Math.round(arch.confidence * 100)}%)`);
+        needs.push(`  Why: ${arch.reasoning}`);
+        needs.push(`  Focus: ${arch.focus}`);
+      });
+      needs.push('\nYou are NOT required to choose one of these transparency, but if one fits naturally, it will likely improve narrative variety.');
+    }
+  }
+
+  // STORY BRIDGE CONTEXT (Connecting recent events to new arc)
+  const lastTenChapters = state.chapters.slice(-10);
+  if (lastTenChapters.length > 0) {
+    needs.push('\n[STORY BRIDGE CONTEXT - RECENT EVENTS]');
+    needs.push('The new arc must follow logically from these recent events (Law of Causality):');
+    lastTenChapters.forEach(ch => {
+      needs.push(`  Ch ${ch.number}: ${ch.summary || ch.title}`);
+    });
+  }
+
   // Handle active arc situation
   if (activeArc) {
     needs.push(`CURRENT STATUS: There is an active arc "${activeArc.title}" in progress.`);
     needs.push(`Plan the next arc that will follow after this arc completes, considering how the current arc will likely resolve.`);
-    
+
     if (activeArc.checklist) {
       const incompleteItems = activeArc.checklist.filter(item => !item.completed);
       if (incompleteItems.length > 0) {
@@ -494,12 +520,12 @@ function determineComprehensiveArcNeeds(
   // Analyze previous arc context
   if (context.arcContext && context.arcContext.arcSummaries.length > 0) {
     const recentArcs = context.arcContext.arcSummaries.filter(s => s.tier === 'recent');
-    
+
     if (recentArcs.length > 0) {
       const mostRecent = recentArcs[recentArcs.length - 1];
       needs.push(`\nMOST RECENT ARC CONTEXT: "${mostRecent.title}"`);
       needs.push(`Tension Pattern: Started at ${mostRecent.tensionCurve.startLevel}, ended at ${mostRecent.tensionCurve.endLevel}`);
-      
+
       if (mostRecent.unresolvedElements.length > 0) {
         needs.push(`CRITICAL: The previous arc left ${mostRecent.unresolvedElements.length} unresolved elements that should be addressed:`);
         // Extract just the element text (remove priority labels for display)
@@ -511,9 +537,9 @@ function determineComprehensiveArcNeeds(
           needs.push(`  - ${elem}`);
         });
         needs.push(`The new arc should either resolve these elements or meaningfully advance them.`);
-        
+
         // Count high priority elements
-        const highPriorityCount = mostRecent.unresolvedElements.filter(e => 
+        const highPriorityCount = mostRecent.unresolvedElements.filter(e =>
           e.includes('[HIGH PRIORITY]')
         ).length;
         if (highPriorityCount > 0) {
@@ -531,7 +557,7 @@ function determineComprehensiveArcNeeds(
       const mainCharacters = context.arcContext.characterArcJourneys
         .filter(j => j.arcJourneys.length > 0)
         .slice(0, 3);
-      
+
       mainCharacters.forEach(journey => {
         const recentJourney = journey.arcJourneys[journey.arcJourneys.length - 1];
         if (recentJourney && recentJourney.keyChanges.length > 0) {

@@ -78,6 +78,7 @@ import { OnboardingTour } from './components/OnboardingTour';
 import { getTourById, MAIN_ONBOARDING_TOUR } from './utils/onboardingTours';
 import { AUTHENTICATION_ENABLED } from './config/supabase';
 import LoomExcavator from './components/LoomExcavatorFull';
+import { getFaceGraphConfig, extractKarmaFromChapter } from './services/faceGraph';
 
 // Helper to safely convert any value to a string
 function safeToString(value: unknown): string {
@@ -1308,7 +1309,8 @@ const App: React.FC = () => {
                     significance: loomUpdate.loomStatus === 'CLOSED' ? 'major' : 'minor' as any
                   }
                 ],
-                updatedAt: Date.now()
+                updatedAt: Date.now(),
+                lastActiveChapter: loomUpdate.lastMentionedChapter // NEW: Sync Loom activity to legacy field
               };
             }
             return existingThread;
@@ -1791,13 +1793,7 @@ const App: React.FC = () => {
         const mergedNovelTechniques = [...(workingNovelState.novelTechniques || [])];
 
         // Process item updates
-        // #region agent log
-        console.log('[DEBUG] Item Updates Processing]', {
-          itemUpdatesCount: extraction.itemUpdates?.length || 0,
-          itemUpdates: extraction.itemUpdates,
-          itemUpdatesWithCharacterName: extraction.itemUpdates?.filter(i => i.characterName)?.length || 0
-        });
-        // #endregion
+
         if (extraction.itemUpdates && extraction.itemUpdates.length > 0) {
           const skippedItems: string[] = [];
           extraction.itemUpdates.forEach((itemUpdate: { name?: unknown; characterName?: unknown; category?: unknown; description?: unknown; addPowers?: unknown[] }) => {
@@ -1811,9 +1807,7 @@ const App: React.FC = () => {
             // Find character index (not the character itself for immutable updates)
             const matchedChar = findBestMatch(characterName, mergedCharacters);
             const characterIndex = matchedChar ? mergedCharacters.findIndex(c => c.id === matchedChar.id) : -1;
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'App.tsx:1503', message: 'Character lookup for item', data: { characterIndex, characterName, mergedCharactersCount: mergedCharacters.length, characterNames: mergedCharacters.map(c => c.name) }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) }).catch(() => { });
-            // #endregion
+
             if (characterIndex === -1) {
               localAddLog(`Skipped item "${itemName}": Character "${characterName}" not found`, 'update');
               return;
@@ -1854,9 +1848,7 @@ const App: React.FC = () => {
               // Create or update character possession using immutable update
               const existingPossessions = character.itemPossessions || [];
               const existingPossessionIndex = existingPossessions.findIndex(p => p.itemId === item.id);
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'App.tsx:1542', message: 'Before updating item possessions', data: { characterId: character.id, characterName: character.name, existingPossessionsCount: existingPossessions.length, existingPossessionIndex, itemId: item.id, itemName: item.name }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) }).catch(() => { });
-              // #endregion
+
               let updatedPossessions: CharacterItemPossession[];
               if (existingPossessionIndex >= 0) {
                 // Update existing possession
@@ -1912,13 +1904,7 @@ const App: React.FC = () => {
         }
 
         // Process technique updates
-        // #region agent log
-        console.log('[DEBUG] Technique Updates Processing]', {
-          techniqueUpdatesCount: extraction.techniqueUpdates?.length || 0,
-          techniqueUpdates: extraction.techniqueUpdates,
-          techniqueUpdatesWithCharacterName: extraction.techniqueUpdates?.filter(t => t.characterName)?.length || 0
-        });
-        // #endregion
+
         if (extraction.techniqueUpdates && extraction.techniqueUpdates.length > 0) {
           const skippedTechniques: string[] = [];
           extraction.techniqueUpdates.forEach((techUpdate: { name?: unknown; characterName?: unknown; category?: unknown; type?: unknown; description?: unknown; addFunctions?: unknown[]; masteryLevel?: unknown }) => {
@@ -1969,9 +1955,7 @@ const App: React.FC = () => {
               // Create or update character mastery using immutable update
               const existingMasteries = character.techniqueMasteries || [];
               const existingMasteryIndex = existingMasteries.findIndex(m => m.techniqueId === technique.id);
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/4a979e19-e727-4c92-a2e3-96a9b90ccf64', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'App.tsx:1639', message: 'Before updating technique masteries', data: { characterId: character.id, characterName: character.name, existingMasteriesCount: existingMasteries.length, existingMasteryIndex, techniqueId: technique.id, techniqueName: technique.name }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) }).catch(() => { });
-              // #endregion
+
               let updatedMasteries: CharacterTechniqueMastery[];
               if (existingMasteryIndex >= 0) {
                 // Update existing mastery
@@ -2362,7 +2346,7 @@ const App: React.FC = () => {
           novelItems: mergedNovelItems,
           novelTechniques: mergedNovelTechniques,
           antagonists: mergedAntagonists,
-          storyThreads: workingNovelState.storyThreads, // Already updated with Loom changes above
+          storyThreads: mergedThreads,
           plotLedger: mergedLedger,
           updatedAt: now,
         };
@@ -2727,6 +2711,18 @@ const App: React.FC = () => {
         // Continue even if this fails - these are enhancements, not critical
       }
 
+      // Explicitly save the novel state to DB to ensure all new entities (Story Threads, etc) exist
+      // This prevents foreign key constraint errors when saving dependent events in the next step
+      try {
+        const { saveNovel } = await import('./services/supabaseService');
+        await saveNovel(finalNovelState);
+        logger.info('Novel saved explicitly during generation to ensure entity existence', 'App');
+      } catch (saveError) {
+        logger.warn('Explicit novel save failed (will rely on context update save)', 'App', {
+          error: saveError instanceof Error ? saveError.message : String(saveError)
+        });
+      }
+
       updateActiveNovel(() => finalNovelState);
 
       setActiveLogs(newLogs);
@@ -2746,7 +2742,7 @@ const App: React.FC = () => {
         // The novel is saved asynchronously by NovelContext after updateActiveNovel
         // We'll retry with exponential backoff to handle the delay
         // Increased initial wait and retry count to ensure saveNovel completes
-        const saveChapterAppearances = async (retries = 8, initialDelay = 2000) => {
+        const saveChapterAppearances = async (retries = 8, initialDelay = 5000) => {
           for (let i = 0; i < retries; i++) {
             try {
               // Exponential backoff: 2s, 3s, 4s, 5s, 6s, 7s, 8s, 9s
@@ -2827,7 +2823,7 @@ const App: React.FC = () => {
       // This prevents foreign key constraint errors (chapter must exist first)
       const threadEventsToSave = pendingThreadProgressionEvents;
       if (chapterIdToSave && threadEventsToSave.length > 0) {
-        const saveThreadProgressionEvents = async (retries = 8, initialDelay = 2000) => {
+        const saveThreadProgressionEvents = async (retries = 8, initialDelay = 5000) => {
           for (let i = 0; i < retries; i++) {
             try {
               // Exponential backoff: 2s, 3s, 4s, 5s, 6s, 7s, 8s, 9s
@@ -2885,6 +2881,63 @@ const App: React.FC = () => {
         // Start saving thread progression events asynchronously (don't block)
         saveThreadProgressionEvents().catch(err => {
           console.warn('Thread progression events save failed:', err);
+        });
+      }
+
+      // NEW: Extract karma events after novel is saved to database
+      try {
+        const faceConfig = await getFaceGraphConfig(activeNovel.id);
+        if (faceConfig.enabled && faceConfig.autoExtractKarma) {
+          const chapterForKarma = newChapter;
+          const novelStateForKarma = workingNovelState;
+
+          const extractKarmaWithRetry = async (retries = 8, initialDelay = 3000) => {
+            logger.info('Initiating background karma extraction', 'faceGraph', {
+              chapterNumber: chapterForKarma.number,
+              chapterId: chapterForKarma.id
+            });
+
+            for (let i = 0; i < retries; i++) {
+              try {
+                // Wait for chapter record to potentially exist in DB
+                await new Promise(resolve => setTimeout(resolve, initialDelay + (i * 1000)));
+
+                // Extract and save karma events
+                const karmaEvents = await extractKarmaFromChapter(novelStateForKarma, chapterForKarma, {
+                  minSeverity: 'moderate'
+                });
+
+                if (karmaEvents && karmaEvents.length > 0) {
+                  localAddLog(`Justice Recorded: ${karmaEvents.length} karma event(s) extracted from Chapter ${chapterForKarma.number}`, 'fate');
+                  logger.info('Karma events extracted and saved successfully', 'faceGraph', {
+                    eventCount: karmaEvents.length,
+                    chapter: chapterForKarma.number
+                  });
+                  break; // Success!
+                } else {
+                  logger.debug('No karma events found in chapter', 'faceGraph', { chapter: chapterForKarma.number });
+                  break; // No events found, also a success state for the process
+                }
+              } catch (err) {
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                if (errorMsg.includes('violates foreign key constraint "karma_events_chapter_id_fkey"') ||
+                  errorMsg.includes('23503') ||
+                  errorMsg.includes('Key is not present')) {
+                  logger.debug(`Retry ${i + 1}: Chapter ${chapterForKarma.number} not found in DB yet for karma recording. Retrying...`, 'faceGraph');
+                  continue; // Retry
+                } else {
+                  logger.warn(`Unexpected error during karma extraction (Retry ${i + 1})`, 'faceGraph', { error: errorMsg });
+                  // Still retry a few times then give up
+                  if (i === retries - 1) break;
+                }
+              }
+            }
+          };
+          void extractKarmaWithRetry();
+        }
+      } catch (karmaInitError) {
+        logger.warn('Failed to initiate karma extraction', 'faceGraph', {
+          error: karmaInitError instanceof Error ? karmaInitError.message : String(karmaInitError)
         });
       }
 
@@ -3273,7 +3326,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
       const batchGenerator = createOptimizedBatchGenerator({
         batchSize: 5,
         maxRegenerationAttempts: 2, // Reduced for speed
-        timeoutMs: 180000, // 3 minutes per chapter
+        timeoutMs: 600000, // 10 minutes per chapter
         enableParallelProcessing: false, // CRITICAL: Sequential for narrative consistency
         cacheContext: true,
       });
@@ -3301,8 +3354,8 @@ the reader's choice. The consequences should begin to manifest in this chapter.
 
         // Process post-chapter updates (simplified for batch mode)
         try {
-          const { processPostChapterUpdates } = await import('./services/aiService');
-          await processPostChapterUpdates(currentNovelState, chapter);
+          const { processPostChapterUpdates } = await import('./services/chapterProcessingService');
+          currentNovelState = await processPostChapterUpdates(currentNovelState, chapter);
         } catch (updateError) {
           logger.warn('Post-chapter update failed for batch chapter', 'chapterGeneration', {
             error: updateError instanceof Error ? updateError.message : String(updateError)
@@ -3887,6 +3940,29 @@ the reader's choice. The consequences should begin to manifest in this chapter.
     });
   };
 
+  const handleDeleteArc = useCallback((arcId: string) => {
+    if (!activeNovel) return;
+    const arc = activeNovel.plotLedger.find(a => a.id === arcId);
+    if (!arc) return;
+
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Plot Arc',
+      message: `Shatter the arc "${arc.title}" from history? This cannot be undone.`,
+      variant: 'danger',
+      onConfirm: () => {
+        updateActiveNovel(prev => ({
+          ...prev,
+          plotLedger: prev.plotLedger.filter(a => a.id !== arcId),
+          updatedAt: Date.now(),
+        }));
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        showSuccess(`Arc "${arc.title}" deleted`);
+      },
+      onCancel: () => setConfirmDialog(prev => ({ ...prev, isOpen: false })),
+    });
+  }, [activeNovel, updateActiveNovel, showSuccess, setConfirmDialog]);
+
   const handleDeleteChapter = async (chapterId: string) => {
     if (!activeNovel) return;
 
@@ -4037,11 +4113,11 @@ the reader's choice. The consequences should begin to manifest in this chapter.
             🔔
           </button>
         )}
-        {/* Mobile Library Button - positioned with safe area */}
+        {/* Mobile Library Button - positioned with safe area, offset from menu button */}
         <button
           onClick={() => setView('library')}
           className="fixed z-50 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-xl text-zinc-400 hover:text-amber-500 hover:border-amber-600/50 transition-all duration-200 shadow-lg hover:shadow-amber-900/10 focus-visible:outline-amber-600 focus-visible:outline-2 md:hidden"
-          style={{ top: 'max(1rem, env(safe-area-inset-top, 1rem))', left: 'max(1rem, env(safe-area-inset-left, 1rem))' }}
+          style={{ top: 'max(1rem, env(safe-area-inset-top, 1rem))', left: 'max(5rem, env(safe-area-inset-left, 5rem))' }}
           title="Return to Hall"
           aria-label="Return to library"
         >🏛️</button>
@@ -5278,6 +5354,7 @@ the reader's choice. The consequences should begin to manifest in this chapter.
               onAddLog={addEphemeralLog}
               onSetCurrentEditorReport={setCurrentEditorReport}
               onSetPendingFixProposals={setPendingFixProposals}
+              onDeleteArc={handleDeleteArc}
             />
           </Suspense>
         )}

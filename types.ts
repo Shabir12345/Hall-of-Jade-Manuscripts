@@ -163,6 +163,7 @@ export interface Chapter {
   content: string;
   summary: string;
   logicAudit?: LogicAudit;
+  wordCount?: number;
   scenes: Scene[];
   createdAt: number;
   // Chapter regeneration tracking
@@ -203,7 +204,7 @@ export interface SystemLog {
 }
 
 // Story Threads System Types
-export type StoryThreadType = 
+export type StoryThreadType =
   | 'enemy'        // Antagonist/opposition threads
   | 'technique'    // Technique-related threads
   | 'item'         // Item-related threads
@@ -221,6 +222,31 @@ export type ThreadStatus = 'active' | 'paused' | 'resolved' | 'abandoned';
 export type ThreadPriority = 'critical' | 'high' | 'medium' | 'low';
 export type ThreadEventType = 'introduced' | 'progressed' | 'resolved' | 'hinted';
 
+// Narrative Archetypes
+export type NarrativeArchetype =
+  | 'tournament'
+  | 'secret_realm'
+  | 'sect_war'
+  | 'training'
+  | 'investigation'
+  | 'revenge'
+  | 'auction'
+  | 'disaster'
+  | 'journey'
+  | 'rebellion'
+  | 'historical_mystery'
+  | 'dungeon_dive'
+  | 'political_intrigue'
+  | 'monster_horde'
+  | 'generic';
+
+export interface NarrativeArchetypeSuggestion {
+  type: NarrativeArchetype;
+  confidence: number; // 0-1
+  reasoning: string;
+  focus: string;
+}
+
 export interface ThreadProgressionEvent {
   id: string;
   threadId: string;
@@ -231,6 +257,8 @@ export interface ThreadProgressionEvent {
   significance: 'major' | 'minor' | 'foreshadowing';
   createdAt: number;
 }
+
+export type ThreadScope = 'chapter' | 'arc' | 'novel';
 
 export interface StoryThread {
   id: string;
@@ -246,6 +274,12 @@ export interface StoryThread {
   lastActiveChapter: number;
   relatedEntityId?: string;
   relatedEntityType?: string;
+
+  // Planning fields
+  threadScope?: ThreadScope;
+  estimatedDuration?: number;
+  resolutionTargetChapter?: number;
+
   progressionNotes: Array<{
     chapterNumber: number;
     note: string;
@@ -256,6 +290,80 @@ export interface StoryThread {
   chaptersInvolved: number[];
   createdAt: number;
   updatedAt: number;
+}
+
+// ============================================================================
+// Story Health & Warning Types
+// ============================================================================
+
+export type WarningCategory =
+  | 'thread_progression'
+  | 'character_presence'
+  | 'arc_pacing'
+  | 'plot_hole_risk'
+  | 'resolution_urgency'
+  | 'quality_metric'
+  | 'thread_density'
+  | 'continuity';
+
+export type WarningSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+
+export interface AffectedEntity {
+  type: 'thread' | 'character' | 'arc' | 'chapter';
+  id: string;
+  name: string;
+}
+
+export interface WarningMetric {
+  current: number;
+  standard: number;
+  threshold: number;
+  unit?: string;
+}
+
+export interface ChapterGenerationWarning {
+  id: string;
+  category: WarningCategory;
+  severity: WarningSeverity;
+  title: string;
+  description: string;
+  affectedEntities: AffectedEntity[];
+  recommendation: string;
+  promptConstraint?: string;
+  autoFixable: boolean;
+  metric?: WarningMetric;
+  timestamp: number;
+}
+
+export interface ThreadProgressionSummary {
+  activeThreads: number;
+  stalledThreads: number;
+  progressedRecently: number;
+  resolvedRecently: number;
+  atRiskOfPlotHole: number;
+  threadDensity: number;
+  criticalThreadsCount: number;
+  highPriorityThreadsCount: number;
+}
+
+export interface StoryHealthArcAnalysis {
+  currentPosition: string; // From storyProgressionStandards
+  positionName: string;
+  progressPercentage: number;
+  expectedProgressions: string[];
+  missingElements: string[];
+  chaptersRemaining: number;
+}
+
+export interface ChapterGenerationReport {
+  chapterNumber: number;
+  timestamp: number;
+  overallHealth: number;
+  warnings: ChapterGenerationWarning[];
+  blockers: ChapterGenerationWarning[];
+  promptConstraints: string[];
+  threadProgressionSummary: ThreadProgressionSummary;
+  arcPositionAnalysis: StoryHealthArcAnalysis;
 }
 
 export interface NovelState {
@@ -387,9 +495,11 @@ export interface NovelState {
   };
   /** Global Market State for economic simulation (Spirit Stone Market) */
   globalMarketState?: import('./types/market').GlobalMarketState;
+  /** Total number of chapters planned for the novel (optional, defaults to heuristic estimate) */
+  totalPlannedChapters?: number;
   updatedAt: number;
   createdAt: number;
-  narrativeForensicsScan?: ExcavationResult;
+  narrativeForensicsScan?: import('./types/narrativeForensics').ExcavationResult;
 }
 
 export type ViewType = 'dashboard' | 'world-bible' | 'characters' | 'chapters' | 'editor' | 'planning' | 'library' | 'world-map' | 'storyboard' | 'timeline' | 'beatsheet' | 'matrix' | 'analytics' | 'search' | 'goals' | 'antagonists' | 'character-systems' | 'story-threads' | 'loom' | 'structure-visualizer' | 'engagement-dashboard' | 'tension-curve' | 'theme-evolution' | 'character-psychology' | 'device-dashboard' | 'draft-comparison' | 'excellence-scorecard' | 'improvement-history' | 'memory-dashboard' | 'face-graph' | 'narrative-forensics';
@@ -542,6 +652,8 @@ export interface PromptBuilderConfig {
 export interface BuiltPrompt {
   systemInstruction: string;
   userPrompt: string;
+  userInstruction: string;
+  specificConstraints?: string[];
   contextSummary: string;
   cacheMetadata?: {
     cacheableContent: string;

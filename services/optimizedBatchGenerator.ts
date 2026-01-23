@@ -22,7 +22,7 @@ interface BatchGenerationConfig {
 const DEFAULT_BATCH_CONFIG: BatchGenerationConfig = {
   batchSize: 5,
   maxRegenerationAttempts: 2, // Reduced from default for faster batch processing
-  timeoutMs: 300000, // 5 minutes per chapter
+  timeoutMs: 600000, // 10 minutes per chapter
   enableParallelProcessing: false, // DISABLED for narrative consistency
   cacheContext: true,
 };
@@ -180,24 +180,26 @@ export class OptimizedBatchGenerator {
     const sharedContext = await this.buildSharedContext(state);
 
     for (let i = 0; i < this.config.batchSize; i++) {
+      const nextChapterNumber = currentState.chapters.length + 1;
       const progress = (i / this.config.batchSize) * 100;
-      onProgress?.(progress, `Generating chapter ${i + 1}/${this.config.batchSize}...`);
+      onProgress?.(progress, `Generating chapter ${nextChapterNumber}...`);
 
       try {
         // Generate chapter with updated state that includes previous chapters
         const chapter = await this.generateSingleChapter(
           currentState, // Pass updated state with previous chapters
           userInstruction,
-          i + 1,
-          { 
+          nextChapterNumber,
+          {
             sharedContext,
             skipRegeneration: true, // CRITICAL: Skip regeneration for batch to prevent infinite loops
-            onPhase: (phase: string, data?: Record<string, unknown>) => this.handlePhase(phase, i, this.config.batchSize, onProgress)
+            skipTribulationGate: true, // Auto-skip interactive gates in batch
+            onPhase: (phase: string, _data?: Record<string, unknown>) => this.handlePhase(phase, i, this.config.batchSize, onProgress)
           }
         );
 
         chapters.push(chapter);
-        
+
         // Update state with the new chapter for next iteration
         currentState = {
           ...currentState,
@@ -205,11 +207,11 @@ export class OptimizedBatchGenerator {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        errors.push(`Chapter ${i + 1}: ${errorMessage}`);
-        logger.warn(`Failed to generate chapter ${i + 1}`, 'batchGenerator', { error: errorMessage });
-        
-        // Continue with next chapter even if one fails
-        continue;
+        errors.push(`Chapter ${nextChapterNumber}: ${errorMessage}`);
+        logger.warn(`Failed to generate chapter ${nextChapterNumber}`, 'batchGenerator', { error: errorMessage });
+
+        // Stop sequential generation on failure to preserve sequence integrity
+        break;
       }
     }
 
@@ -237,14 +239,15 @@ export class OptimizedBatchGenerator {
       const batchPromises: Promise<Chapter>[] = [];
 
       for (let i = batchStart; i < batchEnd; i++) {
-        const chapterNumber = i + 1;
+        const chapterNumber = state.chapters.length + 1 + i;
         const promise = this.generateSingleChapter(
           state,
           userInstruction,
           chapterNumber,
-          { 
+          {
             sharedContext,
-            onPhase: (phase: string, data?: Record<string, unknown>) => this.handlePhase(phase, i, this.config.batchSize, onProgress)
+            skipTribulationGate: true,
+            onPhase: (phase: string, _data?: Record<string, unknown>) => this.handlePhase(phase, i, this.config.batchSize, onProgress)
           }
         ).catch(error => {
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -257,7 +260,7 @@ export class OptimizedBatchGenerator {
 
       try {
         const batchResults = await Promise.allSettled(batchPromises);
-        
+
         for (let i = 0; i < batchResults.length; i++) {
           const result = batchResults[i];
           if (result.status === 'fulfilled') {
@@ -269,7 +272,7 @@ export class OptimizedBatchGenerator {
         const progress = (batchEnd / this.config.batchSize) * 100;
         onProgress?.(progress, `Completed batch ${Math.floor(batchStart / parallelBatchSize) + 1}/${Math.ceil(this.config.batchSize / parallelBatchSize)}`);
       } catch (error) {
-        logger.warn(`Parallel batch failed`, 'batchGenerator', error);
+        logger.warn(`Parallel batch failed`, 'batchGenerator', { error: String(error) });
       }
     }
 
@@ -285,7 +288,7 @@ export class OptimizedBatchGenerator {
   private async buildSharedContext(state: NovelState): Promise<any> {
     if (!this.config.cacheContext || !this.cache.isValid()) {
       logger.debug('Building fresh shared context for batch', 'batchGenerator');
-      
+
       // Build context that can be shared across chapters
       const context = {
         memoryContext: await this.buildMemoryContext(state),
@@ -321,11 +324,12 @@ export class OptimizedBatchGenerator {
     opts: {
       sharedContext?: any;
       onPhase?: (phase: string, data?: Record<string, unknown>) => void;
-      skipRegeneration?: boolean; // Add this option
+      skipRegeneration?: boolean;
+      skipTribulationGate?: boolean;
     } = {}
   ): Promise<Chapter> {
     const { generateNextChapter } = await import('./aiService');
-    
+
     // Apply timeout
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error(`Chapter ${chapterNumber} generation timeout`)), this.config.timeoutMs);
@@ -333,7 +337,8 @@ export class OptimizedBatchGenerator {
 
     const generationPromise = generateNextChapter(state, userInstruction, {
       ...opts,
-      skipRegeneration: opts.skipRegeneration || false, // Pass through the skipRegeneration option
+      skipRegeneration: opts.skipRegeneration || false,
+      skipTribulationGate: opts.skipTribulationGate || false,
     });
 
     // Race between generation and timeout
@@ -349,6 +354,8 @@ export class OptimizedBatchGenerator {
       title: result.chapterTitle || `Chapter ${chapterNumber}`,
       content: result.chapterContent,
       summary: result.chapterSummary || '',
+      logicAudit: result.logicAudit,
+      wordCount: result.wordCount,
       scenes: [], // Default to empty array since ChapterGenerationResult doesn't have scenes
       createdAt: Date.now(),
     };
@@ -358,14 +365,14 @@ export class OptimizedBatchGenerator {
    * Handle phase callbacks for progress tracking
    */
   private handlePhase(
-    phase: string, 
-    chapterIndex: number, 
+    phase: string,
+    chapterIndex: number,
     totalChapters: number,
     onProgress?: (progress: number, status: string) => void
   ): void {
     const baseProgress = (chapterIndex / totalChapters) * 100;
     const chapterProgressWindow = 100 / totalChapters;
-    
+
     let phaseProgress = baseProgress;
     let status = `Chapter ${chapterIndex + 1}/${totalChapters}`;
 
@@ -401,12 +408,12 @@ export class OptimizedBatchGenerator {
         characterId: state.characterCodex.find(c => c.isProtagonist)?.id
       });
     } catch (error) {
-      logger.warn('Failed to build memory context', 'batchGenerator', error);
+      logger.warn('Failed to build memory context', 'batchGenerator', { error: String(error) });
       return null;
     }
   }
 
-  private async buildFaceGraphBase(state: NovelState): Promise<any> {
+  private async buildFaceGraphBase(_state: NovelState): Promise<any> {
     // Face graph is character-specific, build per chapter
     return null;
   }
@@ -419,17 +426,17 @@ export class OptimizedBatchGenerator {
       }
       return null;
     } catch (error) {
-      logger.warn('Failed to build market context', 'batchGenerator', error);
+      logger.warn('Failed to build market context', 'batchGenerator', { error: String(error) });
       return null;
     }
   }
 
-  private async buildLivingWorldBase(state: NovelState): Promise<any> {
+  private async buildLivingWorldBase(_state: NovelState): Promise<any> {
     try {
       // Skip living world context for batch generation to improve speed
       return null;
     } catch (error) {
-      logger.warn('Failed to build living world context', 'batchGenerator', error);
+      logger.warn('Failed to build living world context', 'batchGenerator', { error: String(error) });
       return null;
     }
   }
@@ -452,7 +459,7 @@ export async function quickBatchGenerate(
 ): Promise<{ chapters: Chapter[]; errors: string[] }> {
   const generator = createOptimizedBatchGenerator({
     maxRegenerationAttempts: 1, // No regeneration for speed
-    timeoutMs: 180000, // 3 minutes per chapter
+    timeoutMs: 600000, // 10 minutes per chapter
     enableParallelProcessing: true,
     cacheContext: true,
   });

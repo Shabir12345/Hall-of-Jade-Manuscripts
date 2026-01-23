@@ -71,6 +71,7 @@ class NovelChangeTracker {
       title: novel.title,
       genre: novel.genre,
       grandSaga: novel.grandSaga,
+      totalPlannedChapters: novel.totalPlannedChapters,
       currentRealmId: novel.currentRealmId,
       // updatedAt excluded - it's metadata that changes on save, not actual content
       // Deep serialize important arrays/objects
@@ -110,8 +111,15 @@ class NovelChangeTracker {
         id: a.id,
         title: a.title,
         status: a.status,
-        progress: a.progress,
+        targetChapters: a.targetChapters,
+        startedAtChapter: a.startedAtChapter,
+        endedAtChapter: a.endedAtChapter,
       })),
+      antagonists: novel.antagonists?.map(a => ({ id: a.id, name: a.name, status: a.status })),
+      storyThreads: novel.storyThreads?.map(t => ({ id: t.id, title: t.title, status: t.status })),
+      foreshadowingElements: novel.foreshadowingElements?.length || 0,
+      symbolicElements: novel.symbolicElements?.length || 0,
+      emotionalPayoffs: novel.emotionalPayoffs?.length || 0,
     }, null, 0); // No formatting for faster comparison
   }
 
@@ -122,7 +130,7 @@ class NovelChangeTracker {
   hasActualChanged(novel: NovelState): boolean {
     const original = this.originalNovels.get(novel.id);
     if (!original) return true; // New novel
-    
+
     const current = this.serializeNovel(novel);
     return original !== current;
   }

@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import type { StoryThread, ThreadStatus, ThreadPriority, StoryThreadType } from '../types';
+import type { StoryThread, ThreadStatus, ThreadPriority, StoryThreadType, ThreadScope } from '../types';
 import { generateUUID } from '../utils/uuid';
 
 interface UseStoryThreadManagementResult {
@@ -172,13 +172,13 @@ export function useStoryThreadManagement(
       promise: 0, mystery: 0, relationship: 0, power: 0, quest: 0,
       revelation: 0, conflict: 0, alliance: 0,
     };
-    existingThreads.forEach(t => { typeCounts[t.type] = (typeCounts[t.type] || 0) + 1; });
-    
+    existingThreads.forEach((t: StoryThread) => { typeCounts[t.type] = (typeCounts[t.type] || 0) + 1; });
+
     // Default to most common type, or 'mystery' if no threads exist
     const defaultType = existingThreads.length > 0
       ? (Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0][0] as StoryThreadType)
       : 'mystery';
-    
+
     const newThread: StoryThread = {
       id: generateUUID(),
       novelId: activeNovel.id,
@@ -189,6 +189,9 @@ export function useStoryThreadManagement(
       description: '',
       introducedChapter: currentChapter,
       lastUpdatedChapter: currentChapter,
+      lastActiveChapter: currentChapter,
+      threadScope: 'arc',
+      estimatedDuration: undefined,
       progressionNotes: [],
       chaptersInvolved: [currentChapter],
       createdAt: Date.now(),

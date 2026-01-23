@@ -5,7 +5,7 @@
  * and generates beat sheets using DeepSeek reasoner mode.
  */
 
-import { Arc, Chapter, StoryThread } from '../../types';
+import { Arc, Chapter, StoryThread, ChapterGenerationReport } from '../../types';
 import { ArcPositionAnalysis, DirectorConfig } from '../../types/director';
 
 /**
@@ -22,6 +22,13 @@ AI writers in 2026 have a fatal flaw: they rush climactic moments and drag out f
 - Rushing breakthroughs that should feel earned
 - Dragging tension-free scenes that bore readers
 - Premature confrontations before proper buildup
+
+## STORY HEALTH & NARRATIVE WARNINGS
+
+You will receive "STORY HEALTH & NARRATIVE WARNINGS". These are critical indicators of story decay (stale threads, lack of resolution, plot hole risks).
+- BLOCKERS or HIGH severity warnings MUST be addressed in the current chapter's beat sheet.
+- If a "Resolution Urgency" warning is present, you MUST include at least one 'release' or 'revelation' beat that resolves a thread.
+- If a "Plot Hole Risk" is identified for a specific thread, you MUST include a beat that references or progresses that specific thread.
 
 ## XIANXIA PACING GOLDEN RULES
 
@@ -126,6 +133,7 @@ export function buildDirectorUserPrompt(params: {
   userInstruction?: string;
   config: DirectorConfig;
   recoveredThreadsPrompt?: string;
+  warningReport?: ChapterGenerationReport;
 }): string {
   const {
     arc,
@@ -136,6 +144,7 @@ export function buildDirectorUserPrompt(params: {
     userInstruction,
     config,
     recoveredThreadsPrompt,
+    warningReport,
   } = params;
 
   // Build chapter summaries
@@ -188,6 +197,10 @@ ${chapterSummaries || 'No previous chapters'}
 
 === ACTIVE STORY THREADS ===
 ${threadList || 'No active threads'}
+
+${warningReport && (warningReport.warnings.length > 0 || warningReport.blockers.length > 0) ? `=== STORY HEALTH & NARRATIVE WARNINGS (PRIORITY) ===
+${[...warningReport.blockers, ...warningReport.warnings].map(w => `- [${w.severity.toUpperCase()}] ${w.title}: ${w.recommendation}`).join('\n')}
+` : ''}
 
 ${recoveredThreadsPrompt ? `=== RECOVERED NARRATIVE THREADS ===\n${recoveredThreadsPrompt}\n` : ''}
 

@@ -70,9 +70,9 @@ export async function generateFaceGraphContext(
     ]);
 
     // Filter blood feuds to those relevant to present characters
-    const relevantFeuds = bloodFeuds.filter(feud => 
-      presentCharacterIds.some(id => 
-        feud.aggrievedMemberIds.includes(id) || 
+    const relevantFeuds = bloodFeuds.filter(feud =>
+      presentCharacterIds.some(id =>
+        feud.aggrievedMemberIds.includes(id) ||
         feud.targetMemberIds.includes(id) ||
         feud.aggrievedPartyId === id ||
         feud.targetPartyId === id
@@ -157,14 +157,14 @@ async function gatherUnresolvedKarma(
     });
 
     // Filter to karma involving the MC if we have an MC
-    const relevantKarma = mcId 
+    const relevantKarma = mcId
       ? karmaEvents.filter(k => k.actorId === mcId)
       : karmaEvents;
 
     for (const karma of relevantKarma) {
       // Get social links to determine sentiment
       const links = await getSocialLinksForCharacter(novelId, characterId);
-      const linkToActor = links.find(l => 
+      const linkToActor = links.find(l =>
         l.targetCharacterId === karma.actorId || l.sourceCharacterId === karma.actorId
       );
 
@@ -236,7 +236,7 @@ async function gatherNPCThreats(
     if (npcId === mcId) continue;
 
     const connectionQuery = await queryConnectionToWronged(novelId, npcId, mcId);
-    
+
     if (connectionQuery.calculatedThreatLevel !== 'none') {
       threats.push({
         npcId: connectionQuery.npcId,
@@ -272,7 +272,7 @@ function formatFaceGraphContext(
     for (const karma of unresolvedKarma) {
       const chaptersSince = currentChapter - karma.chapterOccurred;
       const sentimentDesc = getSentimentDescription(karma.sentimentTowardMC);
-      
+
       karmaSection.push(`- **${karma.characterName}**: ${karma.karmaEventSummary}`);
       karmaSection.push(`  - Occurred: Chapter ${karma.chapterOccurred} (${chaptersSince} chapters ago)`);
       karmaSection.push(`  - Severity: ${karma.severity}`);
@@ -292,7 +292,7 @@ function formatFaceGraphContext(
 
     for (const feud of bloodFeuds) {
       const intensityDesc = getIntensityDescription(feud.intensity);
-      
+
       feudSection.push(`### ${feud.feudName}`);
       feudSection.push(`- **Aggrieved Party**: ${feud.aggrievedPartyName}`);
       feudSection.push(`- **Target of Vengeance**: ${feud.targetPartyName}`);
@@ -313,7 +313,7 @@ function formatFaceGraphContext(
 
     for (const debt of debts) {
       const chaptersSince = currentChapter - debt.incurredChapter;
-      
+
       debtSection.push(`- **${debt.debtorName}** owes **${debt.creditorName}**`);
       debtSection.push(`  - Type: ${debt.debtType.replace('_', ' ')}`);
       debtSection.push(`  - Weight: ${getDebtWeightDescription(debt.debtWeight)}`);
@@ -441,7 +441,7 @@ export async function getCharacterFaceGraphSummary(
       debtsAsDebtor,
       debtsAsCreditor,
     ] = await Promise.all([
-      supabase.from('face_profiles').select('*').eq('novel_id', novelId).eq('character_id', characterId).single(),
+      supabase.from('face_profiles').select('*').eq('novel_id', novelId).eq('character_id', characterId).maybeSingle(),
       getKarmaEventsForCharacter(novelId, characterId, { unsettledOnly: true }),
       getActiveBloodFeuds(novelId),
       getUnpaidDebts(novelId, characterId, true),
@@ -526,8 +526,8 @@ export async function generateConfrontationContext(
 
     // Get Face profiles
     const [{ data: profile1 }, { data: profile2 }] = await Promise.all([
-      supabase.from('face_profiles').select('*').eq('novel_id', novelId).eq('character_id', character1Id).single(),
-      supabase.from('face_profiles').select('*').eq('novel_id', novelId).eq('character_id', character2Id).single(),
+      supabase.from('face_profiles').select('*').eq('novel_id', novelId).eq('character_id', character1Id).maybeSingle(),
+      supabase.from('face_profiles').select('*').eq('novel_id', novelId).eq('character_id', character2Id).maybeSingle(),
     ]);
 
     const sections: string[] = [];
@@ -540,7 +540,7 @@ export async function generateConfrontationContext(
       sections.push('## FACE STANDINGS');
       sections.push(`- **${profile1.character_name}**: ${profile1.total_face} Face (${profile1.tier})`);
       sections.push(`- **${profile2.character_name}**: ${profile2.total_face} Face (${profile2.tier})`);
-      
+
       if (profile1.total_face > profile2.total_face * 2) {
         sections.push(`*${profile1.character_name} significantly outranks ${profile2.character_name} in social standing*`);
       } else if (profile2.total_face > profile1.total_face * 2) {
@@ -565,7 +565,7 @@ export async function generateConfrontationContext(
       sections.push('## KARMIC HISTORY');
       sections.push('Events that have occurred between these characters:');
       sections.push('');
-      
+
       for (const karma of karmaHistory) {
         const isSettled = karma.is_settled ? '(SETTLED)' : '(UNRESOLVED)';
         sections.push(`- Chapter ${karma.chapter_number}: **${karma.actor_name}** ${karma.action_type.replace('_', ' ')} **${karma.target_name}** ${isSettled}`);

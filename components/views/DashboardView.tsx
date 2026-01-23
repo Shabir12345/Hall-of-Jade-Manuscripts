@@ -5,7 +5,6 @@
 
 import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
 import type { NovelState } from '../../types';
-import { TrustScoreWidget } from '../TrustScoreWidget';
 import { GapAnalysisPanel } from '../widgets/GapAnalysisPanel';
 import { PostGenerationSummary } from '../PostGenerationSummary';
 import { ApiKeyTester } from '../ApiKeyTester';
@@ -74,16 +73,16 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
 
   // Calculate gap analysis
   const gapAnalysis = useMemo(() => {
-    const nextChapterNumber = novel.chapters.length > 0 
-      ? Math.max(...novel.chapters.map(c => c.number)) + 1 
+    const nextChapterNumber = novel.chapters.length > 0
+      ? Math.max(...novel.chapters.map(c => c.number)) + 1
       : 1;
     return analyzeGaps(novel, nextChapterNumber);
   }, [novel]);
 
   // Calculate story health report
   const storyHealthReport = useMemo(() => {
-    const nextChapterNumber = novel.chapters.length > 0 
-      ? Math.max(...novel.chapters.map(c => c.number)) + 1 
+    const nextChapterNumber = novel.chapters.length > 0
+      ? Math.max(...novel.chapters.map(c => c.number)) + 1
       : 1;
     return generateChapterWarnings(novel, nextChapterNumber);
   }, [novel]);
@@ -103,9 +102,9 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
   };
 
   // Get recent auto-connections from novel state (stored directly, not parsed from logs)
-  const recentAutoConnections = useMemo((): Connection[] => {
+  const recentAutoConnections = useMemo(() => {
     if (novel.recentAutoConnections && Array.isArray(novel.recentAutoConnections)) {
-      return novel.recentAutoConnections.slice(0, 10);
+      return novel.recentAutoConnections.slice(0, 10) as any[]; // Type cast to avoid complex intersection mismatch
     }
     return [];
   }, [novel.recentAutoConnections]);
@@ -118,7 +117,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
       .filter(log => log.message.toLowerCase().includes('consistency') || log.message.toLowerCase().includes('inconsistency'))
       .slice(0, 5);
     return consistencyLogs.map(log => ({
-      severity: (log.type === 'error' ? 'critical' : 'warning') as 'critical' | 'warning' | 'info',
+      severity: (log.type === 'error' || log.type === 'logic' ? 'critical' : 'warning') as 'critical' | 'warning' | 'info',
       message: log.message,
     }));
   }, [novel.systemLogs]);
@@ -130,14 +129,14 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
       .reverse()
       .filter(log => {
         const msg = log.message.toLowerCase();
-        return msg.includes('auto-connected') || 
-               msg.includes('trust score') || 
-               msg.includes('consistency check') ||
-               msg.includes('gap') ||
-               msg.includes('extraction');
+        return msg.includes('auto-connected') ||
+          msg.includes('trust score') ||
+          msg.includes('consistency check') ||
+          msg.includes('gap') ||
+          msg.includes('extraction');
       })
       .slice(0, 5);
-    
+
     return automationLogs.map(log => {
       let icon = '✨';
       let type = 'update';
@@ -154,7 +153,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
         icon = '⚠️';
         type = 'gap';
       }
-      
+
       return {
         icon,
         type,
@@ -172,7 +171,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
       .reverse()
       .filter(log => log.message.toLowerCase().includes('consistency score'))
       .slice(0, 1);
-    
+
     if (consistencyLogs.length > 0) {
       const match = consistencyLogs[0].message.match(/(\d+)\/100/);
       if (match) return parseInt(match[1], 10);
@@ -193,7 +192,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
   return (
     <div className="min-h-screen min-h-dvh bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950" data-tour="dashboard">
       {/* Add padding-top for mobile header buttons */}
-      <div 
+      <div
         className="max-w-7xl mx-auto px-3 xs:px-4 sm:px-6 lg:px-8 py-6 xs:py-8 lg:py-12 space-y-6 xs:space-y-8 lg:space-y-12"
         style={{ paddingTop: 'max(4rem, calc(env(safe-area-inset-top, 1rem) + 3.5rem))' }}
       >
@@ -204,23 +203,23 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
         <section className="space-y-4 lg:space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
             {/* Tribulation Gate Widget */}
-            <TribulationGateWidget 
+            <TribulationGateWidget
               novel={novel}
               onViewGateHistory={() => onViewChange('gate-history')}
               onManualTrigger={onManualTribulationGate}
             />
-            
+
             {/* Consequence Tracker Widget */}
-            <ConsequenceTrackerWidget 
+            <ConsequenceTrackerWidget
               novel={novel}
             />
           </div>
-          
+
           {/* Tribulation Gate Settings */}
           {onUpdateNovel && (
             <TribulationGateSettings
-              config={novel.tribulationGateConfig}
-              onConfigChange={handleTribulationGateConfigChange}
+              config={novel.tribulationGateConfig as any}
+              onConfigChange={handleTribulationGateConfigChange as any}
               collapsible={true}
               initialCollapsed={true}
             />
@@ -257,19 +256,18 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                 )}
               </div>
             </div>
-            
+
             {/* Automation Status Badges - full width on mobile */}
             <div className="flex flex-wrap items-center gap-2">
               {lastTrustScore && (
                 <button
                   onClick={() => onViewChange('analytics')}
-                  className={`inline-flex items-center gap-1.5 xs:gap-2 px-2 xs:px-3 py-1.5 rounded-lg border font-semibold text-xs xs:text-sm transition-all shadow-md hover:shadow-lg ${
-                    lastTrustScore.overall >= 80
-                      ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-600/30'
-                      : lastTrustScore.overall >= 60
+                  className={`inline-flex items-center gap-1.5 xs:gap-2 px-2 xs:px-3 py-1.5 rounded-lg border font-semibold text-xs xs:text-sm transition-all shadow-md hover:shadow-lg ${lastTrustScore.overall >= 80
+                    ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-600/30'
+                    : lastTrustScore.overall >= 60
                       ? 'bg-amber-600/20 text-amber-400 border-amber-500/40 hover:bg-amber-600/30'
                       : 'bg-red-600/20 text-red-400 border-red-500/40 hover:bg-red-600/30'
-                  }`}
+                    }`}
                   title={`Trust Score: ${lastTrustScore.overall}/100 - Click to view details`}
                 >
                   <span>✅</span>
@@ -279,13 +277,12 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               {gapAnalysis.summary.total > 0 && (
                 <button
                   onClick={() => setShowPreGenerationAnalysis(true)}
-                  className={`inline-flex items-center gap-1.5 xs:gap-2 px-2 xs:px-3 py-1.5 rounded-lg border font-semibold text-xs xs:text-sm transition-all shadow-md hover:shadow-lg ${
-                    gapAnalysis.summary.critical > 0
-                      ? 'bg-red-600/20 text-red-400 border-red-500/40 hover:bg-red-600/30'
-                      : gapAnalysis.summary.warning > 0
+                  className={`inline-flex items-center gap-1.5 xs:gap-2 px-2 xs:px-3 py-1.5 rounded-lg border font-semibold text-xs xs:text-sm transition-all shadow-md hover:shadow-lg ${gapAnalysis.summary.critical > 0
+                    ? 'bg-red-600/20 text-red-400 border-red-500/40 hover:bg-red-600/30'
+                    : gapAnalysis.summary.warning > 0
                       ? 'bg-amber-600/20 text-amber-400 border-amber-500/40 hover:bg-amber-600/30'
                       : 'bg-blue-600/20 text-blue-400 border-blue-500/40 hover:bg-blue-600/30'
-                  }`}
+                    }`}
                   title={`${gapAnalysis.summary.total} gap${gapAnalysis.summary.total !== 1 ? 's' : ''} detected - Click to review`}
                 >
                   <span>{gapAnalysis.summary.critical > 0 ? '🔴' : gapAnalysis.summary.warning > 0 ? '⚠️' : 'ℹ️'}</span>
@@ -294,7 +291,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               )}
             </div>
           </div>
-          
+
           {/* Recent Automation Activity Summary - horizontal scroll on mobile */}
           {recentAutomationActivity.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-800/30 overflow-x-auto scrollbar-hide -mx-3 xs:-mx-4 px-3 xs:px-4">
@@ -380,10 +377,9 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                           <div className="text-xs text-zinc-500 uppercase tracking-wide">Trust Score</div>
                           <HelpIcon content="Measures extraction quality, connections, data completeness, and consistency" />
                         </div>
-                        <div className={`text-3xl font-fantasy font-bold ${
-                          lastTrustScore.overall >= 80 ? 'text-emerald-400' : 
+                        <div className={`text-3xl font-fantasy font-bold ${lastTrustScore.overall >= 80 ? 'text-emerald-400' :
                           lastTrustScore.overall >= 60 ? 'text-amber-400' : 'text-red-400'
-                        }`}>
+                          }`}>
                           {lastTrustScore.overall}
                         </div>
                         <div className="text-xs text-zinc-600">/100</div>
@@ -413,10 +409,9 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                   {consistencyScore !== null && (
                     <div className="space-y-1">
                       <div className="text-xs text-zinc-500 uppercase tracking-wide">Consistency</div>
-                      <div className={`text-3xl font-fantasy font-bold ${
-                        consistencyScore >= 80 ? 'text-emerald-400' : 
+                      <div className={`text-3xl font-fantasy font-bold ${consistencyScore >= 80 ? 'text-emerald-400' :
                         consistencyScore >= 60 ? 'text-amber-400' : 'text-red-400'
-                      }`}>
+                        }`}>
                         {consistencyScore}
                       </div>
                       <div className="text-xs text-zinc-600">/100</div>
@@ -425,7 +420,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                 </div>
               </div>
             )}
-            
+
             {/* Gap Analysis Card */}
             {gapAnalysis.summary.total > 0 && (
               <GapAnalysisPanel
@@ -501,13 +496,12 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               {novel.chapters.length > 0 && (
                 <button
                   onClick={() => setShowHealthDashboard(!showHealthDashboard)}
-                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border font-semibold text-sm transition-all shadow-lg ${
-                    storyHealthReport.overallHealth >= 80
-                      ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-600/30'
-                      : storyHealthReport.overallHealth >= 60
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border font-semibold text-sm transition-all shadow-lg ${storyHealthReport.overallHealth >= 80
+                    ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-600/30'
+                    : storyHealthReport.overallHealth >= 60
                       ? 'bg-amber-600/20 text-amber-400 border-amber-500/40 hover:bg-amber-600/30'
                       : 'bg-red-600/20 text-red-400 border-red-500/40 hover:bg-red-600/30'
-                  }`}
+                    }`}
                   title={`Story Health: ${storyHealthReport.overallHealth}/100 - Click to ${showHealthDashboard ? 'hide' : 'view'} details`}
                 >
                   <MiniHealthIndicator report={storyHealthReport} />
@@ -516,11 +510,10 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               {gapAnalysis.summary.total > 0 && !showPreGenerationAnalysis && (
                 <button
                   onClick={() => setShowPreGenerationAnalysis(true)}
-                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border font-semibold text-sm transition-all shadow-lg ${
-                    gapAnalysis.summary.critical > 0
-                      ? 'bg-red-600/20 text-red-400 border-red-600/40 hover:bg-red-600/30 hover:border-red-600/60'
-                      : 'bg-amber-600/20 text-amber-400 border-amber-600/40 hover:bg-amber-600/30 hover:border-amber-600/60'
-                  }`}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border font-semibold text-sm transition-all shadow-lg ${gapAnalysis.summary.critical > 0
+                    ? 'bg-red-600/20 text-red-400 border-red-600/40 hover:bg-red-600/30 hover:border-red-600/60'
+                    : 'bg-amber-600/20 text-amber-400 border-amber-600/40 hover:bg-amber-600/30 hover:border-amber-600/60'
+                    }`}
                 >
                   <span>{gapAnalysis.summary.critical > 0 ? '🔴' : '⚠️'}</span>
                   <span>{gapAnalysis.summary.total} Gap{gapAnalysis.summary.total !== 1 ? 's' : ''}</span>
@@ -528,12 +521,14 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               )}
             </div>
           </div>
-          
+
           {/* Story Health Dashboard - Expandable */}
           {showHealthDashboard && novel.chapters.length > 0 && (
             <div className="animate-in slide-in-from-top duration-200">
-              <ChapterGenerationHealthDashboard 
+              <ChapterGenerationHealthDashboard
                 report={storyHealthReport}
+                novel={novel}
+                onUpdateNovel={onUpdateNovel}
                 onWarningClick={(warning) => {
                   console.log('[Health Dashboard] Warning clicked:', warning);
                   // Could navigate to relevant entity or show details
@@ -704,54 +699,53 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
           )}
         </section>
 
-      {/* Recent Chapters */}
-      {novel.chapters.length > 0 && (
-        <section>
-          <h3 className="text-xl font-fantasy font-bold text-amber-400 mb-4">Recent Chapters</h3>
-          <div className="space-y-3">
-            {novel.chapters.slice(-5).reverse().map((chapter) => (
-              <div
-                key={chapter.id}
-                className={`w-full text-left bg-zinc-900 border rounded-xl p-4 hover:border-amber-600/50 hover:shadow-lg hover:shadow-amber-900/10 transition-all duration-200 cursor-pointer ${
-                  activeChapterId === chapter.id ? 'border-amber-600' : 'border-zinc-700'
-                }`}
-                onClick={() => onChapterSelect(chapter.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onChapterSelect(chapter.id);
-                  }
-                }}
-                aria-label={`Select Chapter ${chapter.number}: ${chapter.title}`}
-                aria-current={activeChapterId === chapter.id ? 'true' : undefined}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-amber-500 font-semibold mb-1">Chapter {chapter.number}</div>
-                    <div className="text-base font-bold text-zinc-200 mb-2 truncate">{chapter.title}</div>
-                    {chapter.summary && (
-                      <div className="text-sm text-zinc-400 line-clamp-2">{chapter.summary}</div>
-                    )}
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onViewChange('editor');
+        {/* Recent Chapters */}
+        {novel.chapters.length > 0 && (
+          <section>
+            <h3 className="text-xl font-fantasy font-bold text-amber-400 mb-4">Recent Chapters</h3>
+            <div className="space-y-3">
+              {novel.chapters.slice(-5).reverse().map((chapter) => (
+                <div
+                  key={chapter.id}
+                  className={`w-full text-left bg-zinc-900 border rounded-xl p-4 hover:border-amber-600/50 hover:shadow-lg hover:shadow-amber-900/10 transition-all duration-200 cursor-pointer ${activeChapterId === chapter.id ? 'border-amber-600' : 'border-zinc-700'
+                    }`}
+                  onClick={() => onChapterSelect(chapter.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
                       onChapterSelect(chapter.id);
-                    }}
-                    className="text-xs text-zinc-400 hover:text-amber-500 hover:bg-amber-500/10 uppercase font-semibold bg-zinc-800/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-amber-500/50 transition-all duration-200 whitespace-nowrap flex-shrink-0"
-                    aria-label={`Edit Chapter ${chapter.number}: ${chapter.title}`}
-                  >
-                    Edit
-                  </button>
+                    }
+                  }}
+                  aria-label={`Select Chapter ${chapter.number}: ${chapter.title}`}
+                  aria-current={activeChapterId === chapter.id ? 'true' : undefined}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-amber-500 font-semibold mb-1">Chapter {chapter.number}</div>
+                      <div className="text-base font-bold text-zinc-200 mb-2 truncate">{chapter.title}</div>
+                      {chapter.summary && (
+                        <div className="text-sm text-zinc-400 line-clamp-2">{chapter.summary}</div>
+                      )}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onViewChange('editor');
+                        onChapterSelect(chapter.id);
+                      }}
+                      className="text-xs text-zinc-400 hover:text-amber-500 hover:bg-amber-500/10 uppercase font-semibold bg-zinc-800/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-amber-500/50 transition-all duration-200 whitespace-nowrap flex-shrink-0"
+                      aria-label={`Edit Chapter ${chapter.number}: ${chapter.title}`}
+                    >
+                      Edit
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

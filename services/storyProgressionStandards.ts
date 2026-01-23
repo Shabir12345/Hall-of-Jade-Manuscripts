@@ -6,7 +6,7 @@
  * need attention.
  */
 
-import { StoryThreadType, ThreadPriority, NovelState, StoryThread, Arc } from '../types';
+import { StoryThreadType, ThreadPriority, StoryThread } from '../types';
 
 // ============================================================================
 // Thread Density Standards
@@ -20,14 +20,33 @@ export const THREAD_DENSITY_STANDARDS = {
   },
   maximum: 8,        // Beyond this is overwhelming
   warning: {
-    low: 1.0,        // Warning if below this
+    low: 0.4,        // Lowered from 1.0: Warning if below this (2 threads active per 5 chapters)
     high: 6.0,       // Warning if above this
   },
   critical: {
-    low: 0.5,        // Critical if below this
+    low: 0.2,        // Lowered from 0.5: Critical if below this (1 thread active per 5 chapters)
     high: 8.0,       // Critical if above this
   },
 } as const;
+
+// ============================================================================
+// Thread Payoff & Scope Standards
+// ============================================================================
+
+import { ThreadScope } from '../types';
+
+export const THREAD_SCOPE_DURATIONS: Record<ThreadScope, { min: number; max: number; target: number }> = {
+  chapter: { min: 1, max: 5, target: 3 },
+  arc: { min: 6, max: 40, target: 20 },
+  novel: { min: 41, max: 500, target: 200 },
+};
+
+/**
+ * Get recommended duration for a thread scope
+ */
+export function getRecommendedDuration(scope: ThreadScope = 'arc'): number {
+  return THREAD_SCOPE_DURATIONS[scope].target;
+}
 
 // ============================================================================
 // Thread Progression Standards
@@ -39,8 +58,8 @@ export const THREAD_PROGRESSION_STANDARDS = {
     minProgressions: 1,        // At least 1 thread must progress
     minSignificance: 'minor' as const,
   },
-  // Per 3 chapters
-  perThreeChapters: {
+  // Per 5 chapters (Adjusted from 3 for better narrative patience)
+  perFiveChaptersProgressions: {
     minMajorProgressions: 1,   // At least 1 major progression
   },
   // Per 5 chapters
@@ -258,7 +277,12 @@ export const QUALITY_STANDARDS = {
 /**
  * Get the stale threshold for a thread based on type and priority
  */
-export function getStaleThreshold(type: StoryThreadType, priority: ThreadPriority = 'medium'): number {
+export function getStaleThreshold(type: StoryThreadType, priority: ThreadPriority = 'medium', scope?: ThreadScope): number {
+  if (scope) {
+    if (scope === 'chapter') return 3;
+    if (scope === 'arc') return 10;
+    if (scope === 'novel') return 20;
+  }
   const baseThreshold = THREAD_TYPE_THRESHOLDS[type]?.maxStaleChapters ?? 10;
   const multiplier = PRIORITY_MULTIPLIERS[priority] ?? 1.0;
   return Math.round(baseThreshold * multiplier);
@@ -267,10 +291,13 @@ export function getStaleThreshold(type: StoryThreadType, priority: ThreadPriorit
 /**
  * Get the maximum recommended age for a thread before it should be resolved
  */
-export function getMaxThreadAge(type: StoryThreadType, priority: ThreadPriority = 'medium'): number {
+export function getMaxThreadAge(type: StoryThreadType, priority: ThreadPriority = 'medium', scope?: ThreadScope): number {
+  if (scope) {
+    return THREAD_SCOPE_DURATIONS[scope].max;
+  }
   const thresholds = THREAD_TYPE_THRESHOLDS[type];
   if (!thresholds) return 40; // Default
-  
+
   const multiplier = PRIORITY_MULTIPLIERS[priority] ?? 1.0;
   return Math.round(thresholds.criticalAge * multiplier);
 }
@@ -278,10 +305,14 @@ export function getMaxThreadAge(type: StoryThreadType, priority: ThreadPriority 
 /**
  * Get the warning age for a thread
  */
-export function getWarningAge(type: StoryThreadType, priority: ThreadPriority = 'medium'): number {
+export function getWarningAge(type: StoryThreadType, priority: ThreadPriority = 'medium', scope?: ThreadScope): number {
+  if (scope) {
+    // Warning at 75% of max age
+    return Math.floor(THREAD_SCOPE_DURATIONS[scope].max * 0.75);
+  }
   const thresholds = THREAD_TYPE_THRESHOLDS[type];
   if (!thresholds) return 25; // Default
-  
+
   const multiplier = PRIORITY_MULTIPLIERS[priority] ?? 1.0;
   return Math.round(thresholds.warningAge * multiplier);
 }
@@ -294,13 +325,13 @@ export function determineArcPosition(
   totalPlannedChapters: number
 ): ArcPosition {
   const progress = (currentChapter / totalPlannedChapters) * 100;
-  
+
   for (const [position, requirements] of Object.entries(ARC_POSITION_STANDARDS)) {
     if (progress >= requirements.chapterRange.min && progress < requirements.chapterRange.max) {
       return position as ArcPosition;
     }
   }
-  
+
   return 'resolution'; // Default to resolution if past 100%
 }
 
@@ -309,13 +340,13 @@ export function determineArcPosition(
  */
 export function calculateThreadDensity(threads: StoryThread[], currentChapter: number): number {
   if (currentChapter === 0) return 0;
-  
+
   // Count threads active in the last 5 chapters
-  const recentActiveThreads = threads.filter(t => 
-    t.status === 'active' && 
+  const recentActiveThreads = threads.filter(t =>
+    t.status === 'active' &&
     t.lastActiveChapter >= currentChapter - 5
   ).length;
-  
+
   // Calculate threads per chapter (last 5 chapters)
   return Math.round((recentActiveThreads / 5) * 10) / 10;
 }
@@ -324,18 +355,18 @@ export function calculateThreadDensity(threads: StoryThread[], currentChapter: n
  * Calculate the average resolution time for resolved threads
  */
 export function calculateAverageResolutionTime(threads: StoryThread[]): number {
-  const resolvedThreads = threads.filter(t => 
-    t.status === 'resolved' && 
-    t.resolvedChapter !== undefined && 
+  const resolvedThreads = threads.filter(t =>
+    t.status === 'resolved' &&
+    t.resolvedChapter !== undefined &&
     t.introducedChapter !== undefined
   );
-  
+
   if (resolvedThreads.length === 0) return 10; // Default estimate
-  
+
   const totalTime = resolvedThreads.reduce((sum, t) => {
     return sum + ((t.resolvedChapter || 0) - t.introducedChapter);
   }, 0);
-  
+
   return Math.round(totalTime / resolvedThreads.length);
 }
 
@@ -358,7 +389,7 @@ export function getProgressionSuggestion(thread: StoryThread): string {
     location: 'Explore further or reveal location significance.',
     sect: 'Advance sect politics, responsibilities, or relationships.',
   };
-  
+
   return suggestions[thread.type] || 'Progress this thread in a meaningful way.';
 }
 
@@ -371,9 +402,9 @@ export function calculateStoryHealthScore(
   totalPlannedChapters: number
 ): number {
   let score = 100;
-  
+
   const activeThreads = threads.filter(t => t.status === 'active');
-  
+
   // Thread density scoring
   const density = calculateThreadDensity(threads, currentChapter);
   if (density < THREAD_DENSITY_STANDARDS.critical.low) {
@@ -385,24 +416,24 @@ export function calculateStoryHealthScore(
   } else if (density > THREAD_DENSITY_STANDARDS.warning.high) {
     score -= 10;
   }
-  
+
   // Stalled threads scoring
   const stalledCount = activeThreads.filter(t => {
-    const threshold = getStaleThreshold(t.type, t.priority);
+    const threshold = getStaleThreshold(t.type, t.priority, t.threadScope);
     return (currentChapter - t.lastUpdatedChapter) >= threshold;
   }).length;
-  
+
   score -= stalledCount * 5; // -5 per stalled thread
-  
+
   // Critical threads health
   const criticalThreads = activeThreads.filter(t => t.priority === 'critical');
   const stalledCritical = criticalThreads.filter(t => {
-    const threshold = getStaleThreshold(t.type, t.priority);
+    const threshold = getStaleThreshold(t.type, t.priority, t.threadScope);
     return (currentChapter - t.lastUpdatedChapter) >= threshold;
   }).length;
-  
+
   score -= stalledCritical * 15; // -15 per stalled critical thread
-  
+
   // Resolution progress for late story
   const progress = (currentChapter / totalPlannedChapters) * 100;
   if (progress > 75) {
@@ -411,7 +442,7 @@ export function calculateStoryHealthScore(
       score -= (unresolvedCritical - 3) * 10; // Penalty for too many unresolved critical threads late in story
     }
   }
-  
+
   return Math.max(0, Math.min(100, score));
 }
 
@@ -421,12 +452,12 @@ export function calculateStoryHealthScore(
 export function getAtRiskThreads(threads: StoryThread[], currentChapter: number): StoryThread[] {
   return threads.filter(thread => {
     if (thread.status !== 'active') return false;
-    
-    const threshold = getStaleThreshold(thread.type, thread.priority);
+
+    const threshold = getStaleThreshold(thread.type, thread.priority, thread.threadScope);
     const chaptersSinceUpdate = currentChapter - thread.lastUpdatedChapter;
-    const warningAge = getWarningAge(thread.type, thread.priority);
+    const warningAge = getWarningAge(thread.type, thread.priority, thread.threadScope);
     const threadAge = currentChapter - thread.introducedChapter;
-    
+
     // At risk if stale or approaching max age
     return chaptersSinceUpdate >= threshold * 0.8 || threadAge >= warningAge;
   });

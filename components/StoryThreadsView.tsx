@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { StoryThread, NovelState, ThreadStatus, ThreadPriority, StoryThreadType } from '../types';
+import { StoryThread, NovelState, ThreadStatus, ThreadPriority, StoryThreadType, ThreadScope } from '../types';
 import { useStoryThreadManagement } from '../hooks/useStoryThreadManagement';
 import { NovelContext } from '../contexts/NovelContext';
 import { useToast } from '../contexts/ToastContext';
@@ -749,6 +749,16 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                       <div className="flex items-center gap-4 text-sm text-zinc-400 flex-wrap">
                         <span className={getStatusColor(selectedThread.status)}>{selectedThread.status}</span>
                         <span className={getPriorityColor(selectedThread.priority)}>{selectedThread.priority}</span>
+                        {selectedThread.threadScope && (
+                          <span className="px-2 py-0.5 bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-700">
+                            Scope: <span className="text-amber-400 font-semibold uppercase">{selectedThread.threadScope}</span>
+                          </span>
+                        )}
+                        {selectedThread.estimatedDuration && (
+                          <span className="px-2 py-0.5 bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-700">
+                            Est: <span className="text-amber-400 font-semibold">{selectedThread.estimatedDuration}ch</span>
+                          </span>
+                        )}
                         {(() => {
                           const introChapter = novelState.chapters.find(c => c.number === selectedThread.introducedChapter);
                           return introChapter ? (
@@ -1289,6 +1299,33 @@ const StoryThreadsView: React.FC<StoryThreadsViewProps> = ({ novelState }) => {
                   <option value="medium">Medium</option>
                   <option value="low">Low</option>
                 </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-400 mb-1">Scope</label>
+                  <select
+                    value={editingThread.threadScope || 'arc'}
+                    onChange={(e) => setEditingThread({ ...editingThread, threadScope: e.target.value as ThreadScope })}
+                    className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
+                    aria-label="Thread scope"
+                  >
+                    <option value="chapter">Chapter (1-5 ch)</option>
+                    <option value="arc">Arc (6-40 ch)</option>
+                    <option value="novel">Novel (40+ ch)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-400 mb-1">Est. Duration (Chapters)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Auto-calculated"
+                    value={editingThread.estimatedDuration || ''}
+                    onChange={(e) => setEditingThread({ ...editingThread, estimatedDuration: e.target.value ? parseInt(e.target.value) : undefined })}
+                    className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 outline-none"
+                    aria-label="Estimated duration in chapters"
+                  />
+                </div>
               </div>
               <div>
                 <label htmlFor="thread-description-textarea" className="block text-sm font-semibold text-zinc-400 mb-1">Description</label>

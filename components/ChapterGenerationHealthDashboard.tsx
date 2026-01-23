@@ -11,11 +11,15 @@ import {
   ChapterGenerationWarning,
   WarningSeverity,
 } from '../services/chapterGenerationWarningService';
+import { auditNovel, checkAuditHealth } from '../services/logicAuditService';
+import { NovelState } from '../types';
 
 interface HealthDashboardProps {
   report: ChapterGenerationReport;
+  novel: NovelState;
   isCompact?: boolean;
   onWarningClick?: (warning: ChapterGenerationWarning) => void;
+  onUpdateNovel?: (updater: (prev: NovelState) => NovelState) => void;
 }
 
 // Severity colors and icons
@@ -54,8 +58,8 @@ function ProgressBar({ value, max = 100, color = 'bg-emerald-500' }: { value: nu
   const percentage = Math.min(100, Math.max(0, (value / max) * 100));
   return (
     <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
-      <div 
-        className={`h-full ${color} transition-all duration-300`} 
+      <div
+        className={`h-full ${color} transition-all duration-300`}
         style={{ width: `${percentage}%` }}
       />
     </div>
@@ -63,17 +67,17 @@ function ProgressBar({ value, max = 100, color = 'bg-emerald-500' }: { value: nu
 }
 
 // Warning card component
-function WarningCard({ 
-  warning, 
-  onClick 
-}: { 
-  warning: ChapterGenerationWarning; 
+function WarningCard({
+  warning,
+  onClick
+}: {
+  warning: ChapterGenerationWarning;
   onClick?: () => void;
 }) {
   const config = severityConfig[warning.severity];
-  
+
   return (
-    <div 
+    <div
       className={`${config.bgColor} border border-zinc-700 rounded-lg p-3 cursor-pointer hover:border-zinc-600 transition-colors`}
       onClick={onClick}
     >
@@ -97,11 +101,11 @@ function WarningCard({
                 <span>Current: {warning.metric.current}{warning.metric.unit ? ` ${warning.metric.unit}` : ''}</span>
                 <span>Standard: {warning.metric.standard}</span>
               </div>
-              <ProgressBar 
-                value={warning.metric.current} 
+              <ProgressBar
+                value={warning.metric.current}
                 max={warning.metric.threshold}
-                color={warning.severity === 'critical' ? 'bg-red-500' : 
-                       warning.severity === 'high' ? 'bg-orange-500' : 'bg-yellow-500'}
+                color={warning.severity === 'critical' ? 'bg-red-500' :
+                  warning.severity === 'high' ? 'bg-orange-500' : 'bg-yellow-500'}
               />
             </div>
           )}
@@ -115,7 +119,7 @@ function WarningCard({
 function CompactHealthIndicator({ report }: { report: ChapterGenerationReport }) {
   const healthColor = getHealthColor(report.overallHealth);
   const healthEmoji = getHealthEmoji(report.overallHealth);
-  
+
   return (
     <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded-lg">
       <div className={`text-2xl ${healthColor} font-bold`}>
@@ -138,11 +142,43 @@ function CompactHealthIndicator({ report }: { report: ChapterGenerationReport })
   );
 }
 
-export function ChapterGenerationHealthDashboard({ 
-  report, 
+export function ChapterGenerationHealthDashboard({
+  report,
+  novel,
   isCompact = false,
-  onWarningClick 
+  onWarningClick,
+  onUpdateNovel
 }: HealthDashboardProps) {
+  const [isAuditing, setIsAuditing] = React.useState(false);
+  const [auditProgress, setAuditProgress] = React.useState(0);
+  const [auditMessage, setAuditMessage] = React.useState('');
+
+  const auditHealth = useMemo(() => checkAuditHealth(novel), [novel]);
+
+  const handleRunAudit = async () => {
+    if (!onUpdateNovel || isAuditing) return;
+
+    setIsAuditing(true);
+    try {
+      const { updatedState, auditCount } = await auditNovel(novel, (msg, progress) => {
+        setAuditMessage(msg);
+        setAuditProgress(progress);
+      });
+
+      onUpdateNovel(() => updatedState);
+      setAuditMessage(`Audit complete! Fixed ${auditCount} chapters.`);
+      setTimeout(() => {
+        setIsAuditing(false);
+        setAuditProgress(0);
+        setAuditMessage('');
+      }, 3000);
+    } catch (error) {
+      console.error('Audit failed:', error);
+      setAuditMessage('Audit failed. See console for details.');
+      setTimeout(() => setIsAuditing(false), 5000);
+    }
+  };
+
   // Group warnings by severity
   const warningsBySeverity = useMemo(() => {
     const all = [...report.blockers, ...report.warnings];
@@ -166,13 +202,52 @@ export function ChapterGenerationHealthDashboard({
         <h3 className="text-lg font-semibold text-zinc-200">
           Chapter {report.chapterNumber} Health Report
         </h3>
-        <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${getHealthBgColor(report.overallHealth)}`}>
-          <span className="text-lg">{getHealthEmoji(report.overallHealth)}</span>
-          <span className={`font-bold ${getHealthColor(report.overallHealth)}`}>
-            {report.overallHealth}/100
-          </span>
+        <div className="flex items-center gap-3">
+          {!auditHealth.isHealthy && onUpdateNovel && (
+            <button
+              onClick={handleRunAudit}
+              disabled={isAuditing}
+              className={`text-xs px-3 py-1 rounded-md border transition-all flex items-center gap-2 ${isAuditing
+                  ? 'bg-zinc-800 border-zinc-700 text-zinc-500'
+                  : 'bg-amber-600/10 border-amber-600/30 text-amber-500 hover:bg-amber-600/20'
+                }`}
+            >
+              {isAuditing ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                  <span>{auditProgress}%</span>
+                </>
+              ) : (
+                <>
+                  <span>✨</span>
+                  <span>Repair Continuity ({auditHealth.missingAuditCount})</span>
+                </>
+              )}
+            </button>
+          )}
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${getHealthBgColor(report.overallHealth)}`}>
+            <span className="text-lg">{getHealthEmoji(report.overallHealth)}</span>
+            <span className={`font-bold ${getHealthColor(report.overallHealth)}`}>
+              {report.overallHealth}/100
+            </span>
+          </div>
         </div>
       </div>
+
+      {isAuditing && auditMessage && (
+        <div className="bg-amber-600/5 border border-amber-600/20 rounded-lg p-2 text-xs text-amber-400">
+          <div className="flex justify-between mb-1">
+            <span>{auditMessage}</span>
+            <span>{auditProgress}%</span>
+          </div>
+          <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-amber-500 transition-all duration-300"
+              style={{ width: `${auditProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Arc position indicator */}
       <div className="flex items-center gap-4 text-sm">
@@ -205,17 +280,15 @@ export function ChapterGenerationHealthDashboard({
           <div className="text-xs text-zinc-500">Active Threads</div>
         </div>
         <div className="bg-zinc-800/50 rounded-lg p-3">
-          <div className={`text-2xl font-bold ${
-            report.threadProgressionSummary.stalledThreads > 0 ? 'text-orange-400' : 'text-zinc-400'
-          }`}>
+          <div className={`text-2xl font-bold ${report.threadProgressionSummary.stalledThreads > 0 ? 'text-orange-400' : 'text-zinc-400'
+            }`}>
             {report.threadProgressionSummary.stalledThreads}
           </div>
           <div className="text-xs text-zinc-500">Stalled</div>
         </div>
         <div className="bg-zinc-800/50 rounded-lg p-3">
-          <div className={`text-2xl font-bold ${
-            report.threadProgressionSummary.atRiskOfPlotHole > 0 ? 'text-red-400' : 'text-zinc-400'
-          }`}>
+          <div className={`text-2xl font-bold ${report.threadProgressionSummary.atRiskOfPlotHole > 0 ? 'text-red-400' : 'text-zinc-400'
+            }`}>
             {report.threadProgressionSummary.atRiskOfPlotHole}
           </div>
           <div className="text-xs text-zinc-500">At Risk</div>
@@ -236,9 +309,9 @@ export function ChapterGenerationHealthDashboard({
           </h4>
           <div className="space-y-2">
             {warningsBySeverity.critical.map(warning => (
-              <WarningCard 
-                key={warning.id} 
-                warning={warning} 
+              <WarningCard
+                key={warning.id}
+                warning={warning}
                 onClick={() => onWarningClick?.(warning)}
               />
             ))}
@@ -254,8 +327,8 @@ export function ChapterGenerationHealthDashboard({
           </h4>
           <div className="space-y-2">
             {warningsBySeverity.high.slice(0, 5).map(warning => (
-              <WarningCard 
-                key={warning.id} 
+              <WarningCard
+                key={warning.id}
                 warning={warning}
                 onClick={() => onWarningClick?.(warning)}
               />
@@ -277,8 +350,8 @@ export function ChapterGenerationHealthDashboard({
           </summary>
           <div className="mt-2 space-y-2">
             {[...warningsBySeverity.medium, ...warningsBySeverity.low].slice(0, 10).map(warning => (
-              <WarningCard 
-                key={warning.id} 
+              <WarningCard
+                key={warning.id}
                 warning={warning}
                 onClick={() => onWarningClick?.(warning)}
               />
@@ -322,16 +395,16 @@ export function ChapterGenerationHealthDashboard({
 }
 
 // Mini version for sidebar or inline use
-export function MiniHealthIndicator({ 
+export function MiniHealthIndicator({
   report,
-  showDetails = false 
-}: { 
+  showDetails = false
+}: {
   report: ChapterGenerationReport;
   showDetails?: boolean;
 }) {
   const healthColor = getHealthColor(report.overallHealth);
   const healthEmoji = getHealthEmoji(report.overallHealth);
-  
+
   return (
     <div className="flex items-center gap-2">
       <span className="text-lg">{healthEmoji}</span>

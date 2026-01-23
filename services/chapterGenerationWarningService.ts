@@ -6,100 +6,33 @@
  * to produce structured warnings with prompt constraints.
  */
 
-import { NovelState, StoryThread, Character, Arc, Chapter } from '../types';
+import {
+  NovelState,
+  Character,
+  Chapter,
+  ChapterGenerationReport,
+  ChapterGenerationWarning,
+  ThreadProgressionSummary,
+  StoryHealthArcAnalysis,
+  WarningSeverity
+} from '../types';
 import { generateUUID } from '../utils/uuid';
 import {
   THREAD_DENSITY_STANDARDS,
   THREAD_PROGRESSION_STANDARDS,
-  THREAD_TYPE_THRESHOLDS,
   ARC_POSITION_STANDARDS,
-  QUALITY_STANDARDS,
   getStaleThreshold,
   getMaxThreadAge,
   getWarningAge,
   determineArcPosition,
-  calculateThreadDensity, // Use the updated calculation method
+  calculateThreadDensity,
   calculateAverageResolutionTime,
   getProgressionSuggestion,
   calculateStoryHealthScore,
   getAtRiskThreads,
   countRecentProgressions,
   countRecentResolutions,
-  ArcPosition,
 } from './storyProgressionStandards';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export type WarningCategory =
-  | 'thread_progression'
-  | 'character_presence'
-  | 'arc_pacing'
-  | 'plot_hole_risk'
-  | 'resolution_urgency'
-  | 'quality_metric'
-  | 'thread_density';
-
-export type WarningSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
-
-export interface AffectedEntity {
-  type: 'thread' | 'character' | 'arc' | 'chapter';
-  id: string;
-  name: string;
-}
-
-export interface WarningMetric {
-  current: number;
-  standard: number;
-  threshold: number;
-  unit?: string;
-}
-
-export interface ChapterGenerationWarning {
-  id: string;
-  category: WarningCategory;
-  severity: WarningSeverity;
-  title: string;
-  description: string;
-  affectedEntities: AffectedEntity[];
-  recommendation: string;
-  promptConstraint?: string;
-  autoFixable: boolean;
-  metric?: WarningMetric;
-  timestamp: number;
-}
-
-export interface ThreadProgressionSummary {
-  activeThreads: number;
-  stalledThreads: number;
-  progressedRecently: number;
-  resolvedRecently: number;
-  atRiskOfPlotHole: number;
-  threadDensity: number;
-  criticalThreadsCount: number;
-  highPriorityThreadsCount: number;
-}
-
-export interface ArcPositionAnalysis {
-  currentPosition: ArcPosition;
-  positionName: string;
-  progressPercentage: number;
-  expectedProgressions: string[];
-  missingElements: string[];
-  chaptersRemaining: number;
-}
-
-export interface ChapterGenerationReport {
-  chapterNumber: number;
-  timestamp: number;
-  overallHealth: number;
-  warnings: ChapterGenerationWarning[];
-  blockers: ChapterGenerationWarning[];
-  promptConstraints: string[];
-  threadProgressionSummary: ThreadProgressionSummary;
-  arcPositionAnalysis: ArcPositionAnalysis;
-}
 
 // ============================================================================
 // Warning Generators
@@ -119,7 +52,7 @@ function analyzeThreadProgression(
   // Check for stalled threads
   activeThreads.forEach(thread => {
     const chaptersSinceUpdate = currentChapter - thread.lastUpdatedChapter;
-    const threshold = getStaleThreshold(thread.type, thread.priority);
+    const threshold = getStaleThreshold(thread.type, thread.priority, thread.threadScope);
 
     if (chaptersSinceUpdate >= threshold) {
       const severity: WarningSeverity =
@@ -179,23 +112,21 @@ function analyzeThreadProgression(
     });
   }
 
-  // Check for lack of major progressions
-  const recentChapters = state.chapters.slice(-3);
   const majorProgressionsRecent = threads.filter(t => {
     const hasRecentMajor = t.progressionNotes?.some(note =>
       note.significance === 'major' &&
-      note.chapterNumber >= currentChapter - 3
+      note.chapterNumber >= currentChapter - 5
     );
     return hasRecentMajor;
   }).length;
 
-  if (majorProgressionsRecent === 0 && currentChapter > 3 && activeThreads.length > 0) {
+  if (majorProgressionsRecent === 0 && currentChapter > 5 && activeThreads.length > 0) {
     warnings.push({
       id: generateUUID(),
       category: 'thread_progression',
       severity: 'high',
       title: 'No Major Thread Progressions Recently',
-      description: `No major thread progressions in the last 3 chapters. Story may lack significant developments.`,
+      description: `No major thread progressions in the last 5 chapters. Story may lack significant developments.`,
       affectedEntities: [],
       recommendation: 'Include at least one major thread progression - a significant revelation, turning point, or advancement.',
       promptConstraint: 'Include at least ONE major story development - a significant revelation, confrontation, or turning point for an active thread.',
@@ -297,9 +228,9 @@ function analyzeResolutionUrgency(
   const highThreads = threads.filter(t => t.priority === 'high');
   const avgResolutionTime = calculateAverageResolutionTime(state.storyThreads || []);
 
-  // Estimate chapters needed (assuming some parallel resolution)
+  // Estimate chapters needed (using estimatedDuration if available, otherwise heuristic)
   const estimatedChaptersNeeded = Math.ceil(
-    (criticalThreads.length + highThreads.length * 0.5) * (avgResolutionTime / 2)
+    threads.reduce((sum: number, t: any) => sum + (t.estimatedDuration || (avgResolutionTime / 2)), 0)
   );
 
   if (estimatedChaptersNeeded > remainingChapters * 1.5 && remainingChapters > 0) {
@@ -308,7 +239,7 @@ function analyzeResolutionUrgency(
       category: 'resolution_urgency',
       severity: 'critical',
       title: 'Insufficient Chapters for Thread Resolution',
-      description: `${criticalThreads.length} critical and ${highThreads.length} high-priority threads need resolution, but only ${remainingChapters} chapters remain. Estimated chapters needed: ${estimatedChaptersNeeded}.`,
+      description: `${criticalThreads.length} critical and ${highThreads.length} high-priority threads need resolution, but the current story plan only has ${remainingChapters} chapters remaining. (Novel target: ${totalPlannedChapters} chapters). Estimated chapters needed at current pacing: ${estimatedChaptersNeeded}.`,
       affectedEntities: criticalThreads.slice(0, 3).map(t => ({ type: 'thread' as const, id: t.id, name: t.title })),
       recommendation: 'Begin accelerating thread resolutions. Consider combining related threads or resolving multiple threads in single chapters.',
       promptConstraint: `PACING ALERT: Begin resolving story threads urgently. Prioritize: ${criticalThreads.slice(0, 3).map(t => t.title).join(', ')}`,
@@ -326,8 +257,8 @@ function analyzeResolutionUrgency(
   // Individual thread urgency - approaching max age
   threads.forEach(thread => {
     const threadAge = currentChapter - thread.introducedChapter;
-    const maxAge = getMaxThreadAge(thread.type, thread.priority);
-    const warningAge = getWarningAge(thread.type, thread.priority);
+    const maxAge = getMaxThreadAge(thread.type, thread.priority, thread.threadScope);
+    const warningAge = getWarningAge(thread.type, thread.priority, thread.threadScope);
 
     if (threadAge > maxAge) {
       warnings.push({
@@ -372,15 +303,26 @@ function analyzeResolutionUrgency(
   // Check for no resolutions in a long time
   const recentResolutions = countRecentResolutions(state.storyThreads || [], currentChapter, 8);
   if (recentResolutions === 0 && currentChapter > 8 && threads.length > 3) {
+    // Get 2-3 oldest high-priority threads to recommend for resolution
+    const candidates = threads
+      .sort((a, b) => a.introducedChapter - b.introducedChapter) // Oldest first
+      .sort((a, b) => {
+        const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+        return (priorityOrder[a.priority] || 3) - (priorityOrder[b.priority] || 3);
+      })
+      .slice(0, 3);
+
+    const threadNames = candidates.map(t => `"${t.title}"`).join(', ');
+
     warnings.push({
       id: generateUUID(),
       category: 'resolution_urgency',
       severity: 'high',
       title: 'No Thread Resolutions Recently',
-      description: `No story threads have been resolved in the last 8 chapters. Story may lack closure and payoff.`,
-      affectedEntities: [],
-      recommendation: 'Resolve at least one thread soon to provide narrative satisfaction.',
-      promptConstraint: 'Consider resolving at least one story thread to provide closure and maintain reader engagement.',
+      description: `No story threads have been resolved in the last 8 chapters. The narrative lacks closure, which may frustrate readers.`,
+      affectedEntities: candidates.map(t => ({ type: 'thread' as const, id: t.id, name: t.title })),
+      recommendation: `Resolve at least one long-running thread to provide narrative payoff. Recommended candidates: ${threadNames}.`,
+      promptConstraint: `MANDATORY NARRATIVE TASK: It has been over 8 chapters since any story thread was resolved. You MUST resolve at least one active story thread in this chapter (preferably one of these: ${threadNames}). This provides the reader with a sense of progress and satisfying payoff.`,
       autoFixable: false,
       timestamp: Date.now(),
     });
@@ -433,6 +375,7 @@ function analyzePlotHoleRisks(
           description: `The ${thread.type} thread "${thread.title}" is at risk of becoming a plot hole.`,
           affectedEntities: [{ type: 'thread', id: thread.id, name: thread.title }],
           recommendation: `Reference or progress "${thread.title}" to maintain narrative consistency.`,
+          promptConstraint: `STORY CONTINUITY TASK: The ${thread.type} thread "${thread.title}" has been neglected for too long and is at risk of becoming a plot hole. You MUST reference, progress, or advance this specific thread in this chapter to maintain narrative consistency.`,
           autoFixable: false,
           timestamp: Date.now(),
         });
@@ -463,7 +406,7 @@ function analyzeCharacterPresence(
   // Check if protagonist was mentioned in previous chapter
   if (protagonist) {
     const prevContent = (previousChapter.content + ' ' + (previousChapter.summary || '')).toLowerCase();
-    const protagonistMentioned = prevContent.includes(protagonist.name.toLowerCase());
+    /* const protagonistMentioned = */ prevContent.includes(protagonist.name.toLowerCase());
 
     // Check chapters since protagonist appeared
     let chaptersSinceProtagonist = 0;
@@ -575,15 +518,31 @@ function analyzeArcPacing(
     : 0;
 
   if (progressionRate < requirements.threadProgressionRate * 0.7) {
+    // Select the most relevant threads to progress
+    const threadsInNeed = activeThreads
+      .sort((a, b) => {
+        // Prioritize critical/high that are stalled
+        const aStalled = (currentChapter - a.lastUpdatedChapter) >= getStaleThreshold(a.type, a.priority);
+        const bStalled = (currentChapter - b.lastUpdatedChapter) >= getStaleThreshold(b.type, b.priority);
+        if (aStalled && !bStalled) return -1;
+        if (!aStalled && bStalled) return 1;
+
+        const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+        return (priorityOrder[a.priority] || 3) - (priorityOrder[b.priority] || 3);
+      })
+      .slice(0, Math.ceil(activeThreads.length * requirements.threadProgressionRate / 200) + 1); // Select enough to make a difference
+
+    const threadActionHints = threadsInNeed.map(t => `"${t.title}" (${getProgressionSuggestion(t)})`).join('; ');
+
     warnings.push({
       id: generateUUID(),
       category: 'arc_pacing',
       severity: 'high',
       title: `Slow Pacing for ${requirements.name} Stage`,
       description: `Thread progression rate is ${Math.round(progressionRate)}% (expected: ${requirements.threadProgressionRate}% for ${requirements.name}).`,
-      affectedEntities: [],
-      recommendation: `Increase thread progression to match the ${requirements.name} stage of the story.`,
-      promptConstraint: `PACING: This is the ${requirements.name} stage. Progress at least ${Math.ceil(activeThreads.length * requirements.threadProgressionRate / 100)} threads.`,
+      affectedEntities: threadsInNeed.map(t => ({ type: 'thread', id: t.id, name: t.title })),
+      recommendation: `Increase thread progression to match the ${requirements.name} stage. Specifically progress: ${threadsInNeed.map(t => t.title).join(', ')}.`,
+      promptConstraint: `PACING: Current stage is ${requirements.name}. You MUST meaningfully progress these specific threads: ${threadActionHints}.`,
       autoFixable: false,
       metric: {
         current: Math.round(progressionRate),
@@ -619,7 +578,7 @@ function analyzeArcPacing(
 
   // Check for resolution requirements
   if (requirements.requiredResolutions > 0) {
-    const recentResolutions = countRecentResolutions(threads, currentChapter, 5);
+    /* const recentResolutions = */ countRecentResolutions(threads, currentChapter, 5);
     const criticalThreads = activeThreads.filter(t => t.priority === 'critical');
 
     if (position === 'climax' || position === 'resolution') {
@@ -644,6 +603,47 @@ function analyzeArcPacing(
   return warnings;
 }
 
+/**
+ * Analyze narrative continuity and generate warnings
+ */
+function analyzeNarrativeContinuity(
+  state: NovelState,
+  _currentChapter: number
+): ChapterGenerationWarning[] {
+  const warnings: ChapterGenerationWarning[] = [];
+  const chapters = state.chapters || [];
+
+  if (chapters.length === 0) return warnings;
+
+  // Check the last 3 chapters for missing logic audits
+  const recentChapters = chapters.slice(-3);
+  const missingAudits = recentChapters.filter(ch => !ch.logicAudit);
+
+  if (missingAudits.length > 0) {
+    const severity: WarningSeverity = missingAudits.length === 1 ? 'critical' : 'high'; // Increased from medium to critical for single missing audits
+    const chNumbers = missingAudits.map(ch => ch.number).join(', ');
+
+    warnings.push({
+      id: generateUUID(),
+      category: 'continuity',
+      severity,
+      title: 'Missing Narrative Logic Audits',
+      description: `Chapters ${chNumbers} are missing logic audits. Without these, the AI loses track of character value shifts, leading to "flat" or repetitive scenes.`,
+      affectedEntities: missingAudits.map(ch => ({
+        type: 'chapter' as const,
+        id: ch.id,
+        name: `Chapter ${ch.number}`
+      })),
+      recommendation: 'The system will attempt to auto-fix these. If the warning persists, manually add the missing audits in the Chapter Health Dashboard.',
+      promptConstraint: `[CONTINUITY CRITICAL] The previous chapter is missing a logic audit. You MUST establish a clear "Starting Value" for the protagonist and ensure a distinct "Resulting Value" after "The Choice" in this chapter. Do not allow the story to stagnate; ensure a meaningful shift in character state.`,
+      autoFixable: true,
+      timestamp: Date.now(),
+    });
+  }
+
+  return warnings;
+}
+
 // ============================================================================
 // Main Generator
 // ============================================================================
@@ -657,9 +657,9 @@ export function generateChapterWarnings(
   totalPlannedChapters?: number
 ): ChapterGenerationReport {
   // Estimate total chapters if not provided
-  const estimatedTotal = totalPlannedChapters || Math.max(
-    state.chapters.length + 20,
-    state.plotLedger?.find(a => a.status === 'active')?.targetEndChapter || state.chapters.length + 30
+  const estimatedTotal = totalPlannedChapters || state.totalPlannedChapters || Math.max(
+    state.chapters.length + 30, // Increased default buffer to be more generous
+    (state.plotLedger?.find(a => a.status === 'active')?.targetChapters || 0) + (state.chapters.length > 0 ? state.chapters[0].number - 1 : 0) || state.chapters.length + 40
   );
 
   // Generate all warnings
@@ -670,11 +670,19 @@ export function generateChapterWarnings(
     ...analyzePlotHoleRisks(state, nextChapterNumber),
     ...analyzeCharacterPresence(state, nextChapterNumber),
     ...analyzeArcPacing(state, nextChapterNumber, estimatedTotal),
+    ...analyzeNarrativeContinuity(state, nextChapterNumber),
   ];
 
   // Separate blockers (critical severity)
   const blockers = allWarnings.filter(w => w.severity === 'critical');
   const warnings = allWarnings.filter(w => w.severity !== 'critical');
+
+  // Prefix blockers for clearer identification
+  blockers.forEach(b => {
+    if (!b.title.startsWith('🚨')) {
+      b.title = `🚨 CRITICAL STORY RISK: ${b.title}`;
+    }
+  });
 
   // Collect prompt constraints (prioritize by severity)
   const promptConstraints = allWarnings
@@ -690,7 +698,7 @@ export function generateChapterWarnings(
   const threads = state.storyThreads || [];
   const activeThreads = threads.filter(t => t.status === 'active');
   const stalledThreads = activeThreads.filter(t => {
-    const threshold = getStaleThreshold(t.type, t.priority);
+    const threshold = getStaleThreshold(t.type, t.priority, t.threadScope);
     return (nextChapterNumber - t.lastUpdatedChapter) >= threshold;
   });
 
@@ -709,7 +717,7 @@ export function generateChapterWarnings(
   const position = determineArcPosition(nextChapterNumber, estimatedTotal);
   const requirements = ARC_POSITION_STANDARDS[position];
 
-  const arcPositionAnalysis: ArcPositionAnalysis = {
+  const arcPositionAnalysis: StoryHealthArcAnalysis = {
     currentPosition: position,
     positionName: requirements.name,
     progressPercentage: Math.round((nextChapterNumber / estimatedTotal) * 100),
@@ -762,10 +770,10 @@ export function logChapterGenerationReport(report: ChapterGenerationReport): voi
 
   // Blockers
   if (report.blockers.length > 0) {
-    console.group('🚫 BLOCKERS (Must Address)');
+    console.group('🚨 CRITICAL NARRATIVE RISKS (Must Address)');
     report.blockers.forEach(w => {
-      console.error(`[${w.category}] ${w.title}`);
-      console.error(`  → ${w.recommendation}`);
+      console.warn(`[${w.category}] ${w.title}`);
+      console.warn(`  → ${w.recommendation}`);
     });
     console.groupEnd();
   }

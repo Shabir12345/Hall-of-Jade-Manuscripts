@@ -81,7 +81,7 @@ export function analyzeThreadHealth(
   totalPlannedChapters?: number
 ): ThreadHealthAnalysis {
   const estimatedTotal = totalPlannedChapters || currentChapter + 30;
-  
+
   const analysis: ThreadHealthAnalysis = {
     overallHealth: 0,
     healthyThreads: 0,
@@ -181,7 +181,7 @@ export function analyzeThreadHealth(
       lifespanByType[thread.type].push(currentChapter - thread.introducedChapter);
     }
   });
-  
+
   Object.keys(lifespanByType).forEach(type => {
     const lifespans = lifespanByType[type];
     if (lifespans.length > 0) {
@@ -202,18 +202,21 @@ export function analyzeThreadHealth(
   // Calculate completion forecast
   const unresolvedThreads = threads.filter(t => t.status !== 'resolved' && t.status !== 'abandoned');
   analysis.completionForecast.threadsNeedingResolution = unresolvedThreads.length;
-  
+
   if (resolutionTimes.length > 0 && unresolvedThreads.length > 0) {
     const avgResolutionTime = analysis.averageResolutionTime;
-    // Estimate: assume we resolve threads at a rate proportional to average resolution time
-    // Rough estimate: if we have X threads and average resolution is Y chapters, 
-    // and we resolve roughly 1 thread every Y/2 chapters (assuming some overlap)
+    // Use estimatedDuration if available
+    let totalEstimatedChapters = 0;
+    for (const t of unresolvedThreads) {
+      if (t.estimatedDuration) {
+        totalEstimatedChapters += t.estimatedDuration;
+      } else {
+        totalEstimatedChapters += Math.max(avgResolutionTime / 2, 1);
+      }
+    }
+
     analysis.completionForecast.averageChaptersPerResolution = avgResolutionTime;
-    // Conservative estimate: resolve one thread every avgResolutionTime/2 chapters
-    const estimatedChaptersPerThread = Math.max(avgResolutionTime / 2, 1);
-    analysis.completionForecast.estimatedChaptersToComplete = Math.ceil(
-      unresolvedThreads.length * estimatedChaptersPerThread
-    );
+    analysis.completionForecast.estimatedChaptersToComplete = Math.ceil(totalEstimatedChapters);
   } else {
     analysis.completionForecast.averageChaptersPerResolution = 0;
     analysis.completionForecast.estimatedChaptersToComplete = 0;
@@ -260,7 +263,7 @@ export function analyzeThreadHealth(
   if (totalPlannedChapters) {
     const position = determineArcPosition(currentChapter, totalPlannedChapters);
     const requirements = ARC_POSITION_STANDARDS[position];
-    
+
     analysis.arcPositionAnalysis = {
       position,
       positionName: requirements.name,
@@ -293,14 +296,14 @@ export function detectPlotHoles(
 
     const threadAge = currentChapter - thread.introducedChapter;
     const chaptersSinceUpdate = currentChapter - thread.lastUpdatedChapter;
-    
+
     // Use standards-based thresholds
     const thresholds = THREAD_TYPE_THRESHOLDS[thread.type];
     if (!thresholds) continue;
-    
-    const staleThreshold = getStaleThreshold(thread.type, thread.priority);
-    const maxAge = getMaxThreadAge(thread.type, thread.priority);
-    const warningAge = getWarningAge(thread.type, thread.priority);
+
+    const staleThreshold = getStaleThreshold(thread.type, thread.priority, thread.threadScope);
+    const maxAge = getMaxThreadAge(thread.type, thread.priority, thread.threadScope);
+    const warningAge = getWarningAge(thread.type, thread.priority, thread.threadScope);
 
     // Critical severity: exceeded max age or stale threshold for critical/high priority
     if (thread.priority === 'critical') {
@@ -360,12 +363,12 @@ export function suggestThreadPacing(
     const threadAge = currentChapter - thread.introducedChapter;
     const chaptersSinceUpdate = currentChapter - thread.lastUpdatedChapter;
     const health = calculateThreadHealth(thread, currentChapter);
-    
+
     // Use standards-based thresholds
     const thresholds = THREAD_TYPE_THRESHOLDS[thread.type];
     if (!thresholds) continue;
-    
-    const staleThreshold = getStaleThreshold(thread.type, thread.priority);
+
+    const staleThreshold = getStaleThreshold(thread.type, thread.priority, thread.threadScope);
     const idealResolution = thresholds.idealResolutionWindow;
     const progressionSuggestion = getProgressionSuggestion(thread);
 
@@ -478,18 +481,18 @@ export function generateThreadHealthReport(
 ): string {
   const analysis = analyzeThreadHealth(threads, currentChapter, totalPlannedChapters);
   const lines: string[] = [];
-  
+
   // Header
   lines.push('═══════════════════════════════════════════════════════════════');
   lines.push(`📊 THREAD HEALTH REPORT - Chapter ${currentChapter}`);
   lines.push('═══════════════════════════════════════════════════════════════');
-  
+
   // Overall health with visual indicator
-  const healthEmoji = analysis.overallHealth >= 80 ? '✅' : 
-                      analysis.overallHealth >= 60 ? '⚠️' : '❌';
+  const healthEmoji = analysis.overallHealth >= 80 ? '✅' :
+    analysis.overallHealth >= 60 ? '⚠️' : '❌';
   lines.push(`${healthEmoji} Overall Health: ${analysis.overallHealth}/100`);
   lines.push('');
-  
+
   // Thread counts
   lines.push('📚 THREAD COUNTS');
   lines.push(`   Active: ${analysis.threadsByStatus['active'] || 0}`);
@@ -498,17 +501,17 @@ export function generateThreadHealthReport(
   lines.push(`   Stalled: ${analysis.staleThreads}`);
   lines.push(`   Resolved: ${analysis.resolvedThreads}`);
   lines.push('');
-  
+
   // Standards compliance
   lines.push('📏 STANDARDS COMPLIANCE');
   const densityEmoji = analysis.standardsCompliance.densityStatus === 'optimal' ? '✅' :
-                       analysis.standardsCompliance.densityStatus === 'warning' ? '⚠️' : '❌';
+    analysis.standardsCompliance.densityStatus === 'warning' ? '⚠️' : '❌';
   lines.push(`   ${densityEmoji} Density: ${analysis.threadDensity}/chapter (${analysis.standardsCompliance.densityStatus})`);
   lines.push(`   📈 Progression Rate: ${analysis.standardsCompliance.progressionRate}%`);
   lines.push(`   🎯 Recent Resolutions: ${analysis.standardsCompliance.recentResolutions}`);
   lines.push(`   ⚠️ Plot Hole Risks: ${analysis.standardsCompliance.threadsAtPlotHoleRisk}`);
   lines.push('');
-  
+
   // Arc position if available
   if (analysis.arcPositionAnalysis) {
     const arcEmoji = analysis.arcPositionAnalysis.isOnTrack ? '✅' : '⚠️';
@@ -517,7 +520,7 @@ export function generateThreadHealthReport(
     lines.push(`   ${arcEmoji} Pacing: ${analysis.arcPositionAnalysis.actualProgressionRate}% (expected: ${analysis.arcPositionAnalysis.expectedProgressionRate}%)`);
     lines.push('');
   }
-  
+
   // Critical issues
   if (analysis.plotHoles.filter(p => p.severity === 'critical').length > 0) {
     lines.push('🚨 CRITICAL ISSUES');
@@ -526,7 +529,7 @@ export function generateThreadHealthReport(
       .forEach(p => lines.push(`   ❌ ${p.issue}`));
     lines.push('');
   }
-  
+
   // High priority suggestions
   const highUrgency = analysis.pacingSuggestions.filter(s => s.urgency === 'high');
   if (highUrgency.length > 0) {
@@ -534,7 +537,7 @@ export function generateThreadHealthReport(
     highUrgency.slice(0, 5).forEach(s => lines.push(`   → ${s.suggestion}`));
     lines.push('');
   }
-  
+
   // Completion forecast
   if (analysis.completionForecast.threadsNeedingResolution > 0) {
     lines.push('🔮 COMPLETION FORECAST');
@@ -542,8 +545,8 @@ export function generateThreadHealthReport(
     lines.push(`   Est. chapters needed: ${analysis.completionForecast.estimatedChaptersToComplete}`);
     lines.push(`   Avg resolution time: ${analysis.completionForecast.averageChaptersPerResolution} chapters`);
   }
-  
+
   lines.push('═══════════════════════════════════════════════════════════════');
-  
+
   return lines.join('\n');
 }

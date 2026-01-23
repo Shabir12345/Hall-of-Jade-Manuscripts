@@ -267,223 +267,112 @@ function tryFixTruncatedJson(jsonString: string): string {
     return '{}';
   }
 
-  // If it doesn't end with }, try to close it
-  if (!fixed.endsWith('}') && !fixed.endsWith(']')) {
-    // Count unclosed brackets and strings
-    let openBraces = 0;
-    let openBrackets = 0;
-    let inString = false;
-    let escapeNext = false;
-    let lastStringStart = -1;
-    let lastSafePosition = -1; // Last position where we had complete fix entries
-    let fixesArrayStart = -1;
+  // If it already ends with } or ], we still check for unclosed strings inside
+  // but usually it's complete. If it doesn't, we MUST fix it.
 
-    // Find the fixes array if it exists
-    const fixesArrayMatch = fixed.match(/"fixes"\s*:\s*\[/);
-    if (fixesArrayMatch) {
-      fixesArrayStart = fixesArrayMatch.index! + fixesArrayMatch[0].length;
+  // Count unclosed brackets and strings
+  let openBraces = 0;
+  let openBrackets = 0;
+  let inString = false;
+  let escapeNext = false;
+  let lastStringStart = -1;
+  let lastSafePosition = -1; // Last position where we had complete fix entries
+  let fixesArrayStart = -1;
+
+  // Find the fixes array if it exists
+  const fixesArrayMatch = fixed.match(/"fixes"\s*:\s*\[/);
+  if (fixesArrayMatch) {
+    fixesArrayStart = fixesArrayMatch.index! + fixesArrayMatch[0].length;
+  }
+
+  for (let i = 0; i < fixed.length; i++) {
+    const char = fixed[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
     }
 
-    for (let i = 0; i < fixed.length; i++) {
-      const char = fixed[i];
-
-      if (escapeNext) {
-        escapeNext = false;
-        continue;
-      }
-
-      if (char === '\\') {
-        escapeNext = true;
-        continue;
-      }
-
-      if (char === '"' && !escapeNext) {
-        if (!inString) {
-          lastStringStart = i;
-        }
-        inString = !inString;
-
-        // If we're closing a string, mark this as a safe position if we're past the fixes array
-        if (!inString && fixesArrayStart > 0 && i > fixesArrayStart) {
-          // Check if we just closed a fix object
-          const beforeString = fixed.substring(Math.max(0, i - 50), i);
-          if (beforeString.includes('"reason"') || beforeString.includes('"fixedText"')) {
-            // Look ahead to see if we have a complete fix entry
-            let j = i + 1;
-            while (j < fixed.length && (fixed[j] === ' ' || fixed[j] === '\n' || fixed[j] === '\r' || fixed[j] === '\t')) {
-              j++;
-            }
-            if (j < fixed.length && fixed[j] === '}') {
-              // We have a complete fix entry, mark this as safe
-              lastSafePosition = j + 1;
-            }
-          }
-        }
-        continue;
-      }
-
-      if (inString) continue;
-
-      if (char === '{') openBraces++;
-      if (char === '}') {
-        openBraces--;
-        // Mark complete objects as safe positions if in fixes array
-        if (fixesArrayStart > 0 && i > fixesArrayStart && openBraces >= 1) {
-          lastSafePosition = i + 1;
-        }
-      }
-      if (char === '[') openBrackets++;
-      if (char === ']') openBrackets--;
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
     }
 
-    // If we're in a string and it's very long (likely truncated chapter content)
-    if (inString && fixesArrayStart > 0 && lastStringStart > fixesArrayStart) {
-      const stringLength = fixed.length - lastStringStart;
-      // If string is longer than 1000 chars, it's likely truncated chapter content
-      if (stringLength > 1000) {
-        // Try to find the last complete fix entry before the truncated one
-        if (lastSafePosition > 0 && lastSafePosition < fixed.length && lastSafePosition > fixesArrayStart) {
-          console.warn('[JSON Repair] Detected truncated long string in fixes array. Removing incomplete fix entry.');
-          fixed = fixed.substring(0, lastSafePosition);
+    if (char === '"' && !escapeNext) {
+      if (!inString) {
+        lastStringStart = i;
+      }
+      inString = !inString;
 
-          // Ensure proper JSON structure
-          fixed = fixed.trim();
-
-          // Remove trailing comma if present
-          while (fixed.endsWith(',') || fixed.endsWith(' ')) {
-            fixed = fixed.slice(0, -1).trim();
+      // If we're closing a string, mark this as a safe position for truncation if it's a known property
+      if (!inString && fixesArrayStart > 0 && i > fixesArrayStart) {
+        const beforeString = fixed.substring(Math.max(0, i - 50), i);
+        if (beforeString.includes('"reason"') || beforeString.includes('"fixedText"')) {
+          let j = i + 1;
+          while (j < fixed.length && /\s/.test(fixed[j])) {
+            j++;
           }
-
-          // Close the fixes array if needed
-          if (!fixed.endsWith(']')) {
-            // Check if we're inside the fixes array by counting brackets
-            let bracketDepth = 0;
-            for (let i = fixesArrayStart; i < fixed.length; i++) {
-              if (fixed[i] === '[') bracketDepth++;
-              if (fixed[i] === ']') bracketDepth--;
-            }
-            if (bracketDepth > 0) {
-              fixed += ']';
-            }
+          if (j < fixed.length && fixed[j] === '}') {
+            lastSafePosition = j + 1;
           }
-
-          // Close the main object if needed
-          if (!fixed.endsWith('}')) {
-            fixed += '}';
-          }
-        } else {
-          // No safe position found - try to find last complete fix object
-          // Look backwards for a complete fix entry pattern: ..."reason":"..."}
-          const lastCompleteFixMatch = fixed.substring(fixesArrayStart).match(/("reason"\s*:\s*"[^"]*")\s*}/g);
-          if (lastCompleteFixMatch && lastCompleteFixMatch.length > 0) {
-            const lastMatch = lastCompleteFixMatch[lastCompleteFixMatch.length - 1];
-            const matchEnd = fixed.indexOf(lastMatch) + lastMatch.length;
-            if (matchEnd < fixed.length) {
-              fixed = fixed.substring(0, matchEnd);
-              // Ensure proper closing
-              if (!fixed.endsWith(']')) fixed += ']';
-              if (!fixed.endsWith('}')) fixed += '}';
-              inString = false;
-            } else {
-              // Just close the string at a reasonable point
-              const searchStart = Math.max(lastStringStart, fixed.length - 500);
-              const searchArea = fixed.substring(searchStart);
-              // Look for sentence boundaries (period + space or escaped newline)
-              const lastPeriod = searchArea.lastIndexOf('. ');
-              const lastNewline = searchArea.lastIndexOf('\\n');
-              const cutPoint = Math.max(lastPeriod, lastNewline);
-
-              if (cutPoint > 50) {
-                fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
-                fixed += '"';
-                inString = false;
-              } else {
-                // Just close it - might lose some data but better than invalid JSON
-                if (fixed.endsWith('\\')) {
-                  fixed = fixed.slice(0, -1);
-                }
-                fixed += '"';
-                inString = false;
-              }
-            }
-          } else {
-            // No complete fix found - close string at reasonable point
-            const searchStart = Math.max(lastStringStart, fixed.length - 500);
-            const searchArea = fixed.substring(searchStart);
-            const lastPeriod = searchArea.lastIndexOf('. ');
-            const lastNewline = searchArea.lastIndexOf('\\n');
-            const cutPoint = Math.max(lastPeriod, lastNewline);
-
-            if (cutPoint > 50) {
-              fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
-              fixed += '"';
-              inString = false;
-            } else {
-              // Just close it
-              if (fixed.endsWith('\\')) {
-                fixed = fixed.slice(0, -1);
-              }
-              fixed += '"';
-              inString = false;
-            }
-          }
-        }
-      } else {
-        // Short string (< 1000 chars), try to close it properly
-        // Look for sentence boundary in last 200 chars
-        const searchStart = Math.max(lastStringStart, fixed.length - 200);
-        const searchArea = fixed.substring(searchStart);
-        const lastPeriod = searchArea.lastIndexOf('. ');
-        const lastNewline = searchArea.lastIndexOf('\\n');
-        const cutPoint = Math.max(lastPeriod, lastNewline);
-
-        if (cutPoint > 20) {
-          fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
-          fixed += '"';
-          inString = false;
-        } else {
-          // Just close it
-          if (fixed.endsWith('\\')) {
-            fixed = fixed.slice(0, -1);
-          }
-          fixed += '"';
-          inString = false;
         }
       }
-    } else if (inString) {
-      // We're in a string but it's not in the fixes array
-      // Try to find a sentence boundary
-      const searchStart = Math.max(0, fixed.length - 300);
-      const searchArea = fixed.substring(searchStart);
-      const lastPeriod = searchArea.lastIndexOf('. ');
-      const lastNewline = searchArea.lastIndexOf('\\n');
-      const cutPoint = Math.max(lastPeriod, lastNewline);
-
-      if (cutPoint > 20) {
-        fixed = fixed.substring(0, searchStart + cutPoint + (cutPoint === lastPeriod ? 1 : 2));
-        fixed += '"';
-        inString = false;
-      } else {
-        // Just close it
-        if (fixed.endsWith('\\')) {
-          fixed = fixed.slice(0, -1);
-        }
-        fixed += '"';
-        inString = false;
-      }
+      continue;
     }
 
-    // Close arrays first (they're inside objects)
-    while (openBrackets > 0) {
-      fixed += ']';
-      openBrackets--;
-    }
+    if (inString) continue;
 
-    // Close objects
-    while (openBraces > 0) {
-      fixed += '}';
+    if (char === '{') openBraces++;
+    if (char === '}') {
       openBraces--;
+      if (fixesArrayStart > 0 && i > fixesArrayStart && openBraces >= 1) {
+        lastSafePosition = i + 1;
+      }
     }
+    if (char === '[') openBrackets++;
+    if (char === ']') openBrackets--;
+  }
+
+  // If we're in a string, close it
+  if (inString) {
+    // If it's a very long string in fixes array, it might be better to truncate to last safe position
+    if (fixesArrayStart > 0 && lastStringStart > fixesArrayStart && (fixed.length - lastStringStart) > 1000 && lastSafePosition > 0) {
+      fixed = fixed.substring(0, lastSafePosition);
+      // Re-evaluate brackets/braces after truncation
+      return tryFixTruncatedJson(fixed);
+    }
+
+    // Otherwise just close the string
+    // Remove trailing backslash if string ends in one to avoid escaping the closing quote
+    if (fixed.endsWith('\\')) {
+      fixed = fixed.slice(0, -1);
+    }
+    fixed += '"';
+    inString = false;
+  }
+
+  fixed = fixed.trim();
+
+  // Remove trailing comma if present
+  if (fixed.endsWith(',')) {
+    fixed = fixed.slice(0, -1).trim();
+  }
+
+  // Handle trailing colon (incomplete property value)
+  if (fixed.endsWith(':')) {
+    fixed += ' null';
+  }
+
+  // Close arrays first (they're inside objects)
+  while (openBrackets > 0) {
+    fixed += ']';
+    openBrackets--;
+  }
+
+  // Close objects
+  while (openBraces > 0) {
+    fixed += '}';
+    openBraces--;
   }
 
   return fixed;

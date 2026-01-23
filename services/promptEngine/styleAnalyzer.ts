@@ -14,7 +14,7 @@ import { generateUUID } from '../../utils/uuid';
 export function getStyleGuidelines(state: NovelState): string {
   const styleProfile = getCachedStyleProfile(state);
 
-  if (state.chapters.length === 0) {
+  if (!state?.chapters || state.chapters.length === 0) {
     return 'No existing chapters to analyze. Use standard Xianxia/Xuanhuan writing style with rich descriptions and vivid imagery.';
   }
 
@@ -69,7 +69,7 @@ export function getStyleGuidelines(state: NovelState): string {
  * Gets style profile for context
  */
 export function getStyleProfile(state: NovelState): StyleProfile | null {
-  if (state.chapters.length === 0) {
+  if (!state?.chapters || state.chapters.length === 0) {
     return null;
   }
   return getCachedStyleProfile(state);
@@ -79,7 +79,7 @@ export function getStyleProfile(state: NovelState): StyleProfile | null {
  * Gets sample passages for style reference
  */
 export function getStyleSamples(state: NovelState, maxSamples: number = 3): string[] {
-  if (state.chapters.length === 0) {
+  if (!state?.chapters || state.chapters.length === 0) {
     return [];
   }
 
@@ -91,7 +91,7 @@ export function getStyleSamples(state: NovelState, maxSamples: number = 3): stri
  * Checks if style consistency should be emphasized
  */
 export function shouldEmphasizeStyleConsistency(state: NovelState): boolean {
-  if (state.chapters.length < 3) {
+  if (!state?.chapters || state.chapters.length < 3) {
     return false; // Not enough chapters to establish style
   }
 
@@ -104,7 +104,7 @@ export function shouldEmphasizeStyleConsistency(state: NovelState): boolean {
  */
 export function getStyleConstraints(state: NovelState): string[] {
   // Reuse cached styleProfile metrics to avoid re-processing full chapter text.
-  const metrics = state.chapters.length > 0 ? getCachedStyleProfile(state).metrics : analyzeWritingStyle(state.chapters);
+  const metrics = (state?.chapters && state.chapters.length > 0) ? getCachedStyleProfile(state).metrics : analyzeWritingStyle(state?.chapters || []);
   const constraints: string[] = [];
 
   if (metrics.averageSentenceLength < 12) {
@@ -163,7 +163,7 @@ export function extractAuthorialVoiceProfile(
   chapters: Chapter[],
   state: NovelState
 ): AuthorialVoiceProfile | null {
-  if (chapters.length === 0) {
+  if (!chapters || chapters.length === 0) {
     return null;
   }
 
@@ -242,7 +242,7 @@ function analyzeEmotionalToneRange(chapters: Chapter[]): {
   secondary: string[];
   intensityRange: [number, number];
 } {
-  const allContent = chapters.map(ch => ch.content).join(' ').toLowerCase();
+  const allContent = chapters.map(ch => ch.content || '').join(' ').toLowerCase();
 
   // Emotional tone keywords
   const toneKeywords: Record<string, string[]> = {
@@ -322,7 +322,7 @@ function extractStylisticQuirks(chapters: Chapter[]): {
 } {
   const quirks: string[] = [];
   const imperfections: string[] = [];
-  const allContent = chapters.map(ch => ch.content).join(' ');
+  const allContent = chapters.map(ch => ch.content || '').join(' ');
 
   // Detect stylistic patterns
   const sentences = allContent.split(/[.!?]+/).filter(s => s.trim().length > 0);
@@ -385,7 +385,7 @@ function analyzeVocabularyPreferences(chapters: Chapter[]): {
   uncommon: string[];
   formalityLevel: 'formal' | 'casual' | 'mixed';
 } {
-  const allContent = chapters.map(ch => ch.content).join(' ');
+  const allContent = chapters.map(ch => ch.content || '').join(' ');
   const words = allContent.toLowerCase().split(/\s+/).filter(w => w.length > 3);
 
   // Common words (appear frequently)
@@ -484,7 +484,7 @@ export function enforceVoiceConsistency(
   }
 
   // Vocabulary preferences
-  const { formalityLevel, common, uncommon } = voiceProfile.vocabularyPreferences;
+  const { formalityLevel } = voiceProfile.vocabularyPreferences;
   constraints.push(
     `Maintain vocabulary formality level: ${formalityLevel}. ` +
     `Use established vocabulary patterns naturally.`
